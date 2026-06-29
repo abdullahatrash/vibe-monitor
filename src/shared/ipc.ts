@@ -22,6 +22,12 @@ export const IPC = {
   acpEvent: 'acp:event',
 } as const
 
+/**
+ * The `authMethods` id for Vibe's client-driven (delegated) browser sign-in
+ * (acp-capture §8) — the ADR-0003 primary path. The only method `signIn` drives.
+ */
+export const DELEGATED_AUTH_METHOD_ID = 'browser-auth-delegated'
+
 export interface VibeDetectResult {
   vibeFound: boolean
   vibeAcpFound: boolean

@@ -3,6 +3,7 @@ import { AcpClient, type SpawnFn } from './acp/client'
 import { handleFsReadTextFile, type ReadTextFn } from './acp/fs-read'
 import { handleFsWriteTextFile, type WriteTextFn } from './acp/fs-write'
 import { classifyAuthError, classifyAuthStatus } from './auth/auth-state'
+import { DELEGATED_AUTH_METHOD_ID } from '../shared/ipc'
 import type {
   AuthMethod,
   AuthState,
@@ -207,23 +208,47 @@ export class WorkspaceAgent extends EventEmitter {
     if (!this.initialized) {
       throw new WorkspaceAgentError('Agent is not initialized; call start() first.')
     }
+    // We only drive the delegated two-step. Sending `action:start/complete` to
+    // the blocking `browser-auth` method would fail silently, so reject any
+    // other method up front. (The blocking fallback is a separate slice.)
+    if (methodId !== DELEGATED_AUTH_METHOD_ID) {
+      throw new WorkspaceAgentError(
+        'Delegated browser sign-in is unavailable for this agent.',
+        AUTH_HINT,
+      )
+    }
+    // Unlike start(), this does NOT race `earlyFailure`; its no-wedge property
+    // relies on AcpClient.rejectAllPending firing on `exit`/`stop`, which rejects
+    // any in-flight authenticate/_auth/status request. Keep that on refactor.
     try {
       const started = await this.client.request('authenticate', { methodId, action: 'start' })
       const meta = extractDelegatedMeta(started, methodId)
-      if (meta?.signInUrl) this.openUrl?.(meta.signInUrl)
+      // Fail fast before opening the browser or sending a doomed `complete`
+      // (which would surface a raw -32602) if `start` returned no attempt.
+      if (!meta?.attemptId) {
+        throw new WorkspaceAgentError('Sign-in could not start — Vibe returned no attempt.', AUTH_HINT)
+      }
+      if (meta.signInUrl) this.openUrl?.(meta.signInUrl)
 
       await this.client.request('authenticate', {
         methodId,
         action: 'complete',
-        attemptId: meta?.attemptId,
+        attemptId: meta.attemptId,
       })
 
       const status = await this.client.request('_auth/status')
       this.authStateValue = classifyAuthStatus(status)
       return this.authStateValue
     } catch (err) {
-      throw this.toAgentError(err)
+      throw this.toSignInError(err)
     }
+  }
+
+  /** Map a sign-in failure to a clear message (not a bare RPC string). */
+  private toSignInError(err: unknown): WorkspaceAgentError {
+    if (err instanceof WorkspaceAgentError) return err
+    const detail = (err as { message?: string })?.message ?? (err instanceof Error ? err.message : String(err))
+    return new WorkspaceAgentError(`Sign-in failed: ${detail}`, AUTH_HINT)
   }
 
   /**

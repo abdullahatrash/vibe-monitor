@@ -337,6 +337,38 @@ describe('WorkspaceAgent — sign in (browser-auth-delegated)', () => {
 
     await expect(signingIn).rejects.toBeInstanceOf(WorkspaceAgentError)
   })
+
+  it('fails fast with a clear message when start returns no attemptId (sends no complete)', async () => {
+    const fake = makeCapturingFake()
+    const opened: string[] = []
+    const agent = await connectSignedOut(fake, (url) => opened.push(url))
+
+    const signingIn = agent.signIn(DELEGATED)
+    const settled = signingIn.catch((e: unknown) => e)
+
+    await new Promise((r) => setTimeout(r, 0))
+    const startReq = authSent(fake).find((m) => m.params?.action === 'start')
+    // Misshaped start result: no `_meta`, so no attemptId.
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: startReq?.id, result: {} }) + '\n')
+
+    const err = await settled
+    expect(err).toBeInstanceOf(WorkspaceAgentError)
+    expect((err as WorkspaceAgentError).message).toMatch(/could not start/i)
+    // No doomed `complete` with attemptId:undefined, and the browser never opened.
+    expect(authSent(fake).some((m) => m.params?.action === 'complete')).toBe(false)
+    expect(opened).toEqual([])
+  })
+
+  it('rejects a non-delegated methodId with a clear message (no requests sent)', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectSignedOut(fake, () => {})
+
+    const err = await agent.signIn('browser-auth').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(WorkspaceAgentError)
+    expect((err as WorkspaceAgentError).message).toMatch(/delegated/i)
+    // It never round-trips delegated-shaped requests to the blocking method.
+    expect(authSent(fake)).toEqual([])
+  })
 })
 
 // --- TB2: prompt + fs/read serving (a writes-capturing fake) ----------------

@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState, type JSX } from 'react'
+import { useEffect, useReducer, useRef, useState, type JSX } from 'react'
 import type { AuthMethod, ThreadConnection, VibeDetectResult } from '../../shared/ipc'
 import { authReducer, initialAuthViewState, selectAuthView } from './auth/auth-view'
 import { Conversation } from './conversation/Conversation'
@@ -138,11 +138,18 @@ function SignInPanel({
   authMethods: AuthMethod[]
 }): JSX.Element {
   const [state, dispatch] = useReducer(authReducer, authMethods, initialAuthViewState)
+  // Generation counter: bumped on every attempt start and on cancel. The
+  // delegated `complete` long-poll can't be aborted over ACP, so a cancelled (or
+  // superseded) attempt's eventual result must be ignored rather than clobber
+  // the panel — we only apply a result whose generation is still current.
+  const attemptRef = useRef(0)
   const view = selectAuthView(state)
 
   async function signIn(methodId: string): Promise<void> {
+    const attempt = ++attemptRef.current
     dispatch({ type: 'sign-in-start' })
     const result = await window.api.signIn({ agentId, methodId })
+    if (attempt !== attemptRef.current) return // cancelled/superseded — drop the stale result
     if (result.ok && result.authState === 'signed-in') {
       dispatch({ type: 'sign-in-success' })
     } else {
@@ -153,8 +160,15 @@ function SignInPanel({
     }
   }
 
+  function cancel(): void {
+    attemptRef.current++ // invalidate the in-flight attempt; its result is dropped
+    dispatch({ type: 'sign-in-cancel' })
+  }
+
   if (view.kind === 'none') {
-    // Reaching `none` in this panel means we just signed in.
+    // Reaching `none` in this panel means we just signed in. This terminal
+    // confirmation is #12's end state; opening a Thread from here (routing
+    // Open-project through sign-in) is #13.
     return (
       <div className="signin signin--done">
         <div className="signin__title">Signed in to Mistral Vibe</div>
@@ -167,6 +181,9 @@ function SignInPanel({
       <div className="signin">
         <div className="signin__title">Signing in…</div>
         <div className="signin__message">Complete sign-in in your browser, then return here.</div>
+        <button className="btn btn--ghost signin__action" onClick={cancel}>
+          Cancel
+        </button>
       </div>
     )
   }

@@ -1,4 +1,4 @@
-import type { AuthMethod } from '../../../shared/ipc'
+import { DELEGATED_AUTH_METHOD_ID, type AuthMethod } from '../../../shared/ipc'
 
 /**
  * Pure auth view-state selector (no React, no IPC). Maps the detected
@@ -30,12 +30,15 @@ export type AuthAction =
   | { type: 'sign-in-start' }
   | { type: 'sign-in-success' }
   | { type: 'sign-in-error'; message: string }
+  | { type: 'sign-in-cancel' }
 
 /**
  * Fold a sign-in lifecycle action into the panel's view state. Pure (no React,
  * no IPC). `sign-in-start` is allowed from both `not-signed-in` and `error` so
  * the error state stays recoverable (retry); a failure can never leave the
- * panel stuck in `signing-in`.
+ * panel stuck in `signing-in`. `sign-in-cancel` is the user's escape hatch out
+ * of `signing-in` (the browser long-poll itself can't be aborted — see
+ * SignInPanel); it just abandons the attempt and returns to `not-signed-in`.
  */
 export function authReducer(state: AuthViewState, action: AuthAction): AuthViewState {
   switch (action.type) {
@@ -45,6 +48,8 @@ export function authReducer(state: AuthViewState, action: AuthAction): AuthViewS
       return { ...state, phase: 'signed-in', error: null }
     case 'sign-in-error':
       return { ...state, phase: 'error', error: action.message }
+    case 'sign-in-cancel':
+      return { ...state, phase: 'not-signed-in', error: null }
   }
 }
 
@@ -77,17 +82,12 @@ export interface NoAuthView {
 export type AuthView = SignInView | SigningInView | SignInErrorView | NoAuthView
 
 /**
- * The id Vibe's client-driven (delegated) browser sign-in is advertised under
- * (acp-capture §8). Preferred over the blocking `browser-auth` per ADR-0003.
- */
-export const DELEGATED_METHOD_ID = 'browser-auth-delegated'
-
-/**
- * Pick the sign-in method to drive: prefer the delegated method, else the first
- * advertised, else a generic fallback so the user is never stranded.
+ * Pick the sign-in method to drive: prefer the delegated method (the one main's
+ * `signIn` accepts), else the first advertised, else a generic fallback so the
+ * user is never stranded.
  */
 function preferredMethod(authMethods: AuthMethod[]): { id: string; name: string; description: string | null } {
-  const method = authMethods.find((m) => m.id === DELEGATED_METHOD_ID) ?? authMethods[0]
+  const method = authMethods.find((m) => m.id === DELEGATED_AUTH_METHOD_ID) ?? authMethods[0]
   return {
     id: method?.id ?? '',
     name: method?.name ?? 'Sign in',

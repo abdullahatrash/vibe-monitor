@@ -50,6 +50,13 @@ describe('authReducer', () => {
     expect(state.phase).toBe('signing-in')
     expect(state.error).toBeNull()
   })
+
+  it('returns signing-in → not-signed-in on cancel (escape hatch, never stranded)', () => {
+    let state = authReducer(initialAuthViewState([BROWSER_AUTH]), { type: 'sign-in-start' })
+    state = authReducer(state, { type: 'sign-in-cancel' })
+    expect(state.phase).toBe('not-signed-in')
+    expect(state.error).toBeNull()
+  })
 })
 
 describe('selectAuthView', () => {

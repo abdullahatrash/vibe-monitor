@@ -96,11 +96,11 @@ Vibe is **not** API-key-only. Per Mistral's
 **We never store credentials.** Like CodexMonitor with Codex, vibe-monitor delegates all auth and
 token storage to the `vibe` binary (`~/.vibe`). We only detect signed-in vs not.
 
-**Over ACP:** `initialize` advertises `auth_method: vibe-setup` (when the client supports
-`terminal-auth`). An in-app sign-in would mirror CodexMonitor's Codex OAuth orchestration
-(`account/login/start` → open `authUrl` in the system browser → `account/login/completed`), likely
-via ACP's `authenticate` method. ⚠️ **Unconfirmed** — verify the exact ACP auth mechanism against the
-live `vibe-acp` binary before building any in-app flow.
+**Over ACP — now captured (see [acp-capture.md](./acp-capture.md) §8):** detect with `_auth/status`
+(`initialize` can't reveal auth state); sign in via `authenticate` (`browser-auth-delegated`:
+`start → signInUrl → complete`, or blocking `browser-auth`); sign out via `_auth/signOut`. The
+unauthenticated error is JSON-RPC code **-32000** (reserved exclusively for unauthenticated). Credentials
+live in the OS keyring; we never store them (see [adr/0003](./adr/0003-auth-delegated-to-vibe.md)).
 
 **Slice #1 stance:** assume the user is **already authenticated** (browser sign-in *or* API key);
 do not build the flow; surface `UnauthenticatedError` with a hint to run `vibe` / `vibe --setup`.

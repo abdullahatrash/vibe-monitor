@@ -174,3 +174,87 @@ Read turn is the same minus the permission step.
 - **Default mode** (not "chat") is correct for slice #1 — it gates writes/commands behind the prompt.
 - **Still to verify:** method to change mode / grant workspace trust; `session/load` (resume) and
   `session/cancel` shapes.
+
+---
+
+## 8. Authentication (captured 2026-06-29, vibe-acp 2.18.0)
+
+Captured by driving `vibe-acp` after deleting the macOS Keychain credential (signed out), then
+re-authenticating. Corroborated by reading Vibe's installed source (`site-packages/vibe/acp/`,
+which is plain Python).
+
+### Auth state is NOT in `initialize`
+`initialize` is byte-identical signed-in vs signed-out — `authMethods:[{id:"browser-auth", …}]` is
+always present. So you cannot detect auth state from the handshake. Use `auth/status` (below).
+
+### `_auth/status` — clean detection (ACP extension method)
+Extension methods are sent with a leading `_` on the wire (ACP strips it before dispatch):
+```
+>>> {"id":20,"method":"_auth/status"}
+<<< {"id":20,"result":{"authenticated":false,"authState":"signed_out","signOutAvailable":false}}   // signed out
+<<< {"id":40,"result":{"authenticated":true, "authState":"os_keyring","signOutAvailable":true }}    // signed in
+```
+`authState` values seen: `signed_out`, `os_keyring`. (Source implies others for BYOK env/api-key.)
+**This is the detection call** — no need to force an error.
+
+### The real `UnauthenticatedError`
+When signed out, `session/new` fails (the error surfaces there, not at `session/prompt`):
+```
+>>> {"id":2,"method":"session/new","params":{"cwd":"…","mcpServers":[]}}
+<<< {"id":2,"error":{"code":-32000,"message":"Missing API key for mistral provider.","data":null}}
+```
+**`-32000` is reserved EXCLUSIVELY for `UnauthenticatedError` in Vibe** (per `vibe/acp/exceptions.py`):
+other Vibe errors use `-31xxx` application codes (rate-limited `-31001`, configuration `-31002`,
+conversation-limit `-31003`, context-too-long `-31004`, refusal `-31005`, compaction-failed `-31006`,
+invalid-image `-31007`, images-unsupported `-31008`) and standard JSON-RPC `-326xx`
+(`-32601` method-not-found, `-32602` invalid-params, `-32603` internal). So **code `-32000` is the
+reliable unauthenticated signal** — this REVERSES the TB1 decision (#2) that dropped the `-32000`
+check on the (then-unconfirmed) assumption it was a generic code. The message is framed as
+"Missing API key for <provider> provider", which a "sign in / unauthenticated" regex would miss — so
+classify on the **code**, not the message.
+
+### `authenticate` — two modes
+```
+authenticate(method_id, **kwargs) -> AuthenticateResponse
+```
+1. **`browser-auth` (agent-driven, blocking)** — the AGENT opens the browser and blocks until the user
+   completes sign-in, then persists the key to the OS keyring:
+   ```
+   >>> {"id":30,"method":"authenticate","params":{"methodId":"browser-auth"}}
+   <<< {"id":30,"result":{"_meta":{"browser-auth":{"persistResult":"completed","status":"completed"}}}}
+   ```
+2. **`browser-auth-delegated` (client-driven, two-step)** — advertised only if the client advertises the
+   `browser-auth-delegated` capability (in `clientCapabilities` field-meta). The CLIENT opens the URL.
+   (From source; confirm live when building #12.)
+   ```
+   authenticate({methodId:"browser-auth-delegated", action:"start"})
+     -> {_meta:{"browser-auth-delegated":{attemptId, expiresAt, signInUrl}}}   // client opens signInUrl
+   authenticate({methodId:"browser-auth-delegated", action:"complete", attemptId})
+     -> {_meta:{"browser-auth-delegated":{attemptId, persistResult, status:"completed"}}}
+   ```
+   **This delegated mode is the right fit for vibe-monitor** (we open the URL via the system opener,
+   show progress, stay non-blocking) — it mirrors CodexMonitor's `login/start → open authUrl → complete`.
+
+### `_auth/signOut` — sign out (ACP extension method)
+Removes the API key from the keyring; errors if `signOutAvailable` is false:
+```
+>>> {"id":N,"method":"_auth/signOut"}
+<<< {"id":N,"result":{}}
+```
+
+### Credentials live in the OS keyring
+`authState:"os_keyring"`. A fresh empty `VIBE_HOME` stays authenticated; there was no `MISTRAL_API_KEY`
+in the environment. vibe-monitor never stores credentials — Vibe owns them (keyring). See ADR-0003.
+
+### Bonus (resolves earlier unknowns)
+Vibe also exposes these ACP extension methods (all `_`-prefixed on the wire): `trust/status`,
+`trust/decision` (the workspace-trust grant we flagged as unconfirmed), `session/set_title`,
+`session/delete`.
+
+### What this means for the auth slices (#11–#13)
+- **#11 Detect:** call `_auth/status` after `initialize`; classify on `authenticated`/`authState`.
+  Treat a `-32000` error mid-session as expiry → re-detect/offer sign-in.
+- **#12 Sign in:** advertise the `browser-auth-delegated` capability, `authenticate(start)` → open
+  `signInUrl` via the system opener → `authenticate(complete, attemptId)`. (Fallback: blocking
+  `browser-auth`.)
+- **#13 Sign out / status:** `_auth/signOut`, gated on `signOutAvailable`; show `authState`.

@@ -40,6 +40,11 @@ function connectionFor(agentId: string, agent: WorkspaceAgent, thread: ThreadInf
  */
 function threadFailureResult(agentId: string, agent: WorkspaceAgent, err: unknown): StartThreadResult {
   if (err instanceof WorkspaceAgentError && err.authState === 'not-signed-in') {
+    // Keep the agent alive AND registered so the renderer's follow-up
+    // signIn({agentId}) finds it. Idempotent: startThread already registers on a
+    // successful start(), but a -32000 thrown from start() itself reaches here
+    // before that, so without this the child would leak + the button would dead-end.
+    agents.set(agentId, agent)
     return { ok: false, kind: 'not-signed-in', agentId, workspaceDir: agent.workspaceDir, authMethods: agent.authMethods }
   }
   agent.stop()

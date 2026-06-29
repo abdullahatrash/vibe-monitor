@@ -171,7 +171,7 @@ export class WorkspaceAgent extends EventEmitter {
       await this.detectAuthState(earlyFailure)
       this.initialized = true
     } catch (err) {
-      throw this.toAgentError(err)
+      throw this.mapErrorAndCacheAuth(err)
     } finally {
       this.detachStartGuards(onError, onExit)
     }
@@ -321,7 +321,7 @@ export class WorkspaceAgent extends EventEmitter {
         mcpServers: [],
       })
     } catch (err) {
-      throw this.toAgentError(err)
+      throw this.mapErrorAndCacheAuth(err)
     }
 
     const thread: ThreadInfo = {
@@ -356,7 +356,7 @@ export class WorkspaceAgent extends EventEmitter {
         prompt: [{ type: 'text', text }],
       })
     } catch (err) {
-      throw this.toAgentError(err)
+      throw this.mapErrorAndCacheAuth(err)
     }
   }
 
@@ -428,8 +428,14 @@ export class WorkspaceAgent extends EventEmitter {
     return new WorkspaceAgentError(`Failed to launch vibe-acp: ${message}`, SPAWN_HINT)
   }
 
-  /** Map a request rejection (JSON-RPC error, early failure) to a clear error. */
-  private toAgentError(err: unknown): WorkspaceAgentError {
+  /**
+   * Map a request rejection (JSON-RPC error, early failure) to a clear error.
+   * SIDE EFFECT: a -32000 UnauthenticatedError also caches the agent's auth
+   * state as `not-signed-in` (mid-session expiry) — call only from a real
+   * request-failure path, never to map an error read-only (e.g. for logging),
+   * or you'd silently mark a live agent signed-out.
+   */
+  private mapErrorAndCacheAuth(err: unknown): WorkspaceAgentError {
     if (err instanceof WorkspaceAgentError) return err
 
     const rpc = err as { code?: number; message?: string; data?: unknown }

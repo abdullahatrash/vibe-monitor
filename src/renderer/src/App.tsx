@@ -113,7 +113,11 @@ export function App(): JSX.Element {
 
           {connect.status === 'connected' && (
             <>
+              {/* Key by agentId (like Conversation) so its useReducer seed resets
+                  across connections — a new agent can't inherit the prior
+                  session's sign-out gate. */}
               <SignedInBar
+                key={connect.thread.agentId}
                 agentId={connect.thread.agentId}
                 authMethods={connect.thread.authMethods}
                 signOutAvailable={connect.thread.signOutAvailable}

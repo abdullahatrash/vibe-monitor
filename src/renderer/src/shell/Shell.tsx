@@ -40,6 +40,14 @@ export function Shell({
 }): JSX.Element {
   const [nav, dispatch] = useReducer(navReducer, initialNavState)
   const selectedThread = findSelectedThread(workspaces, nav)
+  // Offer delete only while NO connection is active (`connectionOutlet` null). The
+  // always-mounted sidebar would otherwise expose delete DURING a live connection,
+  // letting a user remove the Thread the agent is hosting out from under it —
+  // orphaning the live conversation, whose next prompt would write a deleted/
+  // recreated JSONL. On `origin/main` delete lived in the idle-gated cold list and
+  // was structurally impossible while connected; we preserve that invariant. Safe
+  // live-list delete (with teardown) is TB2/TB3 (#47/#48).
+  const deletable = connectionOutlet === null
 
   return (
     <div className="shell">
@@ -48,6 +56,7 @@ export function Shell({
         <WorkspaceNav
           workspaces={workspaces}
           nav={nav}
+          deletable={deletable}
           onSelectWorkspace={(workspaceId) => dispatch({ type: 'select-workspace', workspaceId })}
           onSelectThread={(workspaceId, threadId) =>
             dispatch({ type: 'select-thread', workspaceId, threadId })
@@ -88,12 +97,15 @@ export function Shell({
 function WorkspaceNav({
   workspaces,
   nav,
+  deletable,
   onSelectWorkspace,
   onSelectThread,
   onDeleteThread,
 }: {
   workspaces: ListMetadataResult
   nav: NavState
+  /** Whether per-row delete is offered (false while a connection is active). */
+  deletable: boolean
   onSelectWorkspace: (workspaceId: string) => void
   onSelectThread: (workspaceId: string, threadId: string) => void
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
@@ -125,6 +137,7 @@ function WorkspaceNav({
                     key={t.id}
                     thread={t}
                     selected={t.id === nav.selectedThreadId}
+                    deletable={deletable}
                     onOpen={() => onSelectThread(w.id, t.id)}
                     onDelete={onDeleteThread}
                   />
@@ -142,19 +155,22 @@ function WorkspaceNav({
 
 /**
  * One Thread row in the sidebar: selecting it on click (the outlet reopens it
- * read-only — TB3), highlighted when selected, with a delete control (TB6). Delete
- * is two-step — a first click arms an INLINE confirm (Delete / Cancel) rather than
- * a native `confirm()` (which would block the renderer), so a single misclick can't
- * nuke a Thread's history.
+ * read-only — TB3), highlighted when selected, with a delete control (TB6) shown
+ * only when `deletable` (i.e. no live connection — see Shell). Delete is two-step —
+ * a first click arms an INLINE confirm (Delete / Cancel) rather than a native
+ * `confirm()` (which would block the renderer), so a single misclick can't nuke a
+ * Thread's history.
  */
 function NavThread({
   thread,
   selected,
+  deletable,
   onOpen,
   onDelete,
 }: {
   thread: ThreadMeta
   selected: boolean
+  deletable: boolean
   onOpen: () => void
   onDelete: (thread: ThreadMeta) => Promise<void>
 }): JSX.Element {
@@ -167,7 +183,7 @@ function NavThread({
       >
         {threadLabel(thread)}
       </button>
-      {confirming ? (
+      {!deletable ? null : confirming ? (
         <span className="recents__thread-confirm">
           <button
             className="btn btn--ghost btn--danger"

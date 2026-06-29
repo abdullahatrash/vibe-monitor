@@ -16,6 +16,7 @@ import {
   type SignOutResult,
   type StartThreadArgs,
   type StartThreadResult,
+  type ThreadBoundEvent,
   type VibeDetectResult,
 } from '../shared/ipc'
 
@@ -42,6 +43,11 @@ const api = {
     const handler = (_e: unknown, payload: AcpEvent): void => listener(payload)
     ipcRenderer.on(IPC.acpEvent, handler)
     return () => ipcRenderer.removeListener(IPC.acpEvent, handler)
+  },
+  onThreadBound: (listener: (event: ThreadBoundEvent) => void): (() => void) => {
+    const handler = (_e: unknown, payload: ThreadBoundEvent): void => listener(payload)
+    ipcRenderer.on(IPC.threadBound, handler)
+    return () => ipcRenderer.removeListener(IPC.threadBound, handler)
   },
 }
 

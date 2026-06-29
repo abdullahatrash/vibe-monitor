@@ -24,6 +24,12 @@ export const IPC = {
   signOut: 'auth:sign-out',
   /** Main -> renderer: streamed ACP event tagged by the owning agent. */
   acpEvent: 'acp:event',
+  /**
+   * Main -> renderer: a draft's session was just minted (`session/new`) and bound
+   * to its Thread (TB5). Emitted BEFORE that session streams any event, so a draft
+   * is bound before its own events arrive — it never infers its session from one.
+   */
+  threadBound: 'thread:bound',
   /** List persisted Workspaces + their Threads for the cold launch list (ADR-0005). */
   listMetadata: 'metadata:list',
   /** Read a Thread's persisted JSONL transcript for a process-free reopen (TB3). */
@@ -143,6 +149,17 @@ export interface AcpEvent {
   payload: unknown
 }
 
+/**
+ * Main -> renderer signal that a draft's `session/new` returned and its session
+ * is bound to `threadId` (TB5). Sent the instant binding completes and BEFORE the
+ * session streams any event, so the draft's live view adopts its OWN session up
+ * front instead of inferring one from an arbitrary (possibly sibling) event.
+ */
+export interface ThreadBoundEvent {
+  threadId: string
+  sessionId: string
+}
+
 /** Token usage for a completed turn (`session/prompt` response). */
 export interface PromptUsage {
   inputTokens?: number
@@ -202,6 +219,12 @@ export type CreateDraftResult =
 export interface RespondPermissionArgs {
   /** Id of the Workspace agent (one `vibe-acp` process) hosting the Thread. */
   agentId: string
+  /**
+   * Our durable Thread id (TB5) — the permission response is teed to THIS Thread's
+   * log directly, not via the agent's last-prompted map, so answering a Thread's
+   * permission after switching+prompting a sibling can't misroute the entry.
+   */
+  threadId: string
   /** The JSON-RPC id of the agent's `session/request_permission` request. */
   requestId: number | string
   /** The `optionId` of the option the user selected. */

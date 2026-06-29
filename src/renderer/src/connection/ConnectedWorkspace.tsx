@@ -2,7 +2,7 @@ import { useState, type JSX } from 'react'
 import type { AuthMethod, ThreadConnection, ThreadMeta } from '../../../shared/ipc'
 import { ColdThread } from '../conversation/ColdThread'
 import { Conversation } from '../conversation/Conversation'
-import { routeThreadSelection } from './thread-selection'
+import { routeThreadSelection, seedSessionId } from './thread-selection'
 
 /**
  * A connected Workspace hosting MULTIPLE Threads on one `vibe-acp` agent (TB5
@@ -65,7 +65,7 @@ export function ConnectedWorkspace({
 
   // The session to seed the selected Thread with: the one bound this session (if
   // any) wins over the persisted cursor, so a bound draft isn't re-minted on switch.
-  const seedSessionId = boundSessions[selected.id] ?? selected.sessionId
+  const seedSession = seedSessionId(selected, boundSessions)
 
   return (
     <div className="workspace">
@@ -101,7 +101,7 @@ export function ConnectedWorkspace({
             agentId: connection.agentId,
             threadId: selected.id,
             workspaceId: connection.workspaceId,
-            sessionId: seedSessionId,
+            sessionId: seedSession,
             title: selected.title,
           }}
           onAuthExpired={onAuthExpired}

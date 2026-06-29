@@ -38,10 +38,27 @@ describe('eventBelongsToThread', () => {
     expect(eventBelongsToThread({ type: 'error', message: 'boom' }, null)).toBe(true)
   })
 
-  it('accepts a session-tagged event for a not-yet-bound (draft) Thread so its first turn shows', () => {
-    // A draft has no bound session until its first prompt resolves; its first
-    // turn's events must still render (only the selected Thread is mounted, so
-    // there is no other live Thread to misroute to).
-    expect(eventBelongsToThread({ params: { sessionId: 's-new' } }, null)).toBe(true)
+  it('REJECTS every session-tagged event while a draft is still unbound (no sibling adoption)', () => {
+    // A sibling Thread stays live on the shared agent: an unbound draft must NOT
+    // adopt an arbitrary event's session, or it would splice a sibling's turn in.
+    // Main's `thread:bound` signal binds the draft BEFORE its own events arrive,
+    // so rejecting-while-unbound drops nothing of the draft's own stream.
+    expect(eventBelongsToThread({ params: { sessionId: 's-sibling' } }, null)).toBe(false)
+    expect(eventBelongsToThread({ params: { sessionId: 's-own' } }, null)).toBe(false)
+  })
+
+  it('after binding (thread:bound) routes the draft to its OWN session, rejecting a sibling', () => {
+    // Models the canonical race: draft D mounts unbound while sibling A streams on
+    // sA. Until D is bound, BOTH are rejected. Once `thread:bound` sets D to sD,
+    // D accepts its own sD events and still rejects A's sA events.
+    const sibling = { params: { sessionId: 'sA' } }
+    const own = { params: { sessionId: 'sD' } }
+    expect(eventBelongsToThread(sibling, null)).toBe(false)
+    expect(eventBelongsToThread(own, null)).toBe(false)
+    expect(eventBelongsToThread(own, 'sD')).toBe(true)
+    expect(eventBelongsToThread(sibling, 'sD')).toBe(false)
+    // Lifecycle still passes through at every stage.
+    expect(eventBelongsToThread({ type: 'exit', info: {} }, null)).toBe(true)
+    expect(eventBelongsToThread({ type: 'exit', info: {} }, 'sD')).toBe(true)
   })
 })

@@ -21,3 +21,18 @@ export function routeThreadSelection(
 ): ThreadView {
   return liveThreadIds.has(thread.id) ? 'live' : 'cold'
 }
+
+/**
+ * The session to seed a selected Thread's live view with (TB5). A session bound
+ * THIS session (lifted when main signals `thread:bound`, kept in `boundSessions`)
+ * wins over the Thread's persisted `sessionId` cursor — so switching away from a
+ * just-bound draft and back RE-SEEDS its real session instead of seeing a stale
+ * `null` and re-minting a second one (`ensureBoundSession` then takes its reuse
+ * branch — zero extra `session/new`).
+ */
+export function seedSessionId(
+  thread: ThreadMeta,
+  boundSessions: Readonly<Record<string, string>>,
+): string | null {
+  return boundSessions[thread.id] ?? thread.sessionId
+}

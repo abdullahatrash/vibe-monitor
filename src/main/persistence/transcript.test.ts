@@ -231,3 +231,23 @@ describe('sessionIdFromPayload (S3 routing)', () => {
     expect(sessionIdFromPayload('nope')).toBeNull()
   })
 })
+
+/**
+ * Permission-response routing under multiplexing (TB5 #34). Several Threads share
+ * one agent; a permission response must tee to the Thread it ANSWERS (by its
+ * explicit threadId), NOT the agent's last-prompted Thread. This pins the
+ * per-threadId contract `respondPermission` now uses (it tees by args.threadId,
+ * not the agentId -> threadId map that would misroute after a sibling prompt).
+ */
+describe('resolve-permission routing by threadId (TB5 multiplex)', () => {
+  it('tees a resolve-permission entry to the answered Thread, not a sibling', async () => {
+    const store = storeAt()
+    // Thread A has a pending permission; meanwhile sibling B was the last prompted.
+    await store.append('perm-A', resolvePermissionEntry('req-1', 'allow-once'))
+
+    const a = await store.read('perm-A')
+    expect(a).toEqual([{ t: 'resolve-permission', requestId: 'req-1', optionId: 'allow-once', name: null }])
+    // The sibling's log is untouched — the entry did not misroute to B.
+    expect(await store.read('perm-B')).toEqual([])
+  })
+})

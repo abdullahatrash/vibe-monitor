@@ -22,17 +22,20 @@ export function sessionIdOfEvent(payload: unknown): string | null {
 
 /**
  * Whether an `acp:event` payload belongs to a Thread's live view, given the
- * session that Thread is bound to (`null` while a draft is unbound).
+ * session that Thread is bound to (`null` while a draft is still unbound).
  *
- * A session-tagged event routes to the Thread bound to that session. A
+ * A session-tagged event routes ONLY to the Thread bound to that session. A
  * session-less lifecycle event (exit/error/stderr) is agent-wide and always
- * passes through. A not-yet-bound (draft) Thread accepts session-tagged events
- * too — its first turn must render before `session/new` round-trips back, and
- * only the selected Thread is mounted so there is no sibling to misroute to.
+ * passes through. An UNBOUND draft (`boundSessionId === null`) REJECTS every
+ * session-tagged event — siblings stay live on the shared agent, so adopting an
+ * arbitrary event's session would splice a sibling's turn into the draft. Main
+ * emits a `thread:bound` signal the instant `session/new` returns and BEFORE that
+ * session streams any event (see `sendPrompt`), so a draft is bound before its
+ * own first event arrives — rejecting-while-unbound drops nothing of its own.
  */
 export function eventBelongsToThread(payload: unknown, boundSessionId: string | null): boolean {
   const sid = sessionIdOfEvent(payload)
   if (sid === null) return true
-  if (boundSessionId === null) return true
+  if (boundSessionId === null) return false
   return sid === boundSessionId
 }

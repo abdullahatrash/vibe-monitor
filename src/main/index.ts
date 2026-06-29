@@ -134,11 +134,13 @@ async function recordThread(agentId: string, workspaceDir: string, thread: Threa
  * Without a store (best-effort degraded mode), open a session directly so a draft
  * can still prompt; an already-bound Thread always reuses its `sessionId`.
  */
-async function bindThreadSession(agent: WorkspaceAgent, args: SendPromptArgs): Promise<string> {
-  // Point the bridge at the Thread being prompted, so a session-less chokepoint
-  // (notably `respondPermission`) tees to the ACTIVE Thread when several share an
-  // agent — refreshed every prompt, not just on a fresh mint (last-write-wins,
-  // and only the active Thread prompts at a time).
+async function bindThreadSession(
+  agent: WorkspaceAgent,
+  args: SendPromptArgs,
+): Promise<{ sessionId: string; minted: boolean }> {
+  // Point the bridge at the Thread being prompted, so a session-less lifecycle
+  // event tees to the ACTIVE Thread when several share an agent — refreshed every
+  // prompt (last-write-wins, and only the active Thread prompts at a time).
   transcriptThreads.set(args.agentId, args.threadId)
   if (metadataStore) {
     const bound = await ensureBoundSession({
@@ -148,11 +150,11 @@ async function bindThreadSession(agent: WorkspaceAgent, args: SendPromptArgs): P
       workspaceId: args.workspaceId,
       sessionId: args.sessionId,
     })
-    return bound.sessionId
+    return { sessionId: bound.sessionId, minted: bound.minted }
   }
-  if (args.sessionId) return args.sessionId
+  if (args.sessionId) return { sessionId: args.sessionId, minted: false }
   const thread = await agent.openThread()
-  return thread.sessionId
+  return { sessionId: thread.sessionId, minted: true }
 }
 
 /**
@@ -326,7 +328,7 @@ function registerIpc(): void {
 
   ipcMain.handle(
     IPC.sendPrompt,
-    async (_event, args: SendPromptArgs): Promise<SendPromptResult> => {
+    async (event, args: SendPromptArgs): Promise<SendPromptResult> => {
       const agent = agents.get(args.agentId)
       if (!agent) return { ok: false, kind: 'error', error: `No active agent for id ${args.agentId}.` }
 
@@ -337,7 +339,16 @@ function registerIpc(): void {
       // failed first prompt leaves no transcript residue.
       let sessionId: string
       try {
-        sessionId = await bindThreadSession(agent, args)
+        const bound = await bindThreadSession(agent, args)
+        sessionId = bound.sessionId
+        // Tell the renderer its draft is now bound, the INSTANT `session/new`
+        // returns and BEFORE `agent.prompt` streams any event below (same
+        // webContents, so ordered ahead of those `acp:event`s). This binds the
+        // draft's live view to its OWN session up front, so it never infers a
+        // session from an arbitrary (possibly sibling) event.
+        if (bound.minted && !event.sender.isDestroyed()) {
+          event.sender.send(IPC.threadBound, { threadId: args.threadId, sessionId })
+        }
       } catch (err) {
         if (err instanceof WorkspaceAgentError && err.authState === 'not-signed-in') {
           return { ok: false, kind: 'not-signed-in', agentId: args.agentId, authMethods: agent.authMethods }
@@ -378,8 +389,11 @@ function registerIpc(): void {
     // approve/deny decision lives in the renderer (ADR-0001). We also tee the
     // choice to the transcript — main sees requestId + optionId but not the
     // option's display name (renderer-side), so the entry's `name` is null.
+    // Tee by the renderer-supplied `threadId` directly (TB5), NOT the agent's
+    // last-prompted map: answering Thread A's permission after switching+prompting
+    // a sibling B must land in A's log, not B's.
     const agent = agents.get(args.agentId)
-    teeTranscript(threadIdForTee(args.agentId), resolvePermissionEntry(args.requestId, args.optionId))
+    teeTranscript(args.threadId, resolvePermissionEntry(args.requestId, args.optionId))
     agent?.respondPermission(args.requestId, args.optionId)
   })
 

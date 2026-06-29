@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 
 /**
@@ -12,7 +12,41 @@ import { EventEmitter } from 'node:events'
  * NOTE: the concrete ACP method names (`initialize`, `session/new`,
  * `session/prompt`, ...) are wired up feature-by-feature on top of this
  * transport. This class only owns the transport + correlation.
+ *
+ * The process is spawned through an injectable factory (`spawn`), defaulting to
+ * `node:child_process.spawn`. Tests supply a fake child to feed stdout lines
+ * and capture stdin writes without launching a real binary (Seam B).
  */
+
+/** The narrow surface of a spawned child process this transport relies on. */
+export interface ChildStreamLike {
+  setEncoding(encoding: BufferEncoding): void
+  on(event: 'data', listener: (chunk: string) => void): void
+}
+
+export interface ChildStdinLike {
+  write(data: string): void
+}
+
+export interface ChildProcessLike {
+  stdout: ChildStreamLike
+  stderr: ChildStreamLike
+  stdin: ChildStdinLike
+  on(event: 'error', listener: (err: Error) => void): void
+  on(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): void
+  kill(): void
+}
+
+export interface SpawnOptionsLike {
+  cwd?: string
+  env?: NodeJS.ProcessEnv
+}
+
+/** Factory that launches the agent process. Injectable for testing. */
+export type SpawnFn = (command: string, args: string[], options: SpawnOptionsLike) => ChildProcessLike
+
+const defaultSpawn: SpawnFn = (command, args, options) =>
+  spawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] }) as unknown as ChildProcessLike
 
 export interface AcpClientOptions {
   /** Command to launch. Defaults to `vibe-acp`. */
@@ -21,6 +55,8 @@ export interface AcpClientOptions {
   /** Working directory for the spawned process. */
   cwd?: string
   env?: NodeJS.ProcessEnv
+  /** Process factory. Defaults to `node:child_process.spawn`. */
+  spawn?: SpawnFn
 }
 
 interface PendingRequest {
@@ -40,13 +76,15 @@ interface JsonRpcMessage {
 }
 
 export class AcpClient extends EventEmitter {
-  private child: ChildProcessWithoutNullStreams | null = null
+  private child: ChildProcessLike | null = null
   private nextId = 1
   private readonly pending = new Map<JsonRpcId, PendingRequest>()
   private stdoutBuffer = ''
+  private readonly spawnFn: SpawnFn
 
   constructor(private readonly options: AcpClientOptions = {}) {
     super()
+    this.spawnFn = options.spawn ?? defaultSpawn
   }
 
   /** Spawn the vibe-acp process. Throws if it cannot be launched. */
@@ -54,11 +92,10 @@ export class AcpClient extends EventEmitter {
     if (this.child) throw new Error('AcpClient already started')
 
     const command = this.options.command ?? 'vibe-acp'
-    const child = spawn(command, this.options.args ?? [], {
+    const child = this.spawnFn(command, this.options.args ?? [], {
       cwd: this.options.cwd,
       env: this.options.env ?? process.env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }) as ChildProcessWithoutNullStreams
+    })
 
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => this.onStdout(chunk))
@@ -104,7 +141,7 @@ export class AcpClient extends EventEmitter {
     this.rejectAllPending(new Error('AcpClient stopped'))
   }
 
-  private writeMessage(child: ChildProcessWithoutNullStreams, message: JsonRpcMessage): void {
+  private writeMessage(child: ChildProcessLike, message: JsonRpcMessage): void {
     child.stdin.write(JSON.stringify(message) + '\n')
   }
 

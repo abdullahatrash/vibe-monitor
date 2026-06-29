@@ -6,13 +6,13 @@
 export const IPC = {
   /** Detect whether `vibe` / `vibe-acp` are installed and reachable. */
   detectVibe: 'vibe:detect',
-  /** Start an ACP session for a given workspace directory. */
-  acpStart: 'acp:start',
-  /** Stop / dispose an ACP session. */
-  acpStop: 'acp:stop',
-  /** Renderer -> main: send a prompt into a session. */
-  acpPrompt: 'acp:prompt',
-  /** Main -> renderer: streamed ACP event for a session. */
+  /** Open a native directory picker to choose a Workspace. */
+  openWorkspaceDialog: 'workspace:open-dialog',
+  /** Start a Workspace agent, run the ACP handshake, and open a Thread. */
+  startThread: 'thread:start',
+  /** Stop / dispose a Workspace agent (and its Threads). */
+  stopAgent: 'agent:stop',
+  /** Main -> renderer: streamed ACP event tagged by the owning agent. */
   acpEvent: 'acp:event',
 } as const
 
@@ -25,17 +25,58 @@ export interface VibeDetectResult {
   error: string | null
 }
 
-export interface AcpStartArgs {
-  /** Absolute path to the workspace the agent should operate in. */
+/** A selectable agent mode from `session/new` (e.g. `default`, `plan`). */
+export interface AcpMode {
+  id: string
+  name: string
+  description?: string
+}
+
+/** A selectable model from `session/new`. */
+export interface AcpModel {
+  modelId: string
+  name: string
+}
+
+export interface ThreadModes {
+  currentModeId: string
+  availableModes: AcpMode[]
+}
+
+export interface ThreadModels {
+  currentModelId: string
+  availableModels: AcpModel[]
+}
+
+/** A connected Thread, mapped onto the ACP `sessionId` from `session/new`. */
+export interface ThreadInfo {
+  /** The ACP session id this Thread is bound to (debug-visible only). */
+  sessionId: string
+  /** Title placeholder, when the agent provides one. */
+  title: string | null
+  modes: ThreadModes | null
+  models: ThreadModels | null
+}
+
+export interface StartThreadArgs {
+  /** Absolute path to the Workspace the agent should operate in. */
   workspaceDir: string
 }
 
-export interface AcpStartResult {
-  sessionId: string
+/** A Thread plus the Workspace agent that hosts it. */
+export interface ThreadConnection extends ThreadInfo {
+  /** Id of the Workspace agent (one `vibe-acp` process) in main. */
+  agentId: string
+  workspaceDir: string
 }
 
+export type StartThreadResult =
+  | { ok: true; thread: ThreadConnection }
+  | { ok: false; error: string; hint: string | null }
+
 export interface AcpEvent {
-  sessionId: string
-  /** Raw ACP / JSON-RPC payload as received from vibe-acp. */
+  /** Id of the Workspace agent the payload came from. */
+  agentId: string
+  /** Raw ACP / JSON-RPC payload (or a serialized child lifecycle event). */
   payload: unknown
 }

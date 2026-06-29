@@ -24,10 +24,18 @@ export const IPC = {
   signOut: 'auth:sign-out',
   /** Main -> renderer: streamed ACP event tagged by the owning agent. */
   acpEvent: 'acp:event',
+  /**
+   * Main -> renderer: a draft's session was just minted (`session/new`) and bound
+   * to its Thread (TB5). Emitted BEFORE that session streams any event, so a draft
+   * is bound before its own events arrive — it never infers its session from one.
+   */
+  threadBound: 'thread:bound',
   /** List persisted Workspaces + their Threads for the cold launch list (ADR-0005). */
   listMetadata: 'metadata:list',
   /** Read a Thread's persisted JSONL transcript for a process-free reopen (TB3). */
   readTranscript: 'transcript:read',
+  /** Mint a NEW-Thread draft (durable id, no ACP session) under a Workspace (TB5). */
+  createDraft: 'thread:create-draft',
 } as const
 
 /**
@@ -116,6 +124,10 @@ export interface ThreadConnection extends ThreadInfo {
   /** Id of the Workspace agent (one `vibe-acp` process) in main. */
   agentId: string
   workspaceDir: string
+  /** Our durable, minted Thread id (TB5) — distinct from the ACP `sessionId`. */
+  threadId: string
+  /** Our minted Workspace id (TB5) — the key drafts/binds are recorded under. */
+  workspaceId: string
   /** Whether sign-out is available — drives the connected signed-in indicator. */
   signOutAvailable: boolean
   /** Advertised sign-in methods, kept so sign-out can route back to the panel. */
@@ -137,6 +149,17 @@ export interface AcpEvent {
   payload: unknown
 }
 
+/**
+ * Main -> renderer signal that a draft's `session/new` returned and its session
+ * is bound to `threadId` (TB5). Sent the instant binding completes and BEFORE the
+ * session streams any event, so the draft's live view adopts its OWN session up
+ * front instead of inferring one from an arbitrary (possibly sibling) event.
+ */
+export interface ThreadBoundEvent {
+  threadId: string
+  sessionId: string
+}
+
 /** Token usage for a completed turn (`session/prompt` response). */
 export interface PromptUsage {
   inputTokens?: number
@@ -154,23 +177,54 @@ export interface PromptResult {
 export interface SendPromptArgs {
   /** Id of the Workspace agent (one `vibe-acp` process) hosting the Thread. */
   agentId: string
-  /** ACP session id of the Thread to prompt. */
-  sessionId: string
+  /** Our durable Thread id — bound to its ACP session on the first prompt (TB5). */
+  threadId: string
+  /** Our minted Workspace id — the key the binding is recorded under (TB5). */
+  workspaceId: string
+  /**
+   * The Thread's bound ACP session, or `null` for a draft's FIRST prompt — which
+   * triggers `session/new` in main (ADR-0005). The caller reuses the `sessionId`
+   * returned in the result on subsequent prompts so the session is not re-minted.
+   */
+  sessionId: string | null
   /** The user's prompt text. */
   text: string
 }
 
 export type SendPromptResult =
-  | { ok: true; result: PromptResult }
+  // `sessionId` is the Thread's now-bound session (minted on a draft's first
+  // prompt, else the one passed in) — the renderer reuses it on the next prompt.
+  | { ok: true; result: PromptResult; sessionId: string }
   // Mid-session expiry (-32000): the agent stays alive so the renderer can route
   // to the sign-in panel in place and re-auth on the same agent (no restart).
   | { ok: false; kind: 'not-signed-in'; agentId: string; authMethods: AuthMethod[] }
   | { ok: false; kind: 'error'; error: string }
 
+/** Mint a NEW-Thread draft under a Workspace (TB5): no ACP session, no agent work. */
+export interface CreateDraftArgs {
+  /** Our minted Workspace id the draft is created under. */
+  workspaceId: string
+}
+
+/**
+ * The `createDraft` reply: the minted draft Thread (`sessionId: null`), or an
+ * error if metadata isn't ready. The renderer adds it to the list and selects it;
+ * `session/new` is deferred to its first prompt.
+ */
+export type CreateDraftResult =
+  | { ok: true; thread: ThreadMeta }
+  | { ok: false; error: string }
+
 /** Reply to an agent `session/request_permission` with the user's choice. */
 export interface RespondPermissionArgs {
   /** Id of the Workspace agent (one `vibe-acp` process) hosting the Thread. */
   agentId: string
+  /**
+   * Our durable Thread id (TB5) — the permission response is teed to THIS Thread's
+   * log directly, not via the agent's last-prompted map, so answering a Thread's
+   * permission after switching+prompting a sibling can't misroute the entry.
+   */
+  threadId: string
   /** The JSON-RPC id of the agent's `session/request_permission` request. */
   requestId: number | string
   /** The `optionId` of the option the user selected. */

@@ -613,3 +613,72 @@ body {
   outline: none;
   border-color: var(--accent);
 }
+
+/* --- Connected Workspace: multiple Threads + switching (TB5) --- */
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workspace__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.workspace__name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace__threads {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 0;
+}
+
+.workspace__thread {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.workspace__thread:hover {
+  background: var(--accent-tint);
+  color: var(--accent-text);
+}
+
+.workspace__thread--active {
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.workspace__thread-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

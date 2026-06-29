@@ -359,3 +359,24 @@ describe('transcript replay contract: turn-outcome entries (TB2 S2)', () => {
     expect(next.items.some((i): i is ErrorItem => i.kind === 'error' && i.message === 'kaboom')).toBe(true)
   })
 })
+
+/**
+ * Switching to a live Thread (TB5 #34) seeds its reducer from the replayed JSONL
+ * history before live events resume, via a `hydrate` action that REPLACES state
+ * wholesale. This lets one mounted Conversation show a Thread's saved history and
+ * then continue live, without a separate read-only view.
+ */
+describe('hydrate (TB5 switch-to-live seeding)', () => {
+  it('replaces the whole state with the provided (replayed) state', () => {
+    const replayed: ConversationState = {
+      ...initialConversationState,
+      title: 'Earlier thread',
+      items: [{ kind: 'user', id: 'u1', text: 'hi from before' }],
+    }
+    const next = conversationReducer(
+      { ...initialConversationState, title: 'stale', items: [{ kind: 'user', id: 'x', text: 'stale' }] },
+      { type: 'hydrate', state: replayed },
+    )
+    expect(next).toEqual(replayed)
+  })
+})

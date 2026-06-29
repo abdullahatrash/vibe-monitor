@@ -168,12 +168,18 @@ export type ConversationAction =
   | { type: 'turn-error'; message: string }
   | { type: 'recover' }
   | { type: 'resolve-permission'; requestId: number | string; optionId: string; name: string }
+  // Seed a live Thread from its replayed JSONL history (TB5 #34): replace the
+  // whole state, so switching INTO a Thread shows its saved conversation before
+  // live events resume. The provided state is already folded (via replayTranscript).
+  | { type: 'hydrate'; state: ConversationState }
 
 export function conversationReducer(
   state: ConversationState,
   action: ConversationAction,
 ): ConversationState {
   switch (action.type) {
+    case 'hydrate':
+      return action.state
     case 'send-prompt':
       return {
         ...state,

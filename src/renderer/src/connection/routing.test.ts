@@ -14,6 +14,8 @@ const AUTH_METHODS: AuthMethod[] = [{ id: 'browser-auth-delegated', name: 'Sign 
 const THREAD: ThreadConnection = {
   agentId: 'a1',
   workspaceDir: '/abs/ws',
+  threadId: 't1',
+  workspaceId: 'w1',
   sessionId: 's1',
   title: null,
   modes: null,

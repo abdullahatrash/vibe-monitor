@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import {
   IPC,
+  type CreateDraftArgs,
+  type CreateDraftResult,
   type ListMetadataResult,
   type OpenThreadArgs,
   type ReadTranscriptResult,
@@ -33,6 +35,8 @@ import {
   type TranscriptEntry,
 } from './persistence/transcript'
 import { WorkspaceAgent, WorkspaceAgentError } from './workspace-agent'
+import { ensureBoundSession } from './thread-binding'
+import { createThreadDraft } from './persistence/drafts'
 
 /** Active Workspace agents keyed by a generated agent id. */
 const agents = new Map<string, WorkspaceAgent>()
@@ -84,29 +88,73 @@ function teeTranscript(threadId: string | null, entry: TranscriptEntry): void {
   void transcriptStore.append(threadId, entry)
 }
 
+/** Our minted handles for a connected Thread (TB5) — carried to the renderer. */
+interface ThreadIds {
+  threadId: string
+  workspaceId: string
+}
+
 /**
- * Persist that this Workspace was opened and a Thread minted. The Thread gets a
- * durable id (minted by the store) distinct from its ACP `sessionId`, which is
- * stored as the resume cursor for a later reopen (TB3). Best-effort: a metadata
- * write must never break the live connect flow. Also seeds the `agentId ->
- * threadId` transcript bridge so the agent's streamed events tee to this Thread.
+ * Persist that this Workspace was opened and a Thread minted, and RETURN our
+ * durable Thread + Workspace ids (TB5) so the renderer can later create drafts
+ * and bind-on-first-prompt under them. The Thread id is distinct from its ACP
+ * `sessionId` (the resume cursor for a reopen, TB3). Best-effort: a metadata
+ * write must never break the live connect flow — on a store failure we synthesize
+ * ids so the live conversation still works (the binding upsert simply retries).
+ * Also seeds the `agentId -> threadId` transcript bridge so the agent's streamed
+ * events tee to this Thread.
  */
-async function recordThread(agentId: string, workspaceDir: string, thread: ThreadInfo): Promise<void> {
-  if (!metadataStore) return
-  try {
-    const ws = await metadataStore.upsertWorkspace({
-      dir: workspaceDir,
-      displayName: basename(workspaceDir),
-    })
-    const record = await metadataStore.upsertThread({
-      workspaceId: ws.id,
-      sessionId: thread.sessionId,
-      title: thread.title,
-    })
-    transcriptThreads.set(agentId, record.id)
-  } catch {
-    // A persistence failure is non-fatal — the user is still connected.
+async function recordThread(agentId: string, workspaceDir: string, thread: ThreadInfo): Promise<ThreadIds> {
+  if (metadataStore) {
+    try {
+      const ws = await metadataStore.upsertWorkspace({
+        dir: workspaceDir,
+        displayName: basename(workspaceDir),
+      })
+      const record = await metadataStore.upsertThread({
+        workspaceId: ws.id,
+        sessionId: thread.sessionId,
+        title: thread.title,
+      })
+      transcriptThreads.set(agentId, record.id)
+      return { threadId: record.id, workspaceId: ws.id }
+    } catch {
+      // A persistence failure is non-fatal — fall through to synthesized ids.
+    }
   }
+  const ids = { threadId: randomUUID(), workspaceId: randomUUID() }
+  transcriptThreads.set(agentId, ids.threadId)
+  return ids
+}
+
+/**
+ * Resolve the ACP session to prompt, binding a draft on its first prompt (TB5).
+ * With a metadata store, delegate to `ensureBoundSession` (one `session/new`,
+ * bind by id, reuse thereafter) and seed the transcript bridge on a fresh mint.
+ * Without a store (best-effort degraded mode), open a session directly so a draft
+ * can still prompt; an already-bound Thread always reuses its `sessionId`.
+ */
+async function bindThreadSession(
+  agent: WorkspaceAgent,
+  args: SendPromptArgs,
+): Promise<{ sessionId: string; minted: boolean }> {
+  // Point the bridge at the Thread being prompted, so a session-less lifecycle
+  // event tees to the ACTIVE Thread when several share an agent — refreshed every
+  // prompt (last-write-wins, and only the active Thread prompts at a time).
+  transcriptThreads.set(args.agentId, args.threadId)
+  if (metadataStore) {
+    const bound = await ensureBoundSession({
+      agent,
+      store: metadataStore,
+      threadId: args.threadId,
+      workspaceId: args.workspaceId,
+      sessionId: args.sessionId,
+    })
+    return { sessionId: bound.sessionId, minted: bound.minted }
+  }
+  if (args.sessionId) return { sessionId: args.sessionId, minted: false }
+  const thread = await agent.openThread()
+  return { sessionId: thread.sessionId, minted: true }
 }
 
 /**
@@ -128,12 +176,19 @@ async function recordWorkspaceOpen(workspaceDir: string): Promise<void> {
   }
 }
 
-/** Build the renderer-facing connection (carries the sign-out gate + methods). */
-function connectionFor(agentId: string, agent: WorkspaceAgent, thread: ThreadInfo): ThreadConnection {
+/** Build the renderer-facing connection (carries our minted ids + sign-out gate). */
+function connectionFor(
+  agentId: string,
+  agent: WorkspaceAgent,
+  thread: ThreadInfo,
+  ids: ThreadIds,
+): ThreadConnection {
   return {
     agentId,
     workspaceDir: agent.workspaceDir,
     ...thread,
+    threadId: ids.threadId,
+    workspaceId: ids.workspaceId,
     signOutAvailable: agent.signOutAvailable,
     authMethods: agent.authMethods,
   }
@@ -250,8 +305,8 @@ function registerIpc(): void {
       }
 
       const thread = await agent.openThread()
-      await recordThread(agentId, args.workspaceDir, thread)
-      return { ok: true, thread: connectionFor(agentId, agent, thread) }
+      const ids = await recordThread(agentId, args.workspaceDir, thread)
+      return { ok: true, thread: connectionFor(agentId, agent, thread, ids) }
     } catch (err) {
       return threadFailureResult(agentId, agent, err)
     }
@@ -264,8 +319,8 @@ function registerIpc(): void {
     if (!agent) return { ok: false, kind: 'error', error: `No active agent for id ${args.agentId}.`, hint: null }
     try {
       const thread = await agent.openThread()
-      await recordThread(args.agentId, agent.workspaceDir, thread)
-      return { ok: true, thread: connectionFor(args.agentId, agent, thread) }
+      const ids = await recordThread(args.agentId, agent.workspaceDir, thread)
+      return { ok: true, thread: connectionFor(args.agentId, agent, thread, ids) }
     } catch (err) {
       return threadFailureResult(args.agentId, agent, err)
     }
@@ -273,32 +328,57 @@ function registerIpc(): void {
 
   ipcMain.handle(
     IPC.sendPrompt,
-    async (_event, args: SendPromptArgs): Promise<SendPromptResult> => {
+    async (event, args: SendPromptArgs): Promise<SendPromptResult> => {
       const agent = agents.get(args.agentId)
       if (!agent) return { ok: false, kind: 'error', error: `No active agent for id ${args.agentId}.` }
-      // Tee the user's prompt (the conversation INPUT) before sending it, so it
-      // precedes the streamed events it triggers. Main has no renderer item id,
-      // so we mint one — it's an opaque replay key, never matched against.
-      const threadId = threadIdForTee(args.agentId, args.sessionId)
-      teeTranscript(threadId, userPromptEntry(randomUUID(), args.text))
+
+      // Bind on first prompt (ADR-0005, TB5): a draft (sessionId null) mints its
+      // session via `session/new` NOW and binds it onto this Thread id; an
+      // already-bound Thread reuses its session — no second `session/new`. A
+      // binding failure surfaces WITHOUT teeing: nothing was logged yet, so a
+      // failed first prompt leaves no transcript residue.
+      let sessionId: string
       try {
-        const result = await agent.prompt(args.sessionId, args.text)
+        const bound = await bindThreadSession(agent, args)
+        sessionId = bound.sessionId
+        // Tell the renderer its draft is now bound, the INSTANT `session/new`
+        // returns and BEFORE `agent.prompt` streams any event below (same
+        // webContents, so ordered ahead of those `acp:event`s). This binds the
+        // draft's live view to its OWN session up front, so it never infers a
+        // session from an arbitrary (possibly sibling) event.
+        if (bound.minted && !event.sender.isDestroyed()) {
+          event.sender.send(IPC.threadBound, { threadId: args.threadId, sessionId })
+        }
+      } catch (err) {
+        if (err instanceof WorkspaceAgentError && err.authState === 'not-signed-in') {
+          return { ok: false, kind: 'not-signed-in', agentId: args.agentId, authMethods: agent.authMethods }
+        }
+        return { ok: false, kind: 'error', error: err instanceof Error ? err.message : String(err) }
+      }
+
+      // Tee the user's prompt (the conversation INPUT) to THIS Thread's log before
+      // sending it, so it precedes the streamed events it triggers. We hold the
+      // Thread id, so no bridge lookup — a draft's first prompt can't misroute to
+      // another Thread. Main has no renderer item id, so mint an opaque replay key.
+      teeTranscript(args.threadId, userPromptEntry(randomUUID(), args.text))
+      try {
+        const result = await agent.prompt(sessionId, args.text)
         // Tee the clean turn end: this signal lives ONLY in this IPC response
         // (never an `acp:event`), so without it a replay leaves `isProcessing`
         // stuck true. Serialized after the turn's events (TranscriptStore chain).
-        teeTranscript(threadId, turnCompleteEntry())
-        return { ok: true, result }
+        teeTranscript(args.threadId, turnCompleteEntry())
+        return { ok: true, result, sessionId }
       } catch (err) {
         // Mid-session expiry (-32000): keep the agent alive so the renderer can
         // re-auth in place on the same agent; don't stop it. This is a re-auth
         // flow, NOT a conversation error — tee `turn-complete` (the renderer
         // synthesizes no ErrorItem here either), so replay isn't left processing.
         if (err instanceof WorkspaceAgentError && err.authState === 'not-signed-in') {
-          teeTranscript(threadId, turnCompleteEntry())
+          teeTranscript(args.threadId, turnCompleteEntry())
           return { ok: false, kind: 'not-signed-in', agentId: args.agentId, authMethods: agent.authMethods }
         }
         const message = err instanceof Error ? err.message : String(err)
-        teeTranscript(threadId, turnErrorEntry(message))
+        teeTranscript(args.threadId, turnErrorEntry(message))
         return { ok: false, kind: 'error', error: message }
       }
     },
@@ -309,8 +389,11 @@ function registerIpc(): void {
     // approve/deny decision lives in the renderer (ADR-0001). We also tee the
     // choice to the transcript — main sees requestId + optionId but not the
     // option's display name (renderer-side), so the entry's `name` is null.
+    // Tee by the renderer-supplied `threadId` directly (TB5), NOT the agent's
+    // last-prompted map: answering Thread A's permission after switching+prompting
+    // a sibling B must land in A's log, not B's.
     const agent = agents.get(args.agentId)
-    teeTranscript(threadIdForTee(args.agentId), resolvePermissionEntry(args.requestId, args.optionId))
+    teeTranscript(args.threadId, resolvePermissionEntry(args.requestId, args.optionId))
     agent?.respondPermission(args.requestId, args.optionId)
   })
 
@@ -345,6 +428,20 @@ function registerIpc(): void {
     const agent = agents.get(agentId)
     agent?.stop()
     agents.delete(agentId)
+  })
+
+  ipcMain.handle(IPC.createDraft, async (_event, args: CreateDraftArgs): Promise<CreateDraftResult> => {
+    // Mint a NEW-Thread draft (ADR-0005, TB5): a durable Thread id with NO ACP
+    // session and NO agent work — `session/new` is deferred to its first prompt
+    // (see `bindThreadSession`), so an abandoned draft creates no session and no
+    // JSONL. It appears in the next `listMetadata` immediately.
+    if (!metadataStore) return { ok: false, error: 'Metadata store is not ready.' }
+    try {
+      const thread = await createThreadDraft(metadataStore, args.workspaceId)
+      return { ok: true, thread }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
   })
 
   ipcMain.handle(IPC.listMetadata, (): ListMetadataResult => {

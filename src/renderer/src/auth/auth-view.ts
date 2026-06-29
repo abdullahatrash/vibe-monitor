@@ -1,4 +1,4 @@
-import type { AuthMethod, AuthState } from '../../../shared/ipc'
+import type { AuthMethod } from '../../../shared/ipc'
 
 /**
  * Pure auth view-state selector (no React, no IPC). Maps the detected
@@ -7,7 +7,48 @@ import type { AuthMethod, AuthState } from '../../../shared/ipc'
  * ADR-0001 the renderer owns this; main classifies + relays the AuthState.
  */
 
-/** Render a sign-in panel — the method name + a (not-yet-wired) Sign-in button. */
+/**
+ * The renderer's auth-panel lifecycle phase. `not-signed-in` is the entry (main
+ * detected it); `signing-in` is the in-flight browser step; `signed-in` is the
+ * success terminal; `error` is a recoverable failure the user can retry from.
+ */
+export type AuthPhase = 'not-signed-in' | 'signing-in' | 'signed-in' | 'error'
+
+/** Pure view state for the sign-in panel — folded by `authReducer`. */
+export interface AuthViewState {
+  phase: AuthPhase
+  authMethods: AuthMethod[]
+  /** Recoverable failure message; set only while `phase === 'error'`. */
+  error: string | null
+}
+
+export function initialAuthViewState(authMethods: AuthMethod[]): AuthViewState {
+  return { phase: 'not-signed-in', authMethods, error: null }
+}
+
+export type AuthAction =
+  | { type: 'sign-in-start' }
+  | { type: 'sign-in-success' }
+  | { type: 'sign-in-error'; message: string }
+
+/**
+ * Fold a sign-in lifecycle action into the panel's view state. Pure (no React,
+ * no IPC). `sign-in-start` is allowed from both `not-signed-in` and `error` so
+ * the error state stays recoverable (retry); a failure can never leave the
+ * panel stuck in `signing-in`.
+ */
+export function authReducer(state: AuthViewState, action: AuthAction): AuthViewState {
+  switch (action.type) {
+    case 'sign-in-start':
+      return { ...state, phase: 'signing-in', error: null }
+    case 'sign-in-success':
+      return { ...state, phase: 'signed-in', error: null }
+    case 'sign-in-error':
+      return { ...state, phase: 'error', error: action.message }
+  }
+}
+
+/** Render a sign-in panel — the method name + a clickable Sign-in button. */
 export interface SignInView {
   kind: 'sign-in'
   methodId: string
@@ -15,26 +56,56 @@ export interface SignInView {
   description: string | null
 }
 
-/** Render nothing auth-related (signed in, or state not yet known). */
+/** Render the in-flight browser step (a spinner / progress, no button). */
+export interface SigningInView {
+  kind: 'signing-in'
+}
+
+/** Render a recoverable failure — the message plus the method to retry with. */
+export interface SignInErrorView {
+  kind: 'error'
+  message: string
+  methodId: string
+  methodName: string
+}
+
+/** Render nothing auth-related (signed in). */
 export interface NoAuthView {
   kind: 'none'
 }
 
-export type AuthView = SignInView | NoAuthView
+export type AuthView = SignInView | SigningInView | SignInErrorView | NoAuthView
 
-export interface AuthViewInput {
-  authState: AuthState
-  authMethods?: AuthMethod[]
+/**
+ * The id Vibe's client-driven (delegated) browser sign-in is advertised under
+ * (acp-capture §8). Preferred over the blocking `browser-auth` per ADR-0003.
+ */
+export const DELEGATED_METHOD_ID = 'browser-auth-delegated'
+
+/**
+ * Pick the sign-in method to drive: prefer the delegated method, else the first
+ * advertised, else a generic fallback so the user is never stranded.
+ */
+function preferredMethod(authMethods: AuthMethod[]): { id: string; name: string; description: string | null } {
+  const method = authMethods.find((m) => m.id === DELEGATED_METHOD_ID) ?? authMethods[0]
+  return {
+    id: method?.id ?? '',
+    name: method?.name ?? 'Sign in',
+    description: method?.description ?? null,
+  }
 }
 
-export function selectAuthView(input: AuthViewInput): AuthView {
-  if (input.authState !== 'not-signed-in') return { kind: 'none' }
-
-  const method = input.authMethods?.[0]
-  return {
-    kind: 'sign-in',
-    methodId: method?.id ?? '',
-    methodName: method?.name ?? 'Sign in',
-    description: method?.description ?? null,
+/** Project the auth view-state to what the renderer shows. */
+export function selectAuthView(state: AuthViewState): AuthView {
+  const method = preferredMethod(state.authMethods)
+  switch (state.phase) {
+    case 'not-signed-in':
+      return { kind: 'sign-in', methodId: method.id, methodName: method.name, description: method.description }
+    case 'signing-in':
+      return { kind: 'signing-in' }
+    case 'error':
+      return { kind: 'error', message: state.error ?? 'Sign-in failed.', methodId: method.id, methodName: method.name }
+    case 'signed-in':
+      return { kind: 'none' }
   }
 }

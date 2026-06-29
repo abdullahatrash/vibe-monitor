@@ -5,6 +5,8 @@ import {
   type RespondPermissionArgs,
   type SendPromptArgs,
   type SendPromptResult,
+  type SignInArgs,
+  type SignInResult,
   type StartThreadArgs,
   type StartThreadResult,
   type VibeDetectResult,
@@ -19,6 +21,7 @@ const api = {
     ipcRenderer.invoke(IPC.sendPrompt, args),
   respondPermission: (args: RespondPermissionArgs): Promise<void> =>
     ipcRenderer.invoke(IPC.respondPermission, args),
+  signIn: (args: SignInArgs): Promise<SignInResult> => ipcRenderer.invoke(IPC.signIn, args),
   stopAgent: (agentId: string): Promise<void> => ipcRenderer.invoke(IPC.stopAgent, agentId),
   onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {
     const handler = (_e: unknown, payload: AcpEvent): void => listener(payload)

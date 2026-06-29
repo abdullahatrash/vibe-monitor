@@ -5,6 +5,8 @@ import {
   type RespondPermissionArgs,
   type SendPromptArgs,
   type SendPromptResult,
+  type SignInArgs,
+  type SignInResult,
   type StartThreadArgs,
   type StartThreadResult,
 } from '../shared/ipc'
@@ -66,7 +68,12 @@ function registerIpc(): void {
     // workspace would orphan the previous not-signed-in agent (its child
     // lingers). #12 must reuse or stop the existing agent for this workspace.
     const agentId = `a${++agentCounterSeed}`
-    const agent = new WorkspaceAgent({ workspaceDir: args.workspaceDir, env: getShellEnv() })
+    const agent = new WorkspaceAgent({
+      workspaceDir: args.workspaceDir,
+      env: getShellEnv(),
+      // Delegated sign-in (#12): open the returned signInUrl in the system browser.
+      openUrl: (url) => void shell.openExternal(url),
+    })
 
     agent.on('event', (payload: unknown) => {
       if (!event.sender.isDestroyed()) {
@@ -134,6 +141,20 @@ function registerIpc(): void {
     // approve/deny decision lives in the renderer (ADR-0001).
     const agent = agents.get(args.agentId)
     agent?.respondPermission(args.requestId, args.optionId)
+  })
+
+  ipcMain.handle(IPC.signIn, async (_event, args: SignInArgs): Promise<SignInResult> => {
+    // Drive Vibe's browser sign-in on the agent retained from startThread; main
+    // orchestrates + relays the resulting AuthState, the renderer owns the view
+    // state (ADR-0001). Credentials never touch us — Vibe owns the keyring (ADR-0003).
+    const agent = agents.get(args.agentId)
+    if (!agent) return { ok: false, error: `No active agent for id ${args.agentId}.` }
+    try {
+      const authState = await agent.signIn(args.methodId)
+      return { ok: true, authState }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
   })
 
   ipcMain.handle(IPC.stopAgent, (_event, agentId: string) => {

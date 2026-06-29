@@ -263,6 +263,21 @@ body {
   color: var(--muted);
 }
 
+.signin__error {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--bad);
+}
+
+.signin--done {
+  border-color: rgba(63, 185, 80, 0.4);
+  background: rgba(63, 185, 80, 0.08);
+}
+
+.signin--done .signin__title {
+  color: var(--ok);
+}
+
 .signin__action {
   margin-top: 2px;
 }

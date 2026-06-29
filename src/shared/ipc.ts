@@ -16,6 +16,8 @@ export const IPC = {
   sendPrompt: 'thread:prompt',
   /** Answer a `session/request_permission` by its JSON-RPC request id. */
   respondPermission: 'permission:respond',
+  /** Drive Vibe's browser sign-in on a not-signed-in agent (`authenticate`). */
+  signIn: 'auth:sign-in',
   /** Main -> renderer: streamed ACP event tagged by the owning agent. */
   acpEvent: 'acp:event',
 } as const
@@ -139,3 +141,19 @@ export interface RespondPermissionArgs {
   /** The `optionId` of the option the user selected. */
   optionId: string
 }
+
+/** Trigger browser sign-in on the not-signed-in agent retained from startThread. */
+export interface SignInArgs {
+  /** Id of the Workspace agent (one `vibe-acp` process) to authenticate. */
+  agentId: string
+  /** The `authMethods` id to sign in with (prefer `browser-auth-delegated`). */
+  methodId: string
+}
+
+/**
+ * Result of a sign-in attempt. `authState` is the post-sign-in state (re-queried
+ * via `_auth/status`); failures are recoverable — the renderer can retry.
+ */
+export type SignInResult =
+  | { ok: true; authState: AuthState }
+  | { ok: false; error: string }

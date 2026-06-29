@@ -223,17 +223,36 @@ authenticate(method_id, **kwargs) -> AuthenticateResponse
    >>> {"id":30,"method":"authenticate","params":{"methodId":"browser-auth"}}
    <<< {"id":30,"result":{"_meta":{"browser-auth":{"persistResult":"completed","status":"completed"}}}}
    ```
-2. **`browser-auth-delegated` (client-driven, two-step)** — advertised only if the client advertises the
-   `browser-auth-delegated` capability (in `clientCapabilities` field-meta). The CLIENT opens the URL.
-   (From source; confirm live when building #12.)
+2. **`browser-auth-delegated` (client-driven, two-step)** — ✅ **live-confirmed 2026-06-29** (probe was
+   non-destructive: only `start` was called, never `complete`, so nothing was signed in/out and the
+   keyring was untouched). Advertised only if the client opts in via `clientCapabilities._meta`
+   (`field_meta` in `vibe/acp/acp_agent_loop.py::_supports_delegated_browser_auth`). The CLIENT opens the URL.
    ```
-   authenticate({methodId:"browser-auth-delegated", action:"start"})
-     -> {_meta:{"browser-auth-delegated":{attemptId, expiresAt, signInUrl}}}   // client opens signInUrl
-   authenticate({methodId:"browser-auth-delegated", action:"complete", attemptId})
-     -> {_meta:{"browser-auth-delegated":{attemptId, persistResult, status:"completed"}}}
+   // initialize MUST advertise the capability or the method is absent from authMethods:
+   initialize.params.clientCapabilities = { fs:{…}, _meta:{ "browser-auth-delegated": true } }
+   // → initialize.result.authMethods then includes BOTH:
+   //   {id:"browser-auth", name:"Sign in through Mistral AI Studio"}
+   //   {id:"browser-auth-delegated", name:"Sign in through Mistral AI Studio"}
+
+   // start — returns IMMEDIATELY (non-blocking); client then opens signInUrl in the system browser:
+   >>> {"id":2,"method":"authenticate","params":{"methodId":"browser-auth-delegated","action":"start"}}
+   <<< {"id":2,"result":{"_meta":{"browser-auth-delegated":{
+         "attemptId":"fb067327-…",
+         "expiresAt":"2026-06-29T11:22:26.037185Z",
+         "signInUrl":"https://console.mistral.ai/codestral/cli/authenticate?process_id=fb067327-…"}}}}
+
+   // complete — call AFTER the user finishes in the browser; THIS is the call that awaits/persists
+   // (source: _complete_delegated_browser_auth). Unknown/expired attemptId → InvalidRequestError (-32602):
+   >>> authenticate({methodId:"browser-auth-delegated", action:"complete", attemptId})
+   <<< {_meta:{"browser-auth-delegated":{attemptId, persistResult, status:"completed"}}}
    ```
+   Source facts (`acp_agent_loop.py`): `start` calls `start_attempt()` (mints the URL, stores a pending
+   attempt by `attemptId`); `complete` requires that `attemptId` (else `InvalidRequestError`), calls
+   `complete_attempt()` (blocks until the browser flow resolves), then persists to the keyring. So `start`
+   is cheap/non-blocking and `complete` is the long-poll — orchestrate accordingly.
    **This delegated mode is the right fit for vibe-monitor** (we open the URL via the system opener,
-   show progress, stay non-blocking) — it mirrors CodexMonitor's `login/start → open authUrl → complete`.
+   show progress, stay non-blocking) — it mirrors CodexMonitor's `login/start → open authUrl → complete`,
+   and is the **primary** path per ADR-0003 (blocking `browser-auth` is the fallback).
 
 ### `_auth/signOut` — sign out (ACP extension method)
 Removes the API key from the keyring; errors if `signOutAvailable` is false:

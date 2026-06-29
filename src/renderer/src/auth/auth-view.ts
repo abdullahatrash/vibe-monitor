@@ -1,4 +1,4 @@
-import { DELEGATED_AUTH_METHOD_ID, type AuthMethod } from '../../../shared/ipc'
+import { BLOCKING_AUTH_METHOD_ID, DELEGATED_AUTH_METHOD_ID, type AuthMethod } from '../../../shared/ipc'
 
 /**
  * Pure auth view-state selector (no React, no IPC). Maps the detected
@@ -128,12 +128,19 @@ export type AuthView =
   | SignInErrorView
 
 /**
- * Pick the sign-in method to drive: prefer the delegated method (the one main's
- * `signIn` accepts), else the first advertised, else a generic fallback so the
- * user is never stranded.
+ * Pick the sign-in method to drive: prefer the delegated method, else the
+ * blocking `browser-auth` fallback — i.e. only the methods main's `signIn` can
+ * actually drive (delegated two-step or the blocking single call). Fall back to
+ * the first advertised only if neither is present, so the user is never stranded
+ * (and `signIn` will surface a clear "method not supported" error if that one is
+ * undrivable). This avoids picking an undrivable method the agent happens to
+ * advertise first (e.g. an env-var/api-key method).
  */
 function preferredMethod(authMethods: AuthMethod[]): { id: string; name: string; description: string | null } {
-  const method = authMethods.find((m) => m.id === DELEGATED_AUTH_METHOD_ID) ?? authMethods[0]
+  const method =
+    authMethods.find((m) => m.id === DELEGATED_AUTH_METHOD_ID) ??
+    authMethods.find((m) => m.id === BLOCKING_AUTH_METHOD_ID) ??
+    authMethods[0]
   return {
     id: method?.id ?? '',
     name: method?.name ?? 'Sign in',

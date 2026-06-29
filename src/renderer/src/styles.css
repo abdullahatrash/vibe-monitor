@@ -70,6 +70,95 @@ body {
   max-width: 640px;
 }
 
+/* --- App shell: persistent two-pane layout (TB1, ADR-0006) --- */
+
+.shell {
+  flex: 1;
+  display: flex;
+  min-height: 0; /* let both panes own their own scroll */
+}
+
+.shell__sidebar {
+  width: 300px;
+  flex: none;
+  border-right: 1px solid var(--border);
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* The outlet swaps content while the sidebar stays mounted (criterion 1). */
+.shell__outlet {
+  flex: 1;
+  min-width: 0;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.shell__empty {
+  max-width: 420px;
+}
+
+.shell__top {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.shell__open {
+  align-self: flex-start;
+}
+
+.env {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.env__title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* Workspace name as a selectable button (sidebar nav). */
+.recents__ws-name {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  padding: 2px 4px;
+  margin: 0 -4px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.recents__ws-name:hover {
+  background: var(--accent-tint);
+}
+
+.recents__ws-name--active {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* The selected Thread row in the sidebar nav. */
+.recents__thread-btn--active {
+  color: var(--accent-text);
+  background: var(--accent-tint);
+  font-weight: 600;
+}
+
 .card {
   background: var(--panel);
   border: 1px solid var(--border);

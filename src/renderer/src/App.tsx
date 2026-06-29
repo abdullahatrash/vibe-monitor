@@ -1,10 +1,9 @@
-import { useEffect, useReducer, useRef, useState, type JSX } from 'react'
+import { useEffect, useReducer, useRef, useState, type JSX, type ReactNode } from 'react'
 import type {
   AuthMethod,
   ListMetadataResult,
   ThreadMeta,
   VibeDetectResult,
-  WorkspaceThreads,
 } from '../../shared/ipc'
 import {
   authReducer,
@@ -14,8 +13,19 @@ import {
 } from './auth/auth-view'
 import { routeThreadResult, type ConnectState } from './connection/routing'
 import { ConnectedWorkspace } from './connection/ConnectedWorkspace'
-import { ColdThread } from './conversation/ColdThread'
+import { Shell } from './shell/Shell'
 
+/**
+ * Thin glue (ADR-0006): App owns IPC/data wiring — detection, the persisted
+ * Workspace/Thread metadata, and the connect flow — and renders the persistent
+ * `<Shell>`. The shell owns navigation (its pure nav reducer) and the two-pane
+ * layout; App feeds it the cold list, the sidebar's top controls, and the
+ * connection-active outlet, plus the connect-flow callbacks.
+ *
+ * Connection/auth states (connecting / not-signed-in / error / connected) still
+ * route as before, but now INTO the outlet (`connectionOutlet`) rather than
+ * swapping the whole view — the sidebar stays put. TB4 (#49) moves these inline.
+ */
 export function App(): JSX.Element {
   const [detect, setDetect] = useState<VibeDetectResult | null>(null)
   const [loading, setLoading] = useState(true)
@@ -23,9 +33,6 @@ export function App(): JSX.Element {
   // Persisted Workspaces + Threads (ADR-0005), listed cold on launch from
   // metadata alone — no agent spawned, no transcript loaded.
   const [recents, setRecents] = useState<ListMetadataResult>([])
-  // A persisted Thread the user clicked to REOPEN read-only from its JSONL (TB3,
-  // #32) — rendered with no agent spawned. null = showing the cold launch list.
-  const [coldThread, setColdThread] = useState<ThreadMeta | null>(null)
 
   async function runDetect(): Promise<void> {
     setLoading(true)
@@ -41,12 +48,11 @@ export function App(): JSX.Element {
   /**
    * Delete a persisted Thread (TB6): main removes its metadata + JSONL and
    * best-effort closes any live session; we then re-fetch so it disappears from
-   * the list. If the deleted Thread is the one open read-only, drop back to the
-   * list so we don't render a now-gone transcript.
+   * the list. The shell derives its selected (cold) Thread from `recents`, so a
+   * deleted-and-selected Thread collapses to the placeholder on its own.
    */
   async function deleteThread(thread: ThreadMeta): Promise<void> {
     await window.api.deleteThread(thread.id)
-    setColdThread((open) => (open?.id === thread.id ? null : open))
     await refreshRecents()
   }
 
@@ -72,19 +78,17 @@ export function App(): JSX.Element {
   }
 
   /**
-   * Continue a reopened Thread from the cold launch list (TB4 #33). No agent runs
-   * for a cold-list Thread, so we spawn its Workspace agent via `startThread`,
+   * Continue a reopened Thread from the sidebar's cold list (TB4 #33). No agent
+   * runs for a cold-list Thread, so we spawn its Workspace agent via `startThread`,
    * passing `continueThreadId` so main opens NO extra Thread and instead seeds the
-   * connection with THIS Thread (its first prompt drives the `session/load` resume).
-   * The connection thread IS the continued one, so it lands selected + live with no
-   * separate plumbing. The Workspace dir comes from the cold list (a `ThreadMeta`
-   * carries only `workspaceId`). If the agent comes up not-signed-in, no Thread is
-   * opened (the standard not-signed-in result) and the continue can be re-driven.
+   * connection with THIS Thread (its first prompt drives the `session/load`
+   * resume). The connection thread IS the continued one, so it lands selected +
+   * live with no separate plumbing. The Workspace dir comes from the cold list (a
+   * `ThreadMeta` carries only `workspaceId`).
    */
   async function continueColdThread(thread: ThreadMeta): Promise<void> {
     const workspace = recents.find((w) => w.id === thread.workspaceId)
     if (!workspace) return
-    setColdThread(null)
     setConnect({ status: 'connecting', workspaceDir: workspace.dir })
     setConnect(
       routeThreadResult(
@@ -101,6 +105,16 @@ export function App(): JSX.Element {
 
   const connecting = connect.status === 'connecting'
 
+  // The sidebar's pinned top: the environment check + the Open-project control.
+  const sidebarTop = (
+    <div className="shell__top">
+      <Environment detect={detect} loading={loading} onRecheck={() => void runDetect()} />
+      <button className="btn shell__open" onClick={() => void openProject()} disabled={connecting}>
+        {connecting ? 'Connecting…' : 'Open project'}
+      </button>
+    </div>
+  )
+
   return (
     <div className="app">
       <header className="app__header">
@@ -108,111 +122,124 @@ export function App(): JSX.Element {
         <span className="app__subtitle">Orchestrator for Mistral Vibe agents · ACP backend</span>
       </header>
 
-      <main className="app__main">
-        <section className="card">
-          <div className="card__title">
-            <span>Environment</span>
-            <button className="btn" onClick={() => void runDetect()} disabled={loading}>
-              {loading ? 'Checking…' : 'Re-check'}
-            </button>
-          </div>
+      <Shell
+        workspaces={recents}
+        sidebarTop={sidebarTop}
+        connectionOutlet={renderConnectionOutlet(connect, {
+          continueToThread,
+          toSignInPanel,
+          refreshRecents,
+          threads: connect.status === 'connected' ? threadsForWorkspace(recents, connect.thread.workspaceId) : [],
+        })}
+        onContinueColdThread={(thread) => void continueColdThread(thread)}
+        onDeleteThread={deleteThread}
+      />
+    </div>
+  )
+}
 
-          {detect && (
-            <ul className="status">
-              <StatusRow ok={detect.vibeFound} label="vibe CLI" />
-              <StatusRow ok={detect.vibeAcpFound} label="vibe-acp (ACP server)" />
-              <li className="status__row">
-                <span className="status__label">version</span>
-                <span className="status__value">{detect.vibeVersion ?? '—'}</span>
-              </li>
-              {detect.error && <li className="status__error">{detect.error}</li>}
-            </ul>
-          )}
-        </section>
+/**
+ * The connection-active outlet (everything but `idle`). Routed exactly as before,
+ * now rendered INTO the shell outlet rather than swapping the whole view — the
+ * sidebar persists across it. `null` on `idle` hands the outlet back to the shell's
+ * nav-selected cold Thread (or placeholder). TB4 (#49) folds these inline.
+ */
+function renderConnectionOutlet(
+  connect: ConnectState,
+  handlers: {
+    continueToThread: (agentId: string, workspaceDir: string) => void
+    toSignInPanel: (agentId: string, workspaceDir: string, authMethods: AuthMethod[]) => void
+    refreshRecents: () => Promise<void>
+    threads: ThreadMeta[]
+  },
+): ReactNode | null {
+  switch (connect.status) {
+    case 'idle':
+      return null
+    case 'connecting':
+      return (
+        <p className="hint">
+          Launching <code>vibe-acp</code> in <code>{connect.workspaceDir}</code> and running the ACP
+          handshake…
+        </p>
+      )
+    case 'not-signed-in':
+      return (
+        <SignInPanel
+          key={connect.agentId}
+          agentId={connect.agentId}
+          authMethods={connect.authMethods}
+          onSignedIn={() => handlers.continueToThread(connect.agentId, connect.workspaceDir)}
+        />
+      )
+    case 'error':
+      return (
+        <div className="alert">
+          <div className="alert__title">Couldn’t connect</div>
+          <div className="alert__message">{connect.message}</div>
+          {connect.hint && <div className="alert__hint">{connect.hint}</div>}
+        </div>
+      )
+    case 'connected':
+      return (
+        <>
+          {/* Key by agentId (like Conversation) so its useReducer seed resets
+              across connections — a new agent can't inherit the prior session's
+              sign-out gate. */}
+          <SignedInBar
+            key={connect.thread.agentId}
+            agentId={connect.thread.agentId}
+            authMethods={connect.thread.authMethods}
+            signOutAvailable={connect.thread.signOutAvailable}
+            onSignedOut={(authMethods) =>
+              handlers.toSignInPanel(connect.thread.agentId, connect.thread.workspaceDir, authMethods)
+            }
+          />
+          {/* Key by agentId so the per-Workspace Thread state can't bleed across
+              connections. Hosts multiple Threads on the one agent + switching (TB5). */}
+          <ConnectedWorkspace
+            key={connect.thread.agentId}
+            connection={connect.thread}
+            threads={handlers.threads}
+            refreshRecents={handlers.refreshRecents}
+            onAuthExpired={(authMethods) =>
+              handlers.toSignInPanel(connect.thread.agentId, connect.thread.workspaceDir, authMethods)
+            }
+          />
+        </>
+      )
+  }
+}
 
-        <section className="card">
-          <div className="card__title">
-            <span>Workspace</span>
-            <button className="btn" onClick={() => void openProject()} disabled={connecting}>
-              {connecting ? 'Connecting…' : 'Open project'}
-            </button>
-          </div>
-
-          {/* Reopened Thread: render its saved conversation from JSONL, read-only,
-              with NO agent spawned (TB3). Takes over the idle view until closed. */}
-          {connect.status === 'idle' && coldThread && (
-            <ColdThread
-              thread={coldThread}
-              onClose={() => setColdThread(null)}
-              onContinue={() => void continueColdThread(coldThread)}
-            />
-          )}
-
-          {connect.status === 'idle' && !coldThread && (
-            <p className="hint">Open a project folder to start a Vibe agent and connect a Thread.</p>
-          )}
-
-          {connect.status === 'idle' && !coldThread && recents.length > 0 && (
-            <RecentList
-              workspaces={recents}
-              onOpenThread={setColdThread}
-              onDeleteThread={deleteThread}
-            />
-          )}
-
-          {connect.status === 'connecting' && (
-            <p className="hint">
-              Launching <code>vibe-acp</code> in <code>{connect.workspaceDir}</code> and running the
-              ACP handshake…
-            </p>
-          )}
-
-          {connect.status === 'not-signed-in' && (
-            <SignInPanel
-              key={connect.agentId}
-              agentId={connect.agentId}
-              authMethods={connect.authMethods}
-              onSignedIn={() => void continueToThread(connect.agentId, connect.workspaceDir)}
-            />
-          )}
-
-          {connect.status === 'error' && (
-            <div className="alert">
-              <div className="alert__title">Couldn’t connect</div>
-              <div className="alert__message">{connect.message}</div>
-              {connect.hint && <div className="alert__hint">{connect.hint}</div>}
-            </div>
-          )}
-
-          {connect.status === 'connected' && (
-            <>
-              {/* Key by agentId (like Conversation) so its useReducer seed resets
-                  across connections — a new agent can't inherit the prior
-                  session's sign-out gate. */}
-              <SignedInBar
-                key={connect.thread.agentId}
-                agentId={connect.thread.agentId}
-                authMethods={connect.thread.authMethods}
-                signOutAvailable={connect.thread.signOutAvailable}
-                onSignedOut={(authMethods) =>
-                  toSignInPanel(connect.thread.agentId, connect.thread.workspaceDir, authMethods)
-                }
-              />
-              {/* Key by agentId so the per-Workspace Thread state can't bleed across
-                  connections. Hosts multiple Threads on the one agent + switching (TB5). */}
-              <ConnectedWorkspace
-                key={connect.thread.agentId}
-                connection={connect.thread}
-                threads={threadsForWorkspace(recents, connect.thread.workspaceId)}
-                refreshRecents={refreshRecents}
-                onAuthExpired={(authMethods) =>
-                  toSignInPanel(connect.thread.agentId, connect.thread.workspaceDir, authMethods)
-                }
-              />
-            </>
-          )}
-        </section>
-      </main>
+/** The environment check: whether `vibe` / `vibe-acp` are installed + reachable. */
+function Environment({
+  detect,
+  loading,
+  onRecheck,
+}: {
+  detect: VibeDetectResult | null
+  loading: boolean
+  onRecheck: () => void
+}): JSX.Element {
+  return (
+    <div className="env">
+      <div className="env__title">
+        <span>Environment</span>
+        <button className="btn btn--ghost" onClick={onRecheck} disabled={loading}>
+          {loading ? 'Checking…' : 'Re-check'}
+        </button>
+      </div>
+      {detect && (
+        <ul className="status">
+          <StatusRow ok={detect.vibeFound} label="vibe CLI" />
+          <StatusRow ok={detect.vibeAcpFound} label="vibe-acp (ACP server)" />
+          <li className="status__row">
+            <span className="status__label">version</span>
+            <span className="status__value">{detect.vibeVersion ?? '—'}</span>
+          </li>
+          {detect.error && <li className="status__error">{detect.error}</li>}
+        </ul>
+      )}
     </div>
   )
 }
@@ -365,107 +392,6 @@ function SignedInBar({
       )}
     </div>
   )
-}
-
-/**
- * The cold launch list (ADR-0005 metadata-first lazy reopen): persisted
- * Workspaces with their Threads, most-recent-first, rendered from metadata alone —
- * NO `vibe-acp` spawned. Clicking a Thread reopens it read-only from its JSONL
- * (`onOpenThread`, TB3) — still no agent; that replays the transcript locally.
- */
-function RecentList({
-  workspaces,
-  onOpenThread,
-  onDeleteThread,
-}: {
-  workspaces: WorkspaceThreads[]
-  onOpenThread: (thread: ThreadMeta) => void
-  /** Delete a Thread (TB6) — removes its metadata + JSONL, then refreshes the list. */
-  onDeleteThread: (thread: ThreadMeta) => Promise<void>
-}): JSX.Element {
-  return (
-    <div className="recents">
-      <div className="recents__title">Recent workspaces</div>
-      <ul className="recents__list">
-        {workspaces.map((w) => (
-          <li key={w.id} className="recents__workspace">
-            <div className="recents__ws-name" title={w.dir}>
-              {w.displayName}
-            </div>
-            {w.threads.length > 0 ? (
-              <ul className="recents__threads">
-                {w.threads.map((t) => (
-                  <RecentThread
-                    key={t.id}
-                    thread={t}
-                    onOpen={onOpenThread}
-                    onDelete={onDeleteThread}
-                  />
-                ))}
-              </ul>
-            ) : (
-              <div className="recents__empty">No threads yet</div>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-/**
- * One Thread row in the cold list: opens read-only on click (TB3), with a delete
- * control (TB6). Delete is two-step — a first click arms an INLINE confirm (Delete
- * / Cancel) rather than a native `confirm()` (which would block the renderer), so
- * a single misclick can't nuke a Thread's history.
- */
-function RecentThread({
-  thread,
-  onOpen,
-  onDelete,
-}: {
-  thread: ThreadMeta
-  onOpen: (thread: ThreadMeta) => void
-  onDelete: (thread: ThreadMeta) => Promise<void>
-}): JSX.Element {
-  const [confirming, setConfirming] = useState(false)
-  return (
-    <li className="recents__thread">
-      <button className="recents__thread-btn" onClick={() => onOpen(thread)}>
-        {threadLabel(thread)}
-      </button>
-      {confirming ? (
-        <span className="recents__thread-confirm">
-          <button
-            className="btn btn--ghost btn--danger"
-            onClick={() => {
-              setConfirming(false)
-              void onDelete(thread)
-            }}
-          >
-            Delete
-          </button>
-          <button className="btn btn--ghost" onClick={() => setConfirming(false)}>
-            Cancel
-          </button>
-        </span>
-      ) : (
-        <button
-          className="recents__thread-delete"
-          aria-label="Delete thread"
-          title="Delete thread"
-          onClick={() => setConfirming(true)}
-        >
-          ✕
-        </button>
-      )}
-    </li>
-  )
-}
-
-/** A Thread's list label — its title, or a placeholder until one arrives (TB2). */
-function threadLabel(thread: ThreadMeta): string {
-  return thread.title ?? 'Untitled thread'
 }
 
 /** The persisted Threads under a connected Workspace (by minted id), for its list (TB5). */

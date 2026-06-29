@@ -62,7 +62,7 @@ End-to-end typing with **one interface as the contract**:
 listeners per renderer and clean up on `webContents` `destroyed` and on app `will-quit`.
 
 → **For us:** our `src/shared/ipc.ts` already centralizes channels + payload types; evolve it into a
-single `VibeMonitorApi` interface, keep the unsubscribe-returning pattern (already used for
+single `VibeMistroApi` interface, keep the unsubscribe-returning pattern (already used for
 `onAcpEvent`), and switch handler registration to a DI `registerIpc(deps)` once handlers grow.
 
 **Security (non-negotiable):** `contextIsolation: true`, `nodeIntegration: false`, `sandbox` on,

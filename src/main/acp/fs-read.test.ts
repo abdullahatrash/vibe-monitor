@@ -16,7 +16,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
 describe('handleFsReadTextFile (Seam C)', () => {
   it('returns {content} for a readable path (real fs)', async () => {
     const file = join(dir, 'note.txt')
-    writeFileSync(file, 'vibe-monitor works.\n')
+    writeFileSync(file, 'vibe-mistro works.\n')
 
     const outcome = await handleFsReadTextFile({
       path: file,
@@ -24,7 +24,7 @@ describe('handleFsReadTextFile (Seam C)', () => {
       sessionId: 's1',
     })
 
-    expect(outcome).toEqual({ result: { content: 'vibe-monitor works.\n' } })
+    expect(outcome).toEqual({ result: { content: 'vibe-mistro works.\n' } })
   })
 
   it('returns an error result for an unreadable path', async () => {

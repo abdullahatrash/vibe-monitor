@@ -1,10 +1,10 @@
-# vibe-monitor conventions
+# vibe-mistro conventions
 
 Our decisions, synthesized from the three references. When they disagree, this doc wins.
 
 ## Scope boundary
 
-vibe-monitor is a **thin orchestrator** over an external agent (`vibe-acp`). The model loop, tool
+vibe-mistro is a **thin orchestrator** over an external agent (`vibe-acp`). The model loop, tool
 selection, and code intelligence (LSP-style lookups, search, edits) belong to **Vibe** — we render
 its tool-call output, we don't reimplement it. No language servers, no embedded model. This is the
 structural difference from opencode (which *is* the agent). See
@@ -22,7 +22,7 @@ structural difference from opencode (which *is* the agent). See
 
 - **main** (`src/main`) — all Node/OS/process work: spawn & supervise `vibe-acp`, ACP transport,
   persistence, git/gh, fs, shell-env. This is CodexMonitor's Rust backend, in TS.
-- **preload** (`src/preload`) — typed bridge only. Exposes one `VibeMonitorApi` via `contextBridge`.
+- **preload** (`src/preload`) — typed bridge only. Exposes one `VibeMistroApi` via `contextBridge`.
 - **renderer** (`src/renderer`) — UI only, no Node. Feature-Sliced Design (below).
 
 Security: `contextIsolation: true`, `nodeIntegration: false`, sandbox where feasible, no `fs` in the
@@ -31,7 +31,7 @@ renderer — everything through IPC.
 ## IPC (from opencode)
 
 - **One typed contract.** Channel names + payload types live in `src/shared/ipc.ts`; grow it toward a
-  single `VibeMonitorApi` interface. No stringly-typed channels in feature code.
+  single `VibeMistroApi` interface. No stringly-typed channels in feature code.
 - Three shapes: `invoke` (request/response), `send` (fire-and-forget), `on`+unsubscribe (streaming).
 - **Subscriptions always return an unsubscribe fn**; clean up on `webContents` destroyed + app quit.
 - When handlers multiply, register them via `registerIpc(deps)` **dependency injection** (testable).
@@ -84,5 +84,5 @@ renderer — everything through IPC.
 
 ## Roadmap
 
-The build order lives in [codexmonitor-reference.md](./codexmonitor-reference.md#8-suggested-build-order-for-vibe-monitor)
+The build order lives in [codexmonitor-reference.md](./codexmonitor-reference.md#8-suggested-build-order-for-vibe-mistro)
 and the repo `README.md`. Next up: **slice #1 — ACP handshake + single conversation.**

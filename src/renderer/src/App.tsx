@@ -49,7 +49,7 @@ export function App(): JSX.Element {
   return (
     <div className="app">
       <header className="app__header">
-        <h1>Vibe Monitor</h1>
+        <h1>Vibe Mistro</h1>
         <span className="app__subtitle">Orchestrator for Mistral Vibe agents · ACP backend</span>
       </header>
 

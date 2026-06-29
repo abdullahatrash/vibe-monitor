@@ -1,4 +1,4 @@
-# Vibe Monitor
+# Vibe Mistro
 
 A desktop app for orchestrating multiple [Mistral Vibe](https://docs.mistral.ai/vibe/code/cli/install-setup) coding agents across local workspaces — inspired by [CodexMonitor](https://github.com/Dimillian/CodexMonitor), but built on **Electron + TypeScript + Bun** and driven by Vibe's **Agent Client Protocol (ACP)** server (`vibe-acp`) instead of Codex.
 

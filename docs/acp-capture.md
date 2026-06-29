@@ -17,7 +17,7 @@ throwaway; the loop is reproducible.)
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
   "protocolVersion":1,
   "clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true}},
-  "clientInfo":{"name":"vibe-monitor","version":"0.0.1"}}}
+  "clientInfo":{"name":"vibe-mistro","version":"0.0.1"}}}
 ```
 
 **Response (result)**
@@ -70,7 +70,7 @@ captured — verify before building a mode picker or trust UI.)
 **Request**
 ```json
 {"id":3,"method":"session/prompt","params":{"sessionId":"<uuid>",
-  "prompt":[{"type":"text","text":"Create a new file called note.txt containing: vibe-monitor works."}]}}
+  "prompt":[{"type":"text","text":"Create a new file called note.txt containing: vibe-mistro works."}]}}
 ```
 
 **Final response (result)** — arrives when the turn ends:
@@ -250,7 +250,7 @@ authenticate(method_id, **kwargs) -> AuthenticateResponse
    attempt by `attemptId`); `complete` requires that `attemptId` (else `InvalidRequestError`), calls
    `complete_attempt()` (blocks until the browser flow resolves), then persists to the keyring. So `start`
    is cheap/non-blocking and `complete` is the long-poll — orchestrate accordingly.
-   **This delegated mode is the right fit for vibe-monitor** (we open the URL via the system opener,
+   **This delegated mode is the right fit for vibe-mistro** (we open the URL via the system opener,
    show progress, stay non-blocking) — it mirrors CodexMonitor's `login/start → open authUrl → complete`,
    and is the **primary** path per ADR-0003 (blocking `browser-auth` is the fallback).
 
@@ -263,7 +263,7 @@ Removes the API key from the keyring; errors if `signOutAvailable` is false:
 
 ### Credentials live in the OS keyring
 `authState:"os_keyring"`. A fresh empty `VIBE_HOME` stays authenticated; there was no `MISTRAL_API_KEY`
-in the environment. vibe-monitor never stores credentials — Vibe owns them (keyring). See ADR-0003.
+in the environment. vibe-mistro never stores credentials — Vibe owns them (keyring). See ADR-0003.
 
 ### Bonus (resolves earlier unknowns)
 Vibe also exposes these ACP extension methods (all `_`-prefixed on the wire): `trust/status`,

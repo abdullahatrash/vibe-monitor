@@ -57,7 +57,7 @@ const READ_TURN: unknown[] = [
   }),
   update({
     sessionUpdate: 'agent_message_chunk',
-    content: { type: 'text', text: 'describes vibe-monitor.' },
+    content: { type: 'text', text: 'describes vibe-mistro.' },
     messageId: 'a1',
   }),
   update({
@@ -88,7 +88,7 @@ describe('conversationReducer (Seam A)', () => {
 
     const assistant = state.items[2] as AssistantItem
     expect(assistant.messageId).toBe('a1')
-    expect(assistant.text).toBe('The README describes vibe-monitor.')
+    expect(assistant.text).toBe('The README describes vibe-mistro.')
   })
 
   it('accumulates deltas by messageId and keeps reasoning separate from the answer', () => {
@@ -211,7 +211,7 @@ const WRITE_TURN: unknown[] = [
     status: 'pending',
     title: 'Write note.txt',
     locations: [{ path: '/abs/workspace/note.txt' }],
-    content: [{ type: 'diff', path: '/abs/workspace/note.txt', newText: 'vibe-monitor works.' }],
+    content: [{ type: 'diff', path: '/abs/workspace/note.txt', newText: 'vibe-mistro works.' }],
   }),
   permissionRequest(0),
   update({

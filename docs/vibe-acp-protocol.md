@@ -93,7 +93,7 @@ Vibe is **not** API-key-only. Per Mistral's
 2. **API key (BYOK)** — the alternative path: `vibe --setup` / `MISTRAL_API_KEY` / `~/.vibe/.env`.
    Required for non-Mistral providers (OpenRouter, …), selected via presets in `config.toml`.
 
-**We never store credentials.** Like CodexMonitor with Codex, vibe-monitor delegates all auth and
+**We never store credentials.** Like CodexMonitor with Codex, vibe-mistro delegates all auth and
 token storage to the `vibe` binary (`~/.vibe`). We only detect signed-in vs not.
 
 **Over ACP — now captured (see [acp-capture.md](./acp-capture.md) §8):** detect with `_auth/status`

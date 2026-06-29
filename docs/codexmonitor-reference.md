@@ -168,7 +168,7 @@ Key patterns to emulate:
 
 ---
 
-## 8. Suggested build order for vibe-monitor
+## 8. Suggested build order for vibe-mistro
 
 Backbone first; everything hangs off the conversation loop.
 

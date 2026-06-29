@@ -1,8 +1,8 @@
-# Authentication is delegated to the `vibe` binary; vibe-monitor never stores credentials
+# Authentication is delegated to the `vibe` binary; vibe-mistro never stores credentials
 
-vibe-monitor does not implement authentication or store any credentials. Vibe owns auth: it keeps the
+vibe-mistro does not implement authentication or store any credentials. Vibe owns auth: it keeps the
 credential in the **OS keyring** (`authState: "os_keyring"`) and exposes the whole surface over ACP
-extension methods, which vibe-monitor merely drives and reflects:
+extension methods, which vibe-mistro merely drives and reflects:
 
 - **Detect** with `_auth/status` → `{ authenticated, authState, signOutAvailable }`. Auth state is NOT
   derivable from `initialize` (its `authMethods` list is always present), so `auth/status` is the
@@ -18,7 +18,7 @@ This is the auth-specific application of ADR-0002's thin-orchestrator stance: ag
 
 ## Considered options
 
-- **Store/manage credentials in vibe-monitor** (e.g. our own keychain entry or token cache) — rejected.
+- **Store/manage credentials in vibe-mistro** (e.g. our own keychain entry or token cache) — rejected.
   It would duplicate secrets insecurely, diverge from Vibe's source of truth, and break the moment Vibe
   rotates/relocates them. Vibe already owns the keyring entry.
 - **Delegate entirely to the `vibe` binary** (chosen) — we only trigger sign-in/out and read
@@ -26,7 +26,7 @@ This is the auth-specific application of ADR-0002's thin-orchestrator stance: ag
 
 ## Consequences
 
-- vibe-monitor has no credential storage and no secrets at rest. Signing out is Vibe's keyring removal;
+- vibe-mistro has no credential storage and no secrets at rest. Signing out is Vibe's keyring removal;
   we just call `_auth/signOut`.
 - We depend on Vibe's ACP auth extension methods (`_auth/status`, `_auth/signOut`, `authenticate`).
   These are `_`-prefixed extension methods (unstable surface) — pin behavior against the captured

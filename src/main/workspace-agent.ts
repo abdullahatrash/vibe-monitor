@@ -25,7 +25,7 @@ import type {
  */
 
 const PROTOCOL_VERSION = 1
-const CLIENT_INFO = { name: 'vibe-monitor', version: '0.0.1' } as const
+const CLIENT_INFO = { name: 'vibe-mistro', version: '0.0.1' } as const
 
 export const AUTH_HINT =
   'Run `vibe` to sign in, or `vibe --setup` to configure your Mistral Vibe account.'

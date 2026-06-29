@@ -36,6 +36,6 @@ const api = {
   },
 }
 
-export type VibeMonitorApi = typeof api
+export type VibeMistroApi = typeof api
 
 contextBridge.exposeInMainWorld('api', api)

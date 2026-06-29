@@ -1,4 +1,4 @@
-# vibe-monitor
+# vibe-mistro
 
 A desktop app for orchestrating Mistral Vibe coding agents across local projects, driven over
 Vibe's Agent Client Protocol (`vibe-acp`).

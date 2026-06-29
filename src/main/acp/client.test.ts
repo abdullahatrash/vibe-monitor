@@ -127,7 +127,7 @@ describe('AcpClient transport (Seam B)', () => {
     const initPromise = client.request<typeof initializeResult>('initialize', {
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
-      clientInfo: { name: 'vibe-monitor', version: '0.0.1' },
+      clientInfo: { name: 'vibe-mistro', version: '0.0.1' },
     })
     const sessionPromise = client.request<typeof sessionNewResult>('session/new', {
       cwd: '/abs',

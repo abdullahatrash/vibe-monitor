@@ -1,8 +1,8 @@
-import type { VibeMonitorApi } from './index'
+import type { VibeMistroApi } from './index'
 
 declare global {
   interface Window {
-    api: VibeMonitorApi
+    api: VibeMistroApi
   }
 }
 

@@ -1,6 +1,6 @@
-# vibe-monitor is a thin orchestrator; agent capabilities belong to Vibe
+# vibe-mistro is a thin orchestrator; agent capabilities belong to Vibe
 
-vibe-monitor is a GUI shell that drives an **external** agent (`vibe-acp`) over ACP. The model loop,
+vibe-mistro is a GUI shell that drives an **external** agent (`vibe-acp`) over ACP. The model loop,
 tool selection, and code intelligence (LSP-style lookups, search, edits) are **Vibe's**
 responsibility, not ours. We spawn/​supervise the agent, send prompts, render its streamed output,
 and answer its permission requests — nothing more. We do **not** run our own language servers, embed
@@ -8,7 +8,7 @@ the model, or re-implement agent tooling.
 
 This is the structural difference from opencode: **opencode *is* the agent** (it owns the model loop
 and exposes LSP as one of its tools in its core package), with the desktop app as one frontend.
-vibe-monitor sits a layer above the agent, like CodexMonitor sits above `codex`. When Vibe uses
+vibe-mistro sits a layer above the agent, like CodexMonitor sits above `codex`. When Vibe uses
 code intelligence, it reaches us as ACP tool-call items that we simply display.
 
 ## Considered options
@@ -20,7 +20,7 @@ code intelligence, it reaches us as ACP tool-call items that we simply display.
 
 ## Consequences
 
-- No language-server management code in vibe-monitor. Tool calls (incl. any LSP-backed ones Vibe
+- No language-server management code in vibe-mistro. Tool calls (incl. any LSP-backed ones Vibe
   performs) render via the generic tool card.
 - **Exception, additive and reversible:** if we later want editor-like features in our *own* file
   viewer (go-to-definition / hover / inline diagnostics) that work independently of the agent, we may

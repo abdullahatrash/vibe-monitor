@@ -1,4 +1,4 @@
-# vibe-monitor docs
+# vibe-mistro docs
 
 Reference material gathered before/while building, so the implementation stays clean and
 consistent. Read these before adding a feature.
@@ -9,7 +9,7 @@ consistent. Read these before adding a feature.
 | [opencode-electron-patterns.md](./opencode-electron-patterns.md) | **How to build it cleanly.** Electron architecture patterns mined from opencode's desktop app (same stack as us): process model, sidecar, typed IPC, persistence, updates, logging, packaging. |
 | [vibe-acp-protocol.md](./vibe-acp-protocol.md) | **The backend contract (narrative).** Mistral Vibe's `vibe-acp` ACP server — method flow, streaming, tool-permission model. Our `AcpClient` implements this. |
 | [acp-capture.md](./acp-capture.md) | **The backend contract (authoritative).** Verbatim JSON-RPC captured from live `vibe-acp` 2.18.0: real `initialize`/`session/new`/`session/prompt`/`session/update`/`session/request_permission`/`fs/*` shapes. Build against this. |
-| [conventions.md](./conventions.md) | **Our decisions.** The conventions and architecture choices for vibe-monitor, synthesized from the three references above. When the references disagree, this doc is the tiebreaker. |
+| [conventions.md](./conventions.md) | **Our decisions.** The conventions and architecture choices for vibe-mistro, synthesized from the three references above. When the references disagree, this doc is the tiebreaker. |
 
 ## TL;DR of the strategy
 

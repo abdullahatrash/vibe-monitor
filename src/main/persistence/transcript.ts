@@ -153,9 +153,15 @@ export class TranscriptStore {
    * Delete a Thread's log (TB6 #35). Best-effort by design, mirroring the guarded
    * appends: a MISSING file (a never-prompted draft has no JSONL) is a no-op, and
    * ANY unlink failure is swallowed — tearing down our records must never throw,
-   * since the metadata record is already being removed alongside (ADR-0005). We
-   * also drop the Thread's append-chain tail so a stale serialized promise can't
-   * resurrect the file after deletion.
+   * since the metadata record is already being removed alongside (ADR-0005).
+   *
+   * Dropping the Thread's append-chain tail only stops FUTURE chained appends —
+   * it does NOT cancel an `appendFile` already in flight (which, with flag 'a',
+   * would recreate the file after the unlink) nor a fresh tee arriving on a new
+   * chain. That's acceptable solely because delete is COLD-LIST-ONLY today: no
+   * live agent is streaming appends to a Thread being deleted from the cold list.
+   * This MUST be revisited before wiring delete into the live `ConnectedWorkspace`
+   * thread list — do NOT rely on this tail-drop as a real cancellation guard.
    */
   async delete(threadId: string): Promise<void> {
     this.tails.delete(threadId)

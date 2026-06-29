@@ -468,17 +468,24 @@ function registerIpc(): void {
     // the record drop, a null transcript skips the file drop, no live session
     // skips the close — never a throw, so a misclick-deleted draft can't wedge.
     if (!metadataStore) return
+    // Clear any transcript-bridge entry pointing at this Thread BEFORE the
+    // orchestration, to shrink (not close) the window in which a fresh tee could
+    // re-create its JSONL. NOTE: this is a window-shrink, not a guarantee — an
+    // `appendFile` already in flight (flag 'a' recreates the file post-unlink) can
+    // still resurrect the log, and `bestEffortCloseFor` reads the bound session
+    // from the metadata snapshot (not this bridge), so clearing first is safe.
+    // Acceptable only because delete is COLD-LIST-ONLY: no live agent is streaming
+    // appends to a cold-list Thread. MUST be revisited before wiring delete into
+    // the live `ConnectedWorkspace` thread list.
+    for (const [agentId, bound] of transcriptThreads) {
+      if (bound === threadId) transcriptThreads.delete(agentId)
+    }
     await deleteThread({
       threadId,
       store: metadataStore,
       transcript: transcriptStore ?? { delete: () => Promise.resolve() },
       closeSession: bestEffortCloseFor(threadId),
     })
-    // Drop any transcript-bridge entry pointing at the deleted Thread, so a late
-    // stray event for its agent can't resurrect a JSONL under the removed id.
-    for (const [agentId, bound] of transcriptThreads) {
-      if (bound === threadId) transcriptThreads.delete(agentId)
-    }
   })
 
   ipcMain.handle(IPC.listMetadata, (): ListMetadataResult => {

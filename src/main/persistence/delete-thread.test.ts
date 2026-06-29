@@ -51,6 +51,26 @@ describe('deleteThread (TB6 #35)', () => {
     expect(order).toEqual(['close', 'store', 'transcript'])
   })
 
+  it('RESOLVES even when the store record removal rejects (persist failure is best-effort)', async () => {
+    const { store, transcript } = fakes()
+    // store.deleteThread -> persist() -> writeFile/rename, which reject on a full /
+    // read-only userData. That must NOT reject the orchestration (the renderer's
+    // onClick has no .catch — mirrors recordWorkspaceOpen's guard).
+    store.deleteThread.mockRejectedValue(new Error('EROFS: read-only file system'))
+
+    await expect(deleteThread({ threadId: 't4', store, transcript })).resolves.toBeUndefined()
+    // The transcript removal is still attempted despite the store failure.
+    expect(transcript.delete).toHaveBeenCalledWith('t4')
+  })
+
+  it('RESOLVES even when the transcript removal rejects (best-effort)', async () => {
+    const { store, transcript } = fakes()
+    transcript.delete.mockRejectedValue(new Error('EACCES: permission denied'))
+
+    await expect(deleteThread({ threadId: 't5', store, transcript })).resolves.toBeUndefined()
+    expect(store.deleteThread).toHaveBeenCalledWith('t5')
+  })
+
   it('still completes the deletion when the best-effort close REJECTS (no error surfaced)', async () => {
     const { store, transcript } = fakes()
     const closeSession = vi.fn(async () => {

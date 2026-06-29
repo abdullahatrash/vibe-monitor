@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { AcpClient, type SpawnFn } from './acp/client'
-import type { ThreadInfo, ThreadModes, ThreadModels } from '../shared/ipc'
+import { handleFsReadTextFile, type ReadTextFn } from './acp/fs-read'
+import type { PromptResult, ThreadInfo, ThreadModes, ThreadModels } from '../shared/ipc'
 
 /**
  * A Workspace agent: one `vibe-acp` child process plus its `AcpClient`,
@@ -54,11 +55,14 @@ export interface WorkspaceAgentOptions {
   command?: string
   /** Injected process factory (testing). Forwarded to the AcpClient. */
   spawn?: SpawnFn
+  /** Override the file reader used to serve `fs/read_text_file` (testing). */
+  readTextFile?: ReadTextFn
 }
 
 export class WorkspaceAgent extends EventEmitter {
   private readonly client: AcpClient
   private readonly workspaceDir: string
+  private readonly readTextFile?: ReadTextFn
   /** Threads hosted by this agent, keyed by their ACP `sessionId`. */
   private readonly threads = new Map<string, ThreadInfo>()
   private initialized = false
@@ -66,6 +70,7 @@ export class WorkspaceAgent extends EventEmitter {
   constructor(options: WorkspaceAgentOptions) {
     super()
     this.workspaceDir = options.workspaceDir
+    this.readTextFile = options.readTextFile
     this.client = new AcpClient({
       command: options.command,
       cwd: options.workspaceDir,
@@ -75,7 +80,7 @@ export class WorkspaceAgent extends EventEmitter {
 
     // Forward raw protocol + lifecycle events; we do not interpret them here.
     this.client.on('notification', (msg: unknown) => this.emit('event', msg))
-    this.client.on('serverRequest', (msg: unknown) => this.emit('event', msg))
+    this.client.on('serverRequest', (msg: unknown) => this.onServerRequest(msg))
     this.client.on('stderr', (text: string) => this.emit('event', { type: 'stderr', text }))
     this.client.on('exit', (info: unknown) => this.emit('event', { type: 'exit', info }))
     this.client.on('error', (err: Error) => this.emit('event', { type: 'error', message: err.message }))
@@ -158,6 +163,51 @@ export class WorkspaceAgent extends EventEmitter {
     }
     this.threads.set(thread.sessionId, thread)
     return thread
+  }
+
+  /**
+   * Send a prompt to a Thread (`session/prompt`) and resolve when the turn
+   * ends. The streamed `session/update` notifications flow out on the `event`
+   * channel; per ADR-0001 the renderer reduces them — we only own the turn's
+   * lifecycle here. Resolves with `{stopReason, usage, userMessageId}`.
+   */
+  async prompt(sessionId: string, text: string): Promise<PromptResult> {
+    if (!this.initialized) {
+      throw new WorkspaceAgentError('Agent is not initialized; call start() first.')
+    }
+    if (!this.threads.has(sessionId)) {
+      throw new WorkspaceAgentError(`No open Thread for sessionId ${sessionId}.`)
+    }
+
+    try {
+      return await this.client.request<PromptResult>('session/prompt', {
+        sessionId,
+        prompt: [{ type: 'text', text }],
+      })
+    } catch (err) {
+      throw this.toAgentError(err)
+    }
+  }
+
+  /**
+   * Forward every server-initiated request for transparency, and serve the
+   * read-only `fs/read_text_file` ourselves so read prompts don't stall
+   * (docs/acp-capture.md §5). Writes / `request_permission` are TB3 — they are
+   * forwarded but not answered here; we just don't crash on them.
+   */
+  private onServerRequest(msg: unknown): void {
+    this.emit('event', msg)
+
+    const request = msg as { id?: number | string; method?: string; params?: unknown }
+    if (request.method === 'fs/read_text_file' && request.id !== undefined) {
+      void this.serveFsRead(request.id, request.params)
+    }
+  }
+
+  private async serveFsRead(id: number | string, params: unknown): Promise<void> {
+    const outcome = await handleFsReadTextFile(params, this.readTextFile)
+    if ('result' in outcome) this.client.respond(id, outcome.result)
+    else this.client.respondError(id, outcome.error)
   }
 
   stop(): void {

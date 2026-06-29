@@ -224,3 +224,137 @@ body {
   font-size: 12px;
   line-height: 1.4;
 }
+
+/* --- Conversation (TB2) --- */
+
+.conv {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.conv__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.conv__title {
+  flex: 1;
+  font-weight: 600;
+}
+
+.usage {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--muted);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.usage strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 4px 2px;
+}
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.msg__role {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.msg__body {
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.msg--user .msg__body {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  align-self: flex-start;
+}
+
+.msg--assistant .msg__role {
+  color: var(--accent);
+}
+
+.reasoning {
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+
+.reasoning__summary,
+.fallback__summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+}
+
+.reasoning__body {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.fallback {
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.fallback__body {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.composer__input {
+  flex: 1;
+  resize: vertical;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.composer__input:focus {
+  outline: none;
+  border-color: var(--accent);
+}

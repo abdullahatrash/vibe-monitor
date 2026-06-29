@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import {
   IPC,
   type AcpEvent,
+  type SendPromptArgs,
+  type SendPromptResult,
   type StartThreadArgs,
   type StartThreadResult,
   type VibeDetectResult,
@@ -12,6 +14,8 @@ const api = {
   openWorkspaceDialog: (): Promise<string | null> => ipcRenderer.invoke(IPC.openWorkspaceDialog),
   startThread: (args: StartThreadArgs): Promise<StartThreadResult> =>
     ipcRenderer.invoke(IPC.startThread, args),
+  sendPrompt: (args: SendPromptArgs): Promise<SendPromptResult> =>
+    ipcRenderer.invoke(IPC.sendPrompt, args),
   stopAgent: (agentId: string): Promise<void> => ipcRenderer.invoke(IPC.stopAgent, agentId),
   onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {
     const handler = (_e: unknown, payload: AcpEvent): void => listener(payload)

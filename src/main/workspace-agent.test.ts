@@ -126,3 +126,118 @@ describe('WorkspaceAgent.start()', () => {
     expect((err as WorkspaceAgentError).hint).toBe(AUTH_HINT)
   })
 })
+
+// --- TB2: prompt + fs/read serving (a writes-capturing fake) ----------------
+
+interface CapturingFake extends FakeChild {
+  writes: string[]
+}
+
+function makeCapturingFake(): CapturingFake {
+  const stdoutListeners: Array<(chunk: string) => void> = []
+  const writes: string[] = []
+  const child: ChildProcessLike = {
+    stdout: {
+      setEncoding: () => {},
+      on: (_event, listener) => {
+        stdoutListeners.push(listener)
+      },
+    },
+    stderr: { setEncoding: () => {}, on: () => {} },
+    stdin: {
+      write: (data) => {
+        writes.push(data)
+      },
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    on: () => {},
+    kill: () => {},
+  }
+  return {
+    child,
+    writes,
+    feed: (chunk) => stdoutListeners.forEach((l) => l(chunk)),
+    emitExit: () => {},
+    emitError: () => {},
+  }
+}
+
+interface SentRpc {
+  id?: number
+  method?: string
+  params?: { sessionId?: string; prompt?: Array<{ type: string; text: string }> }
+  result?: { content?: string }
+}
+
+function sent(fake: CapturingFake): SentRpc[] {
+  return fake.writes.map((w) => JSON.parse(w) as SentRpc)
+}
+
+const SESSION_ID = '8b7044cf-19d1-7a23-8da1-929c81b23170'
+
+/** Drive start() + openThread() to a ready agent over the capturing fake. */
+async function connect(
+  fake: CapturingFake,
+  readTextFile?: (path: string) => Promise<string>,
+): Promise<WorkspaceAgent> {
+  const agent = new WorkspaceAgent({
+    workspaceDir: '/abs/workspace',
+    spawn: () => fake.child,
+    readTextFile,
+  })
+  const started = agent.start()
+  fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } }) + '\n')
+  await started
+  const opened = agent.openThread()
+  fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 2, result: { sessionId: SESSION_ID } }) + '\n')
+  await opened
+  return agent
+}
+
+describe('WorkspaceAgent.prompt()', () => {
+  it('sends session/prompt with the ACP prompt shape and resolves on the turn response', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connect(fake)
+
+    const turn = agent.prompt(SESSION_ID, 'read the readme')
+    const promptReq = sent(fake).find((m) => m.method === 'session/prompt')
+    expect(promptReq).toBeDefined()
+    expect(promptReq?.params?.sessionId).toBe(SESSION_ID)
+    expect(promptReq?.params?.prompt).toEqual([{ type: 'text', text: 'read the readme' }])
+
+    // The session/prompt response (id 3) ends the turn.
+    fake.feed(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: promptReq?.id,
+        result: { stopReason: 'end_turn', usage: { totalTokens: 21047 }, userMessageId: 'u1' },
+      }) + '\n',
+    )
+    await expect(turn).resolves.toMatchObject({ stopReason: 'end_turn' })
+  })
+
+  it('rejects when prompting an unknown sessionId', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connect(fake)
+    await expect(agent.prompt('nope', 'hi')).rejects.toBeInstanceOf(WorkspaceAgentError)
+  })
+
+  it('serves an fs/read_text_file server request by replying {content}', async () => {
+    const fake = makeCapturingFake()
+    await connect(fake, async () => 'file body')
+
+    fake.feed(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 0,
+        method: 'fs/read_text_file',
+        params: { path: '/abs/file.ts', limit: 2001, sessionId: SESSION_ID },
+      }) + '\n',
+    )
+    // Let the async read + respond settle.
+    await new Promise((r) => setTimeout(r, 0))
+
+    const reply = sent(fake).find((m) => m.id === 0 && m.result !== undefined)
+    expect(reply?.result).toEqual({ content: 'file body' })
+  })
+})

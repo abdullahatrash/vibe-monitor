@@ -2,6 +2,8 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
 import {
   IPC,
+  type SendPromptArgs,
+  type SendPromptResult,
   type StartThreadArgs,
   type StartThreadResult,
 } from '../shared/ipc'
@@ -78,6 +80,20 @@ function registerIpc(): void {
       return { ok: false, error: err instanceof Error ? err.message : String(err), hint: null }
     }
   })
+
+  ipcMain.handle(
+    IPC.sendPrompt,
+    async (_event, args: SendPromptArgs): Promise<SendPromptResult> => {
+      const agent = agents.get(args.agentId)
+      if (!agent) return { ok: false, error: `No active agent for id ${args.agentId}.` }
+      try {
+        const result = await agent.prompt(args.sessionId, args.text)
+        return { ok: true, result }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
 
   ipcMain.handle(IPC.stopAgent, (_event, agentId: string) => {
     const agent = agents.get(agentId)

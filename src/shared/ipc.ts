@@ -12,6 +12,8 @@ export const IPC = {
   startThread: 'thread:start',
   /** Stop / dispose a Workspace agent (and its Threads). */
   stopAgent: 'agent:stop',
+  /** Send a prompt to a Thread (`session/prompt`); resolves on turn completion. */
+  sendPrompt: 'thread:prompt',
   /** Main -> renderer: streamed ACP event tagged by the owning agent. */
   acpEvent: 'acp:event',
 } as const
@@ -80,3 +82,30 @@ export interface AcpEvent {
   /** Raw ACP / JSON-RPC payload (or a serialized child lifecycle event). */
   payload: unknown
 }
+
+/** Token usage for a completed turn (`session/prompt` response). */
+export interface PromptUsage {
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+}
+
+/** The `session/prompt` response — arrives when the turn ends. */
+export interface PromptResult {
+  stopReason: string
+  usage?: PromptUsage
+  userMessageId?: string
+}
+
+export interface SendPromptArgs {
+  /** Id of the Workspace agent (one `vibe-acp` process) hosting the Thread. */
+  agentId: string
+  /** ACP session id of the Thread to prompt. */
+  sessionId: string
+  /** The user's prompt text. */
+  text: string
+}
+
+export type SendPromptResult =
+  | { ok: true; result: PromptResult }
+  | { ok: false; error: string }

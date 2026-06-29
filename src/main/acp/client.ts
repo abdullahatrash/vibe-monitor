@@ -135,6 +135,20 @@ export class AcpClient extends EventEmitter {
     this.writeMessage(child, { jsonrpc: '2.0', method, params })
   }
 
+  /** Answer a server-initiated request (e.g. `fs/read_text_file`) by its id. */
+  respond(id: JsonRpcId, result: unknown): void {
+    const child = this.child
+    if (!child) return
+    this.writeMessage(child, { jsonrpc: '2.0', id, result })
+  }
+
+  /** Reply to a server-initiated request with a JSON-RPC error. */
+  respondError(id: JsonRpcId, error: { code: number; message: string; data?: unknown }): void {
+    const child = this.child
+    if (!child) return
+    this.writeMessage(child, { jsonrpc: '2.0', id, error })
+  }
+
   stop(): void {
     this.child?.kill()
     this.child = null

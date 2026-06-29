@@ -1,5 +1,6 @@
 import { useEffect, useState, type JSX } from 'react'
 import type { ThreadConnection, VibeDetectResult } from '../../shared/ipc'
+import { Conversation } from './conversation/Conversation'
 
 type ConnectState =
   | { status: 'idle' }
@@ -94,70 +95,13 @@ export function App(): JSX.Element {
             </div>
           )}
 
-          {connect.status === 'connected' && <ThreadPanel thread={connect.thread} />}
+          {connect.status === 'connected' && (
+            // Key by agentId so the Conversation's useReducer state can't bleed
+            // across Threads — a new Thread gets a fresh reducer, not the old one.
+            <Conversation key={connect.thread.agentId} thread={connect.thread} />
+          )}
         </section>
       </main>
-    </div>
-  )
-}
-
-function ThreadPanel({ thread }: { thread: ThreadConnection }): JSX.Element {
-  return (
-    <div className="thread">
-      <div className="thread__head">
-        <span className="dot dot--ok" aria-hidden />
-        <span className="thread__title">{thread.title ?? 'Untitled Thread'}</span>
-        <span className="badge">connected</span>
-      </div>
-
-      <ul className="status">
-        <li className="status__row">
-          <span className="status__label">workspace</span>
-          <span className="status__value mono">{thread.workspaceDir}</span>
-        </li>
-        <li className="status__row">
-          <span className="status__label">sessionId</span>
-          <span className="status__value mono">{thread.sessionId}</span>
-        </li>
-      </ul>
-
-      {thread.modes && (
-        <ChipRow
-          label="modes"
-          items={thread.modes.availableModes.map((m) => m.id)}
-          current={thread.modes.currentModeId}
-        />
-      )}
-      {thread.models && (
-        <ChipRow
-          label="models"
-          items={thread.models.availableModels.map((m) => m.modelId)}
-          current={thread.models.currentModelId}
-        />
-      )}
-    </div>
-  )
-}
-
-function ChipRow({
-  label,
-  items,
-  current,
-}: {
-  label: string
-  items: string[]
-  current: string
-}): JSX.Element {
-  return (
-    <div className="chips">
-      <span className="chips__label">{label}</span>
-      <div className="chips__list">
-        {items.map((item) => (
-          <span key={item} className={item === current ? 'chip chip--active' : 'chip'}>
-            {item}
-          </span>
-        ))}
-      </div>
     </div>
   )
 }

@@ -13,8 +13,8 @@ import {
   signedInAuthViewState,
 } from './auth/auth-view'
 import { routeThreadResult, type ConnectState } from './connection/routing'
+import { ConnectedWorkspace } from './connection/ConnectedWorkspace'
 import { ColdThread } from './conversation/ColdThread'
-import { Conversation } from './conversation/Conversation'
 
 export function App(): JSX.Element {
   const [detect, setDetect] = useState<VibeDetectResult | null>(null)
@@ -155,10 +155,13 @@ export function App(): JSX.Element {
                   toSignInPanel(connect.thread.agentId, connect.thread.workspaceDir, authMethods)
                 }
               />
-              {/* Key by agentId so the Conversation's reducer can't bleed across Threads. */}
-              <Conversation
+              {/* Key by agentId so the per-Workspace Thread state can't bleed across
+                  connections. Hosts multiple Threads on the one agent + switching (TB5). */}
+              <ConnectedWorkspace
                 key={connect.thread.agentId}
-                thread={connect.thread}
+                connection={connect.thread}
+                threads={threadsForWorkspace(recents, connect.thread.workspaceId)}
+                refreshRecents={refreshRecents}
                 onAuthExpired={(authMethods) =>
                   toSignInPanel(connect.thread.agentId, connect.thread.workspaceDir, authMethods)
                 }
@@ -366,6 +369,11 @@ function RecentList({
 /** A Thread's list label — its title, or a placeholder until one arrives (TB2). */
 function threadLabel(thread: ThreadMeta): string {
   return thread.title ?? 'Untitled thread'
+}
+
+/** The persisted Threads under a connected Workspace (by minted id), for its list (TB5). */
+function threadsForWorkspace(recents: ListMetadataResult, workspaceId: string): ThreadMeta[] {
+  return recents.find((w) => w.id === workspaceId)?.threads ?? []
 }
 
 function StatusRow({ ok, label }: { ok: boolean; label: string }): JSX.Element {

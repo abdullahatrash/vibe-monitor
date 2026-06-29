@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import {
   IPC,
   type AcpEvent,
+  type CreateDraftArgs,
+  type CreateDraftResult,
   type ListMetadataResult,
   type ReadTranscriptResult,
   type RespondPermissionArgs,
@@ -32,6 +34,8 @@ const api = {
   signOut: (args: SignOutArgs): Promise<SignOutResult> => ipcRenderer.invoke(IPC.signOut, args),
   stopAgent: (agentId: string): Promise<void> => ipcRenderer.invoke(IPC.stopAgent, agentId),
   listMetadata: (): Promise<ListMetadataResult> => ipcRenderer.invoke(IPC.listMetadata),
+  createDraft: (args: CreateDraftArgs): Promise<CreateDraftResult> =>
+    ipcRenderer.invoke(IPC.createDraft, args),
   readTranscript: (threadId: string): Promise<ReadTranscriptResult> =>
     ipcRenderer.invoke(IPC.readTranscript, threadId),
   onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {

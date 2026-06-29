@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef, useState, type JSX, type KeyboardEvent } from 'react'
-import type { AuthMethod, ThreadConnection } from '../../../shared/ipc'
+import type { AuthMethod } from '../../../shared/ipc'
 import {
   conversationReducer,
   initialConversationState,
@@ -13,35 +13,83 @@ import {
   type ToolItem,
   type UserItem,
 } from './reducer'
+import { eventBelongsToThread, sessionIdOfEvent } from './event-routing'
+import { replayTranscript } from './replay'
 
 /** Process-local counter for unique echoed-prompt ids. */
 let promptSeq = 0
 
 /**
- * A connected Thread: subscribes to the agent's `acp:event` stream, reduces it
- * into conversation items (reducer.ts), and lets the user send prompts. Reads
- * are served transparently in main, so a read-only turn streams reasoning + an
- * answer and completes without any approval UI (that's TB3).
+ * The live handle for one Thread hosted on a Workspace agent (TB5). `sessionId`
+ * is the bound ACP session, or `null` for a draft whose `session/new` is deferred
+ * to its first prompt. Several of these can share one `agentId` (one `vibe-acp`
+ * hosting many sessions); switching mounts the selected one (keyed by `threadId`).
+ */
+export interface LiveThread {
+  agentId: string
+  threadId: string
+  workspaceId: string
+  sessionId: string | null
+  title: string | null
+}
+
+/**
+ * A live Thread: hydrates its saved history from JSONL on mount (TB5), then
+ * subscribes to the agent's `acp:event` stream — routing only THIS Thread's
+ * session into the reducer (reducer.ts) — and lets the user send prompts. A
+ * draft's first prompt binds its session in main (`session/new`); the returned
+ * `sessionId` is reused thereafter so the session is never re-minted.
  */
 export function Conversation({
   thread,
   onAuthExpired,
+  onBound,
 }: {
-  thread: ThreadConnection
+  thread: LiveThread
   /** Mid-session expiry (-32000): route to in-place re-auth with these methods. */
   onAuthExpired: (authMethods: AuthMethod[]) => void
+  /** The Thread's session once bound (TB5) — lifts it so a switch-away-and-back
+   *  re-seeds the bound session instead of re-minting it. */
+  onBound?: (sessionId: string) => void
 }): JSX.Element {
   const [state, dispatch] = useReducer(conversationReducer, initialConversationState)
   const [draft, setDraft] = useState('')
+  // The session this Thread is bound to — null until a draft's first prompt binds
+  // it. Seeded from the record, advanced by the prompt result and live events.
+  const [boundSessionId, setBoundSessionId] = useState<string | null>(thread.sessionId)
   const listRef = useRef<HTMLDivElement>(null)
+  // True once any live event has been folded in: guards the async hydrate from
+  // clobbering events that streamed in before the JSONL read resolved.
+  const liveSeen = useRef(false)
 
-  // Subscribe once per agent; ignore events from other agents sharing the channel.
+  // Hydrate this Thread's saved history from JSONL once (TB5): switching INTO a
+  // previously-used Thread shows its conversation before live events resume. A
+  // draft (or a fresh Thread) has none, so this is a no-op there.
+  useEffect(() => {
+    let active = true
+    void window.api.readTranscript(thread.threadId).then((entries) => {
+      if (!active || liveSeen.current) return
+      const replayed = replayTranscript(entries)
+      if (replayed.items.length > 0) dispatch({ type: 'hydrate', state: replayed })
+    })
+    return () => {
+      active = false
+    }
+  }, [thread.threadId])
+
+  // Subscribe to this agent's events; route ONLY this Thread's session to the
+  // reducer (one agent hosts many sessions, TB5). A draft adopts its session from
+  // the first tagged event so later events of OTHER Threads can't leak in.
   useEffect(() => {
     return window.api.onAcpEvent((event) => {
       if (event.agentId !== thread.agentId) return
+      if (!eventBelongsToThread(event.payload, boundSessionId)) return
+      liveSeen.current = true
+      const sid = sessionIdOfEvent(event.payload)
+      if (boundSessionId === null && sid !== null) setBoundSessionId(sid)
       dispatch({ type: 'acp-event', payload: event.payload })
     })
-  }, [thread.agentId])
+  }, [thread.agentId, boundSessionId])
 
   // Keep the latest item in view as the answer streams in.
   useEffect(() => {
@@ -57,13 +105,20 @@ export function Conversation({
     try {
       const result = await window.api.sendPrompt({
         agentId: thread.agentId,
-        sessionId: thread.sessionId,
+        threadId: thread.threadId,
+        workspaceId: thread.workspaceId,
+        sessionId: boundSessionId,
         text,
       })
-      // Mid-session expiry: route to in-place re-auth (the agent stays alive).
-      if (!result.ok && result.kind === 'not-signed-in') {
+      if (result.ok) {
+        // Reuse the now-bound session on the next prompt (no second session/new),
+        // and lift it so a switch-away-and-back doesn't re-mint.
+        setBoundSessionId(result.sessionId)
+        onBound?.(result.sessionId)
+      } else if (result.kind === 'not-signed-in') {
+        // Mid-session expiry: route to in-place re-auth (the agent stays alive).
         onAuthExpired(result.authMethods)
-      } else if (!result.ok) {
+      } else {
         // Surface a failed turn as a conversation item rather than dropping it.
         dispatch({ type: 'turn-error', message: result.error })
       }

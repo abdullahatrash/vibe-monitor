@@ -28,6 +28,8 @@ export const IPC = {
   listMetadata: 'metadata:list',
   /** Read a Thread's persisted JSONL transcript for a process-free reopen (TB3). */
   readTranscript: 'transcript:read',
+  /** Mint a NEW-Thread draft (durable id, no ACP session) under a Workspace (TB5). */
+  createDraft: 'thread:create-draft',
 } as const
 
 /**
@@ -116,6 +118,10 @@ export interface ThreadConnection extends ThreadInfo {
   /** Id of the Workspace agent (one `vibe-acp` process) in main. */
   agentId: string
   workspaceDir: string
+  /** Our durable, minted Thread id (TB5) — distinct from the ACP `sessionId`. */
+  threadId: string
+  /** Our minted Workspace id (TB5) — the key drafts/binds are recorded under. */
+  workspaceId: string
   /** Whether sign-out is available — drives the connected signed-in indicator. */
   signOutAvailable: boolean
   /** Advertised sign-in methods, kept so sign-out can route back to the panel. */
@@ -154,18 +160,43 @@ export interface PromptResult {
 export interface SendPromptArgs {
   /** Id of the Workspace agent (one `vibe-acp` process) hosting the Thread. */
   agentId: string
-  /** ACP session id of the Thread to prompt. */
-  sessionId: string
+  /** Our durable Thread id — bound to its ACP session on the first prompt (TB5). */
+  threadId: string
+  /** Our minted Workspace id — the key the binding is recorded under (TB5). */
+  workspaceId: string
+  /**
+   * The Thread's bound ACP session, or `null` for a draft's FIRST prompt — which
+   * triggers `session/new` in main (ADR-0005). The caller reuses the `sessionId`
+   * returned in the result on subsequent prompts so the session is not re-minted.
+   */
+  sessionId: string | null
   /** The user's prompt text. */
   text: string
 }
 
 export type SendPromptResult =
-  | { ok: true; result: PromptResult }
+  // `sessionId` is the Thread's now-bound session (minted on a draft's first
+  // prompt, else the one passed in) — the renderer reuses it on the next prompt.
+  | { ok: true; result: PromptResult; sessionId: string }
   // Mid-session expiry (-32000): the agent stays alive so the renderer can route
   // to the sign-in panel in place and re-auth on the same agent (no restart).
   | { ok: false; kind: 'not-signed-in'; agentId: string; authMethods: AuthMethod[] }
   | { ok: false; kind: 'error'; error: string }
+
+/** Mint a NEW-Thread draft under a Workspace (TB5): no ACP session, no agent work. */
+export interface CreateDraftArgs {
+  /** Our minted Workspace id the draft is created under. */
+  workspaceId: string
+}
+
+/**
+ * The `createDraft` reply: the minted draft Thread (`sessionId: null`), or an
+ * error if metadata isn't ready. The renderer adds it to the list and selects it;
+ * `session/new` is deferred to its first prompt.
+ */
+export type CreateDraftResult =
+  | { ok: true; thread: ThreadMeta }
+  | { ok: false; error: string }
 
 /** Reply to an agent `session/request_permission` with the user's choice. */
 export interface RespondPermissionArgs {

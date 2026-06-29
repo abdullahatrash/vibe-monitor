@@ -16,6 +16,16 @@ enforcement point for what the agent can touch on disk. We adopt an **asymmetric
   nearest existing ancestor** of the target (the file itself may not exist yet) and rejects it unless
   that real path is within the real path of the Workspace — so a symlink *inside* the Workspace pointing
   outside cannot be used to escape. This closes the lexical-only gap from the TB3 (#4) review.
+  The validated write is then performed **through file descriptors opened with `O_NOFOLLOW`**
+  (`secureWriteWithinRoot`) rather than by path (#21): each intermediate component is reopened
+  `O_RDONLY | O_DIRECTORY | O_NOFOLLOW` and the final component `O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW`,
+  with the content written through the final handle. This fully closes a pre-existing **dangling
+  final-component symlink** bypass (realpath throws on it, so it stays literal and looks in-Workspace, yet
+  a path-based write would follow it out) and refuses **planted intermediate symlinks** (`ELOOP`). The one
+  irreducible residual — a sub-microsecond swap of an intermediate directory for a symlink *between* our
+  `O_NOFOLLOW` open of that component and the next — needs native `openat()` (no portable Node API) and is
+  accepted under this ADR's desktop trust model. On platforms without `O_NOFOLLOW` (e.g. Windows) the writer
+  falls back to a path-based write; the primary target is macOS/darwin.
 
 ## Considered options
 

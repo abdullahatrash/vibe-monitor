@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { handleFsWriteTextFile, isPathWithin, type WriteTextFn } from './fs-write'
+import { handleFsWriteTextFile, isPathWithin, secureWriteWithinRoot, type WriteTextFn } from './fs-write'
 
 /**
  * Seam C: the `fs/write_text_file` handler main uses to serve the agent's
@@ -187,6 +187,97 @@ describe('handleFsWriteTextFile — symlink confinement (#8)', () => {
 
     rmSync(realRoot, { recursive: true, force: true })
     rmSync(linkRoot, { force: true })
+  })
+})
+
+/**
+ * #21 — O_NOFOLLOW write-through-fd hardening. Two write-escape gaps the #8
+ * confinement (realpath-then-write-by-path) leaves open, exercised against REAL
+ * temp dirs + real symlinks. Attack paths use RAW string concat — never
+ * path.join/resolve, which collapse `..` and HIDE the symlink (the #8 lesson).
+ */
+describe('handleFsWriteTextFile — #21 O_NOFOLLOW write hardening', () => {
+  it('refuses a write whose final component is a PRE-EXISTING dangling symlink out of the Workspace', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'vibe-ws-'))
+    const outside = mkdtempSync(join(tmpdir(), 'vibe-outside-'))
+    // Final component `ws/evil.txt` is a symlink to an as-yet-NONEXISTENT target
+    // outside the Workspace. realpath throws on a dangling link, so #8's
+    // resolveLikeKernel leaves it literal — an in-Workspace-LOOKING path that
+    // passes confinement — and a path-based writeFile then FOLLOWS the link and
+    // creates the file OUTSIDE the Workspace.
+    const outsideTarget = outside + '/evil.txt'
+    symlinkSync(outsideTarget, join(ws, 'evil.txt'))
+
+    const outcome = await handleFsWriteTextFile(
+      { path: ws + '/evil.txt', content: 'pwned' },
+      { workspaceDir: ws },
+    )
+
+    expect('error' in outcome).toBe(true)
+    expect(existsSync(outsideTarget)).toBe(false)
+
+    rmSync(ws, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  })
+})
+
+/**
+ * Direct unit tests of the through-fd writer. These simulate the TOCTOU outcome
+ * by PLANTING the symlink in place of a (would-be) validated component before
+ * the write, then asserting O_NOFOLLOW refuses it and nothing lands outside.
+ */
+describe('secureWriteWithinRoot (#21)', () => {
+  it('refuses when an INTERMEDIATE component is a symlink out of the root (ELOOP)', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'vibe-ws-'))
+    const outside = mkdtempSync(join(tmpdir(), 'vibe-outside-'))
+    // `ws/sub` is replaced (in place) by a symlink to `outside`. A path-based
+    // write to ws/sub/file.txt would follow it; the through-fd walk opens `sub`
+    // with O_NOFOLLOW|O_DIRECTORY and fails with ELOOP.
+    symlinkSync(outside, join(ws, 'sub'))
+
+    await expect(secureWriteWithinRoot(ws, ws + '/sub/file.txt', 'pwned')).rejects.toThrow()
+    expect(existsSync(outside + '/file.txt')).toBe(false)
+
+    rmSync(ws, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  })
+
+  it('refuses when the FINAL component is a symlink out of the root (ELOOP)', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'vibe-ws-'))
+    const outside = mkdtempSync(join(tmpdir(), 'vibe-outside-'))
+    symlinkSync(outside + '/file.txt', join(ws, 'file.txt'))
+
+    await expect(secureWriteWithinRoot(ws, ws + '/file.txt', 'pwned')).rejects.toThrow()
+    expect(existsSync(outside + '/file.txt')).toBe(false)
+
+    rmSync(ws, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  })
+
+  it('throws when the target is not within the root', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'vibe-ws-'))
+    const outside = mkdtempSync(join(tmpdir(), 'vibe-outside-'))
+
+    await expect(secureWriteWithinRoot(ws, outside + '/file.txt', 'x')).rejects.toThrow()
+    expect(existsSync(outside + '/file.txt')).toBe(false)
+
+    rmSync(ws, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  })
+
+  it('writes a new file in a nested in-Workspace subdir and overwrites an existing file', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'vibe-ws-'))
+    mkdirSync(join(ws, 'a'))
+    mkdirSync(join(ws, 'a', 'b'))
+
+    await secureWriteWithinRoot(ws, join(ws, 'a', 'b', 'new.txt'), 'first')
+    expect(readFileSync(join(ws, 'a', 'b', 'new.txt'), 'utf8')).toBe('first')
+
+    // Overwriting an existing regular file truncates + rewrites.
+    await secureWriteWithinRoot(ws, join(ws, 'a', 'b', 'new.txt'), 'second')
+    expect(readFileSync(join(ws, 'a', 'b', 'new.txt'), 'utf8')).toBe('second')
+
+    rmSync(ws, { recursive: true, force: true })
   })
 })
 

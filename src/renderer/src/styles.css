@@ -1,12 +1,31 @@
 :root {
-  --bg: #0e0f13;
-  --panel: #16181f;
-  --border: #262a35;
-  --text: #e6e8ee;
-  --muted: #8b90a0;
-  --accent: #ff7a1a;
-  --ok: #3fb950;
-  --bad: #f85149;
+  /* Mistral light-mode brand tokens.
+     Orange = fills / borders / gradients. --accent-text = orange TEXT (AA-safe). */
+  --bg: #fafaf8;
+  --surface: #ffffff;
+  --panel: #ffffff;
+  --border: #e7e3dd;
+  --text: #1e1a17;
+  --muted: #6b6a66;
+
+  --accent: #fa500f;
+  --accent-text: #c2410c;
+  --accent-grad: linear-gradient(135deg, #ff8a00 0%, #f23005 100%);
+  --on-accent: #1a1100;
+
+  --ok: #1a7f37;
+  --bad: #b42318;
+
+  /* Semantic tints (token-layer rgba; never raw rgba in component rules). */
+  --accent-tint: rgba(250, 80, 15, 0.08);
+  --accent-tint-border: rgba(250, 80, 15, 0.35);
+  --ok-tint: rgba(26, 127, 55, 0.1);
+  --ok-tint-border: rgba(26, 127, 55, 0.35);
+  --bad-tint: rgba(180, 35, 24, 0.08);
+  --bad-tint-border: rgba(180, 35, 24, 0.35);
+
+  --radius: 0;
+
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
@@ -54,7 +73,7 @@ body {
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 16px;
 }
 
@@ -67,10 +86,10 @@ body {
 }
 
 .btn {
-  background: var(--accent);
-  color: #1a1100;
+  background: var(--accent-grad);
+  color: var(--on-accent);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 6px 12px;
   font-weight: 600;
   cursor: pointer;
@@ -115,7 +134,7 @@ body {
 .dot {
   width: 9px;
   height: 9px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   display: inline-block;
 }
 
@@ -172,10 +191,10 @@ body {
 }
 
 .badge {
-  background: rgba(63, 185, 80, 0.15);
+  background: var(--ok-tint);
   color: var(--ok);
-  border: 1px solid rgba(63, 185, 80, 0.4);
-  border-radius: 999px;
+  border: 1px solid var(--ok-tint-border);
+  border-radius: var(--radius);
   padding: 2px 10px;
   font-size: 11px;
   font-weight: 600;
@@ -202,7 +221,7 @@ body {
 
 .chip {
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 2px 8px;
   font-size: 12px;
   color: var(--muted);
@@ -210,13 +229,13 @@ body {
 
 .chip--active {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .alert {
-  border: 1px solid rgba(248, 81, 73, 0.4);
-  background: rgba(248, 81, 73, 0.08);
-  border-radius: 8px;
+  border: 1px solid var(--bad-tint-border);
+  background: var(--bad-tint);
+  border-radius: var(--radius);
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -241,9 +260,9 @@ body {
 }
 
 .signin {
-  border: 1px solid rgba(255, 122, 26, 0.4);
-  background: rgba(255, 122, 26, 0.08);
-  border-radius: 8px;
+  border: 1px solid var(--accent-tint-border);
+  background: var(--accent-tint);
+  border-radius: var(--radius);
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -252,7 +271,7 @@ body {
 }
 
 .signin__title {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
   font-size: 13px;
 }
@@ -270,8 +289,8 @@ body {
 }
 
 .signin--done {
-  border-color: rgba(63, 185, 80, 0.4);
-  background: rgba(63, 185, 80, 0.08);
+  border-color: var(--ok-tint-border);
+  background: var(--ok-tint);
 }
 
 .signin--done .signin__title {
@@ -289,8 +308,8 @@ body {
   padding: 8px 12px;
   margin-bottom: 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgba(63, 185, 80, 0.06);
+  border-radius: var(--radius);
+  background: var(--ok-tint);
   font-size: 13px;
 }
 
@@ -375,13 +394,13 @@ body {
 .msg--user .msg__body {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 8px 12px;
   align-self: flex-start;
 }
 
 .msg--assistant .msg__role {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .reasoning {
@@ -408,7 +427,7 @@ body {
 
 .fallback {
   border: 1px dashed var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 6px 10px;
 }
 
@@ -424,7 +443,7 @@ body {
 
 .tool {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 8px 12px;
   background: var(--panel);
 }
@@ -455,9 +474,9 @@ body {
 }
 
 .permission {
-  border: 1px solid rgba(255, 122, 26, 0.4);
-  background: rgba(255, 122, 26, 0.08);
-  border-radius: 8px;
+  border: 1px solid var(--accent-tint-border);
+  background: var(--accent-tint);
+  border-radius: var(--radius);
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -467,7 +486,7 @@ body {
 .permission__title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .permission__chosen {
@@ -492,7 +511,7 @@ body {
   background: transparent;
   color: var(--muted);
   border: 1px dashed var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
@@ -515,7 +534,7 @@ body {
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 8px 10px;
   font-family: inherit;
   font-size: 14px;

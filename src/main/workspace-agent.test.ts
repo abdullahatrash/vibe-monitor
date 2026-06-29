@@ -201,6 +201,144 @@ describe('WorkspaceAgent — auth detection (_auth/status)', () => {
   })
 })
 
+// --- TB3: browser-auth-delegated sign-in ------------------------------------
+
+interface InitParams {
+  clientCapabilities?: { fs?: unknown; _meta?: Record<string, unknown> }
+}
+
+const DELEGATED = 'browser-auth-delegated'
+const SIGN_IN_URL =
+  'https://console.mistral.ai/codestral/cli/authenticate?process_id=fb067327-aaaa-bbbb-cccc-dddddddddddd'
+const ATTEMPT_ID = 'fb067327-aaaa-bbbb-cccc-dddddddddddd'
+
+interface AuthRpc {
+  id?: number
+  method?: string
+  params?: { methodId?: string; action?: string; attemptId?: string }
+}
+
+function authSent(fake: CapturingFake): AuthRpc[] {
+  return fake.writes.map((w) => JSON.parse(w) as AuthRpc).filter((m) => m.method === 'authenticate')
+}
+
+/** Drive start() to a ready, signed-out agent with an injected URL opener. */
+async function connectSignedOut(
+  fake: CapturingFake,
+  openUrl: (url: string) => void,
+): Promise<WorkspaceAgent> {
+  const agent = new WorkspaceAgent({ workspaceDir: '/abs/workspace', spawn: () => fake.child, openUrl })
+  const started = agent.start()
+  fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 1, result: INITIALIZE_RESULT }) + '\n')
+  await new Promise((r) => setTimeout(r, 0))
+  fake.feed(
+    JSON.stringify({ jsonrpc: '2.0', id: 2, result: { authenticated: false, authState: 'signed_out' } }) +
+      '\n',
+  )
+  await started
+  return agent
+}
+
+/** The delegated `start` response (acp-capture §8) — verbatim shape. */
+function startResult(): unknown {
+  return {
+    _meta: { [DELEGATED]: { attemptId: ATTEMPT_ID, expiresAt: '2026-06-29T11:22:26Z', signInUrl: SIGN_IN_URL } },
+  }
+}
+
+/** The delegated `complete` response (acp-capture §8). */
+function completeResult(): unknown {
+  return { _meta: { [DELEGATED]: { attemptId: ATTEMPT_ID, persistResult: 'completed', status: 'completed' } } }
+}
+
+describe('WorkspaceAgent — sign in (browser-auth-delegated)', () => {
+  it('advertises the browser-auth-delegated capability in initialize', async () => {
+    const fake = makeCapturingFake()
+    await startWithAuthStatus(fake, { authenticated: false, authState: 'signed_out' })
+
+    // The agent only offers the delegated method if we opt in via
+    // clientCapabilities._meta (acp-capture §8).
+    const init = fake.writes
+      .map((w) => JSON.parse(w) as { method?: string; params?: InitParams })
+      .find((m) => m.method === 'initialize')
+    expect(init?.params?.clientCapabilities?._meta?.['browser-auth-delegated']).toBe(true)
+  })
+
+  it('runs start → open URL → complete → re-detect and resolves signed-in', async () => {
+    const fake = makeCapturingFake()
+    const opened: string[] = []
+    const agent = await connectSignedOut(fake, (url) => opened.push(url))
+
+    const signingIn = agent.signIn(DELEGATED)
+
+    // start is sent immediately (non-blocking); answer it.
+    await new Promise((r) => setTimeout(r, 0))
+    const startReq = authSent(fake).find((m) => m.params?.action === 'start')
+    expect(startReq?.params).toMatchObject({ methodId: DELEGATED, action: 'start' })
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: startReq?.id, result: startResult() }) + '\n')
+
+    // The client opens the returned signInUrl, then long-polls `complete`.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(opened).toEqual([SIGN_IN_URL])
+    const completeReq = authSent(fake).find((m) => m.params?.action === 'complete')
+    expect(completeReq?.params).toMatchObject({ methodId: DELEGATED, action: 'complete', attemptId: ATTEMPT_ID })
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: completeReq?.id, result: completeResult() }) + '\n')
+
+    // After complete, it re-queries _auth/status to confirm signed-in.
+    await new Promise((r) => setTimeout(r, 0))
+    const statusReqs = sent(fake).filter((m) => m.method === '_auth/status')
+    fake.feed(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: statusReqs[statusReqs.length - 1]?.id,
+        result: { authenticated: true, authState: 'os_keyring', signOutAvailable: true },
+      }) + '\n',
+    )
+
+    await expect(signingIn).resolves.toBe('signed-in')
+    expect(agent.authState).toBe('signed-in')
+  })
+
+  it('rejects (recoverably) when complete fails for an expired/unknown attempt (-32602)', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectSignedOut(fake, () => {})
+
+    const signingIn = agent.signIn(DELEGATED)
+    signingIn.catch(() => {}) // avoid an unhandled rejection before we assert
+
+    await new Promise((r) => setTimeout(r, 0))
+    const startReq = authSent(fake).find((m) => m.params?.action === 'start')
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: startReq?.id, result: startResult() }) + '\n')
+
+    await new Promise((r) => setTimeout(r, 0))
+    const completeReq = authSent(fake).find((m) => m.params?.action === 'complete')
+    fake.feed(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: completeReq?.id,
+        error: { code: -32602, message: 'Invalid request' },
+      }) + '\n',
+    )
+
+    await expect(signingIn).rejects.toBeInstanceOf(WorkspaceAgentError)
+    // The failure leaves auth state untouched (still signed-out) — never wedged.
+    expect(agent.authState).toBe('not-signed-in')
+  })
+
+  it('rejects when the process exits mid sign-in (no wedge)', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectSignedOut(fake, () => {})
+
+    const signingIn = agent.signIn(DELEGATED)
+    signingIn.catch(() => {})
+
+    // Die while `start` is still in flight.
+    fake.emitExit(1)
+
+    await expect(signingIn).rejects.toBeInstanceOf(WorkspaceAgentError)
+  })
+})
+
 // --- TB2: prompt + fs/read serving (a writes-capturing fake) ----------------
 
 interface CapturingFake extends FakeChild {
@@ -209,6 +347,8 @@ interface CapturingFake extends FakeChild {
 
 function makeCapturingFake(): CapturingFake {
   const stdoutListeners: Array<(chunk: string) => void> = []
+  const exitListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
+  const errorListeners: Array<(err: Error) => void> = []
   const writes: string[] = []
   const child: ChildProcessLike = {
     stdout: {
@@ -224,15 +364,18 @@ function makeCapturingFake(): CapturingFake {
       },
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    on: () => {},
+    on: (event: 'error' | 'exit', listener: (...args: any[]) => void) => {
+      if (event === 'exit') exitListeners.push(listener)
+      else errorListeners.push(listener)
+    },
     kill: () => {},
   }
   return {
     child,
     writes,
     feed: (chunk) => stdoutListeners.forEach((l) => l(chunk)),
-    emitExit: () => {},
-    emitError: () => {},
+    emitExit: (code, signal = null) => exitListeners.forEach((l) => l(code, signal)),
+    emitError: (err) => errorListeners.forEach((l) => l(err)),
   }
 }
 

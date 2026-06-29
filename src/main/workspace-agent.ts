@@ -95,6 +95,12 @@ export class WorkspaceAgent extends EventEmitter {
   private authMethodsValue: AuthMethod[] = []
   /** Whether `_auth/status` reports sign-out is available — gates the control. */
   private signOutAvailableValue = false
+  /**
+   * Whether `initialize` advertised `agentCapabilities.sessionCapabilities.close`
+   * (acp-capture §1) — gates the best-effort `session/close` on Thread delete
+   * (TB6 #35) so we never send a doomed -32601 to an agent that can't service it.
+   */
+  private sessionCloseAvailableValue = false
 
   constructor(options: WorkspaceAgentOptions) {
     super()
@@ -166,6 +172,7 @@ export class WorkspaceAgent extends EventEmitter {
         earlyFailure,
       ])
       this.authMethodsValue = extractAuthMethods(init)
+      this.sessionCloseAvailableValue = extractSessionCloseCapability(init)
       // `initialize` can't reveal auth state (its authMethods is always
       // present), so query the `_auth/status` extension method (acp-capture §8).
       await this.detectAuthState(earlyFailure)
@@ -391,6 +398,30 @@ export class WorkspaceAgent extends EventEmitter {
   }
 
   /**
+   * Best-effort close of a hosted Thread's ACP session on delete (TB6 #35). Drops
+   * our local handle, then — only if the session is live AND the agent advertised
+   * `sessionCapabilities.close` — fires `session/close` and SWALLOWS any failure:
+   * Vibe-side cleanup must never block the Thread deletion or surface as an error
+   * (ADR-0005). An unknown session (cold Thread / already closed) is a silent
+   * no-op. Resolves once the close round-trip settles (success or error).
+   *
+   * Residual: the exact `session/close` param shape is the ACP-standard
+   * `{sessionId}` — the capture confirms the capability is advertised but flags
+   * the request shape as unverified (docs/acp-capture.md). Strictly best-effort,
+   * so a wrong shape degrades to a swallowed -32602 and the records still come down.
+   */
+  async closeSession(sessionId: string): Promise<void> {
+    if (!this.threads.has(sessionId)) return
+    this.threads.delete(sessionId)
+    if (!this.initialized || !this.sessionCloseAvailableValue) return
+    try {
+      await this.client.request('session/close', { sessionId })
+    } catch {
+      // A close failure is non-fatal — the Thread deletion proceeds regardless.
+    }
+  }
+
+  /**
    * Answer a `session/request_permission` by the agent's JSON-RPC request id
    * with the option the user picked (docs/acp-capture.md §6). Per ADR-0001 the
    * decision is made in the renderer; main just relays the chosen `optionId`
@@ -506,6 +537,18 @@ function extractDelegatedMeta(response: unknown, methodId: string): DelegatedMet
   const entry = meta?.[methodId]
   if (!entry || typeof entry !== 'object') return null
   return entry as DelegatedMeta
+}
+
+/**
+ * Whether `initialize` advertised the session-close capability
+ * (`agentCapabilities.sessionCapabilities.close`, acp-capture §1). Defaults to
+ * false on any absent/malformed shape — so we only attempt `session/close`
+ * against an agent that genuinely announces it (TB6 #35).
+ */
+function extractSessionCloseCapability(init: InitializeResult): boolean {
+  const caps = (init.agentCapabilities as { sessionCapabilities?: { close?: unknown } } | null)
+    ?.sessionCapabilities
+  return !!caps && caps.close !== undefined
 }
 
 /** Pull the well-formed `authMethods` out of an `initialize` result. */

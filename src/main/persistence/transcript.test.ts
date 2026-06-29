@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest'
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -124,6 +124,37 @@ describe('TranscriptStore best-effort', () => {
     })
     // The tee must NEVER break the live conversation — a failing append is swallowed.
     await expect(store.append('thread-fail', { t: 'user-prompt', id: 'u1', text: 'x' })).resolves.toBeUndefined()
+  })
+})
+
+describe('TranscriptStore.delete (TB6 #35)', () => {
+  it('unlinks an existing <threadId>.jsonl so its log is gone', async () => {
+    const store = storeAt()
+    const id = 'thread-delete'
+    await store.append(id, { t: 'user-prompt', id: 'u1', text: 'hi' })
+    expect(existsSync(join(dir, `${id}.jsonl`))).toBe(true)
+
+    await store.delete(id)
+
+    expect(existsSync(join(dir, `${id}.jsonl`))).toBe(false)
+    // And it reads back empty afterwards (no residue for a later same-id Thread).
+    expect(await store.read(id)).toEqual([])
+  })
+
+  it('does not throw when the log is MISSING (never-prompted draft)', async () => {
+    const store = storeAt()
+    // A draft that was never prompted has no JSONL — deleting it must be a no-op.
+    await expect(store.delete('thread-never-written')).resolves.toBeUndefined()
+  })
+
+  it('swallows a non-ENOENT unlink failure (best-effort, never blocks deletion)', async () => {
+    const store = new TranscriptStore({
+      dir,
+      unlink: async () => {
+        throw new Error('EACCES: permission denied')
+      },
+    })
+    await expect(store.delete('thread-unlink-fails')).resolves.toBeUndefined()
   })
 })
 

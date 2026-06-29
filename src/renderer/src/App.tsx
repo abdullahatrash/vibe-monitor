@@ -38,6 +38,18 @@ export function App(): JSX.Element {
     setRecents(await window.api.listMetadata())
   }
 
+  /**
+   * Delete a persisted Thread (TB6): main removes its metadata + JSONL and
+   * best-effort closes any live session; we then re-fetch so it disappears from
+   * the list. If the deleted Thread is the one open read-only, drop back to the
+   * list so we don't render a now-gone transcript.
+   */
+  async function deleteThread(thread: ThreadMeta): Promise<void> {
+    await window.api.deleteThread(thread.id)
+    setColdThread((open) => (open?.id === thread.id ? null : open))
+    await refreshRecents()
+  }
+
   useEffect(() => {
     void runDetect()
     void refreshRecents()
@@ -114,7 +126,11 @@ export function App(): JSX.Element {
           )}
 
           {connect.status === 'idle' && !coldThread && recents.length > 0 && (
-            <RecentList workspaces={recents} onOpenThread={setColdThread} />
+            <RecentList
+              workspaces={recents}
+              onOpenThread={setColdThread}
+              onDeleteThread={deleteThread}
+            />
           )}
 
           {connect.status === 'connecting' && (
@@ -333,9 +349,12 @@ function SignedInBar({
 function RecentList({
   workspaces,
   onOpenThread,
+  onDeleteThread,
 }: {
   workspaces: WorkspaceThreads[]
   onOpenThread: (thread: ThreadMeta) => void
+  /** Delete a Thread (TB6) — removes its metadata + JSONL, then refreshes the list. */
+  onDeleteThread: (thread: ThreadMeta) => Promise<void>
 }): JSX.Element {
   return (
     <div className="recents">
@@ -349,11 +368,12 @@ function RecentList({
             {w.threads.length > 0 ? (
               <ul className="recents__threads">
                 {w.threads.map((t) => (
-                  <li key={t.id} className="recents__thread">
-                    <button className="recents__thread-btn" onClick={() => onOpenThread(t)}>
-                      {threadLabel(t)}
-                    </button>
-                  </li>
+                  <RecentThread
+                    key={t.id}
+                    thread={t}
+                    onOpen={onOpenThread}
+                    onDelete={onDeleteThread}
+                  />
                 ))}
               </ul>
             ) : (
@@ -363,6 +383,56 @@ function RecentList({
         ))}
       </ul>
     </div>
+  )
+}
+
+/**
+ * One Thread row in the cold list: opens read-only on click (TB3), with a delete
+ * control (TB6). Delete is two-step — a first click arms an INLINE confirm (Delete
+ * / Cancel) rather than a native `confirm()` (which would block the renderer), so
+ * a single misclick can't nuke a Thread's history.
+ */
+function RecentThread({
+  thread,
+  onOpen,
+  onDelete,
+}: {
+  thread: ThreadMeta
+  onOpen: (thread: ThreadMeta) => void
+  onDelete: (thread: ThreadMeta) => Promise<void>
+}): JSX.Element {
+  const [confirming, setConfirming] = useState(false)
+  return (
+    <li className="recents__thread">
+      <button className="recents__thread-btn" onClick={() => onOpen(thread)}>
+        {threadLabel(thread)}
+      </button>
+      {confirming ? (
+        <span className="recents__thread-confirm">
+          <button
+            className="btn btn--ghost btn--danger"
+            onClick={() => {
+              setConfirming(false)
+              void onDelete(thread)
+            }}
+          >
+            Delete
+          </button>
+          <button className="btn btn--ghost" onClick={() => setConfirming(false)}>
+            Cancel
+          </button>
+        </span>
+      ) : (
+        <button
+          className="recents__thread-delete"
+          aria-label="Delete thread"
+          title="Delete thread"
+          onClick={() => setConfirming(true)}
+        >
+          ✕
+        </button>
+      )}
+    </li>
   )
 }
 

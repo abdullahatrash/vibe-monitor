@@ -140,6 +140,21 @@ export class MetadataStore {
   }
 
   /**
+   * Remove a Thread record by its minted `id` (TB6 #35). Idempotent: an unknown
+   * id (or an already-deleted Thread) is a no-op — the filter simply matches
+   * nothing — so deleting twice never throws. The JSONL transcript + any live ACP
+   * session are torn down by the caller (best-effort, ADR-0005); this owns only
+   * our metadata record. Persisted atomically like the upserts.
+   */
+  async deleteThread(id: string): Promise<void> {
+    const before = this.state.threads.length
+    this.state.threads = this.state.threads.filter((t) => t.id !== id)
+    // Only rewrite the index when something actually changed — an unknown-id
+    // delete touches no record and needs no disk write.
+    if (this.state.threads.length !== before) await this.persist()
+  }
+
+  /**
    * Resolve a Thread's minted `id` from its bound ACP `sessionId` (TB2 transcript
    * routing). Events flow keyed by `sessionId`, but the JSONL is keyed by the
    * minted Thread `id`; this bridges the two. A null/unmatched session is `null`

@@ -144,6 +144,40 @@ describe('MetadataStore round-trip', () => {
   })
 })
 
+describe('MetadataStore.deleteThread (TB6 #35)', () => {
+  it('removes a Thread record so it no longer lists, leaving siblings intact', async () => {
+    const file = 'delete-thread.json'
+    const store = storeAt(file)
+    await store.load()
+    const ws = await store.upsertWorkspace({ dir: '/proj/del' })
+    const keep = await store.upsertThread({ workspaceId: ws.id, sessionId: 'keep' })
+    const drop = await store.upsertThread({ workspaceId: ws.id, sessionId: 'drop' })
+
+    await store.deleteThread(drop.id)
+
+    const ids = store.snapshot().threads.map((t) => t.id)
+    expect(ids).toEqual([keep.id]) // only the dropped Thread is gone
+
+    // Durable: a fresh instance over the SAME file must not see the deleted record.
+    const reopened = storeAt(file)
+    await reopened.load()
+    expect(reopened.snapshot().threads.map((t) => t.id)).toEqual([keep.id])
+  })
+
+  it('is a no-op for an unknown id (idempotent, no throw)', async () => {
+    const store = storeAt('delete-unknown.json')
+    await store.load()
+    const ws = await store.upsertWorkspace({ dir: '/proj/del-unknown' })
+    const t = await store.upsertThread({ workspaceId: ws.id })
+
+    await expect(store.deleteThread('no-such-thread')).resolves.toBeUndefined()
+    // Deleting the same Thread twice is also safe (idempotent).
+    await store.deleteThread(t.id)
+    await expect(store.deleteThread(t.id)).resolves.toBeUndefined()
+    expect(store.snapshot().threads).toEqual([])
+  })
+})
+
 describe('MetadataStore atomic persist', () => {
   it('writes to a temp file then renames it over the target (crash-safe)', async () => {
     const events: string[] = []

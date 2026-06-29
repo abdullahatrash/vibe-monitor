@@ -728,6 +728,80 @@ describe('WorkspaceAgent.prompt()', () => {
   })
 })
 
+// --- TB6: best-effort session close (#35) -----------------------------------
+
+/**
+ * Drive start() + openThread() to a ready agent whose `initialize` advertises
+ * (or omits) the `sessionCapabilities.close` capability — the gate `closeSession`
+ * checks before sending `session/close`.
+ */
+async function connectWithCaps(fake: CapturingFake, advertiseClose: boolean): Promise<WorkspaceAgent> {
+  const agent = new WorkspaceAgent({ workspaceDir: '/abs/workspace', spawn: () => fake.child })
+  const started = agent.start()
+  fake.feed(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        protocolVersion: 1,
+        agentCapabilities: advertiseClose ? { sessionCapabilities: { close: {}, fork: {}, list: {} } } : {},
+      },
+    }) + '\n',
+  )
+  await new Promise((r) => setTimeout(r, 0))
+  fake.feed(
+    JSON.stringify({ jsonrpc: '2.0', id: 2, result: { authenticated: true, authState: 'os_keyring' } }) + '\n',
+  )
+  await started
+  const opened = agent.openThread()
+  fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 3, result: { sessionId: SESSION_ID } }) + '\n')
+  await opened
+  return agent
+}
+
+describe('WorkspaceAgent.closeSession() (TB6 #35)', () => {
+  it('sends session/close for a live session when the agent advertises the capability', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectWithCaps(fake, true)
+
+    const closing = agent.closeSession(SESSION_ID)
+    const closeReq = sent(fake).find((m) => m.method === 'session/close')
+    expect(closeReq).toBeDefined()
+    expect(closeReq?.params?.sessionId).toBe(SESSION_ID)
+
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: closeReq?.id, result: {} }) + '\n')
+    await expect(closing).resolves.toBeUndefined()
+  })
+
+  it('is a no-op for an UNKNOWN session (no live Thread to close)', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectWithCaps(fake, true)
+
+    await expect(agent.closeSession('no-such-session')).resolves.toBeUndefined()
+    expect(sent(fake).some((m) => m.method === 'session/close')).toBe(false)
+  })
+
+  it('does NOT send session/close when the agent never advertised the capability', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectWithCaps(fake, false)
+
+    await expect(agent.closeSession(SESSION_ID)).resolves.toBeUndefined()
+    expect(sent(fake).some((m) => m.method === 'session/close')).toBe(false)
+  })
+
+  it('swallows a session/close error (best-effort — never blocks deletion)', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectWithCaps(fake, true)
+
+    const closing = agent.closeSession(SESSION_ID)
+    const closeReq = sent(fake).find((m) => m.method === 'session/close')
+    fake.feed(
+      JSON.stringify({ jsonrpc: '2.0', id: closeReq?.id, error: { code: -32603, message: 'boom' } }) + '\n',
+    )
+    await expect(closing).resolves.toBeUndefined()
+  })
+})
+
 // --- TB3: fs/write serving + permission responder ---------------------------
 
 /** Drive a ready agent over the capturing fake, with an injected writer. */

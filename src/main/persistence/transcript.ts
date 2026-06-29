@@ -1,4 +1,4 @@
-import { appendFile, readFile } from 'node:fs/promises'
+import { appendFile, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { TranscriptEntry } from '../../shared/ipc'
 
@@ -84,12 +84,15 @@ export interface TranscriptDeps {
   append?: (path: string, line: string) => Promise<void>
   /** Read a Thread's whole log. Defaults to `fs.readFile`. */
   readFile?: (path: string) => Promise<string>
+  /** Remove a Thread's log file (TB6 delete). Defaults to `fs.unlink`. */
+  unlink?: (path: string) => Promise<void>
 }
 
 export class TranscriptStore {
   private readonly dir: string
   private readonly appendFn: (path: string, line: string) => Promise<void>
   private readonly readFileFn: (path: string) => Promise<string>
+  private readonly unlinkFn: (path: string) => Promise<void>
   /**
    * One serialized promise chain per Thread (keyed by log path). Each `append`
    * links onto its Thread's tail SYNCHRONOUSLY (read-then-set with no `await`
@@ -104,6 +107,7 @@ export class TranscriptStore {
     this.dir = deps.dir
     this.appendFn = deps.append ?? ((path, line) => appendFile(path, line, 'utf8'))
     this.readFileFn = deps.readFile ?? ((path) => readFile(path, 'utf8'))
+    this.unlinkFn = deps.unlink ?? unlink
   }
 
   /** Absolute path of a Thread's log. */
@@ -143,6 +147,29 @@ export class TranscriptStore {
       return []
     }
     return parseTranscript(raw)
+  }
+
+  /**
+   * Delete a Thread's log (TB6 #35). Best-effort by design, mirroring the guarded
+   * appends: a MISSING file (a never-prompted draft has no JSONL) is a no-op, and
+   * ANY unlink failure is swallowed — tearing down our records must never throw,
+   * since the metadata record is already being removed alongside (ADR-0005).
+   *
+   * Dropping the Thread's append-chain tail only stops FUTURE chained appends —
+   * it does NOT cancel an `appendFile` already in flight (which, with flag 'a',
+   * would recreate the file after the unlink) nor a fresh tee arriving on a new
+   * chain. That's acceptable solely because delete is COLD-LIST-ONLY today: no
+   * live agent is streaming appends to a Thread being deleted from the cold list.
+   * This MUST be revisited before wiring delete into the live `ConnectedWorkspace`
+   * thread list — do NOT rely on this tail-drop as a real cancellation guard.
+   */
+  async delete(threadId: string): Promise<void> {
+    this.tails.delete(threadId)
+    try {
+      await this.unlinkFn(this.pathFor(threadId))
+    } catch {
+      // No log (ENOENT) or an unremovable file — non-fatal; deletion proceeds.
+    }
   }
 }
 

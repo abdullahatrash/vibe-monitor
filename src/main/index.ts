@@ -37,6 +37,7 @@ import {
 import { WorkspaceAgent, WorkspaceAgentError } from './workspace-agent'
 import { ensureBoundSession } from './thread-binding'
 import { createThreadDraft } from './persistence/drafts'
+import { deleteThread } from './persistence/delete-thread'
 
 /** Active Workspace agents keyed by a generated agent id. */
 const agents = new Map<string, WorkspaceAgent>()
@@ -86,6 +87,22 @@ function threadIdForTee(agentId: string, sessionId?: string | null): string | nu
 function teeTranscript(threadId: string | null, entry: TranscriptEntry): void {
   if (!transcriptStore || !threadId) return
   void transcriptStore.append(threadId, entry)
+}
+
+/**
+ * Build a best-effort close for a Thread's LIVE ACP session on delete (TB6 #35),
+ * or `undefined` when there's nothing to close. Resolves the Thread's bound
+ * `sessionId` from the metadata snapshot up front (before the record is removed),
+ * then closes it across the active agents — a session is hosted by exactly one
+ * agent and `closeSession` no-ops on the rest. A cold Thread / unbound draft (no
+ * `sessionId`) returns `undefined`, so the deletion just removes our records.
+ */
+function bestEffortCloseFor(threadId: string): (() => Promise<void>) | undefined {
+  const sessionId = metadataStore?.snapshot().threads.find((t) => t.id === threadId)?.sessionId
+  if (!sessionId) return undefined
+  return async () => {
+    for (const agent of agents.values()) await agent.closeSession(sessionId)
+  }
 }
 
 /** Our minted handles for a connected Thread (TB5) — carried to the renderer. */
@@ -442,6 +459,33 @@ function registerIpc(): void {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
+  })
+
+  ipcMain.handle(IPC.deleteThread, async (_event, threadId: string): Promise<void> => {
+    // Delete a Thread end-to-end (ADR-0005, TB6 #35): best-effort close its live
+    // ACP session (if one is hosted), then remove OUR records — the metadata entry
+    // and the JSONL transcript. Every step is best-effort: an absent store skips
+    // the record drop, a null transcript skips the file drop, no live session
+    // skips the close — never a throw, so a misclick-deleted draft can't wedge.
+    if (!metadataStore) return
+    // Clear any transcript-bridge entry pointing at this Thread BEFORE the
+    // orchestration, to shrink (not close) the window in which a fresh tee could
+    // re-create its JSONL. NOTE: this is a window-shrink, not a guarantee — an
+    // `appendFile` already in flight (flag 'a' recreates the file post-unlink) can
+    // still resurrect the log, and `bestEffortCloseFor` reads the bound session
+    // from the metadata snapshot (not this bridge), so clearing first is safe.
+    // Acceptable only because delete is COLD-LIST-ONLY: no live agent is streaming
+    // appends to a cold-list Thread. MUST be revisited before wiring delete into
+    // the live `ConnectedWorkspace` thread list.
+    for (const [agentId, bound] of transcriptThreads) {
+      if (bound === threadId) transcriptThreads.delete(agentId)
+    }
+    await deleteThread({
+      threadId,
+      store: metadataStore,
+      transcript: transcriptStore ?? { delete: () => Promise.resolve() },
+      closeSession: bestEffortCloseFor(threadId),
+    })
   })
 
   ipcMain.handle(IPC.listMetadata, (): ListMetadataResult => {

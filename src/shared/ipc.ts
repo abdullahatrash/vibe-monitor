@@ -36,6 +36,12 @@ export const IPC = {
   readTranscript: 'transcript:read',
   /** Mint a NEW-Thread draft (durable id, no ACP session) under a Workspace (TB5). */
   createDraft: 'thread:create-draft',
+  /**
+   * Delete a Thread (TB6): remove its metadata record + JSONL transcript, and
+   * best-effort close its live ACP session if one is bound. It vanishes from the
+   * next `listMetadata`. Best-effort — Vibe-side cleanup never blocks ours (ADR-0005).
+   */
+  deleteThread: 'thread:delete',
 } as const
 
 /**

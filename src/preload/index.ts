@@ -37,6 +37,8 @@ const api = {
   listMetadata: (): Promise<ListMetadataResult> => ipcRenderer.invoke(IPC.listMetadata),
   createDraft: (args: CreateDraftArgs): Promise<CreateDraftResult> =>
     ipcRenderer.invoke(IPC.createDraft, args),
+  deleteThread: (threadId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.deleteThread, threadId),
   readTranscript: (threadId: string): Promise<ReadTranscriptResult> =>
     ipcRenderer.invoke(IPC.readTranscript, threadId),
   onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {

@@ -215,6 +215,58 @@ body {
   padding: 2px 0;
 }
 
+/* Thread row: the open button flexes, the delete control sits at the trailing edge. */
+.recents__thread {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Delete affordance (TB6): muted until hovered, then the danger token. */
+.recents__thread-delete {
+  flex: none;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  padding: 2px 6px;
+  font: inherit;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.recents__thread:hover .recents__thread-delete,
+.recents__thread-delete:focus-visible {
+  opacity: 1;
+}
+
+.recents__thread-delete:hover {
+  color: var(--bad);
+  background: var(--bad-tint);
+}
+
+/* Inline confirm (TB6): two small buttons, no blocking native dialog. */
+.recents__thread-confirm {
+  display: inline-flex;
+  flex: none;
+  gap: 6px;
+}
+
+.recents__thread-confirm .btn {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.btn--danger {
+  color: var(--bad);
+  border-color: var(--bad-tint-border);
+}
+
+.btn--danger:hover {
+  background: var(--bad-tint);
+}
+
 /* Clickable Thread in the cold list — reopens its saved conversation (TB3). */
 .recents__thread-btn {
   width: 100%;

@@ -1,7 +1,7 @@
 # Filesystem access: reads stay unconfined (CLI parity); writes are confined to the Workspace and symlink-resolved
 
 The client serves the agent's file I/O over ACP — `fs/read_text_file` and `fs/write_text_file` — because
-Vibe delegates all reads/edits to us (see `docs/acp-capture.md` §5, §7). That makes vibe-monitor the
+Vibe delegates all reads/edits to us (see `docs/acp-capture.md` §5, §7). That makes vibe-mistro the
 enforcement point for what the agent can touch on disk. We adopt an **asymmetric** policy:
 
 - **Reads are UNCONFINED.** `fs/read_text_file` serves any absolute path the user can read. This is

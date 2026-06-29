@@ -20,12 +20,12 @@ describe('handleFsWriteTextFile (Seam C)', () => {
 
     const outcome = await handleFsWriteTextFile({
       path: file,
-      content: 'vibe-monitor works.\n',
+      content: 'vibe-mistro works.\n',
       sessionId: 's1',
     })
 
     expect(outcome).toEqual({ result: {} })
-    expect(readFileSync(file, 'utf8')).toBe('vibe-monitor works.\n')
+    expect(readFileSync(file, 'utf8')).toBe('vibe-mistro works.\n')
   })
 
   it('confines writes to the Workspace dir: rejects an escaping path without writing', async () => {

@@ -11,9 +11,9 @@ same protocol Zed/JetBrains/Neovim use to drive Vibe. Our `src/main/acp/client.t
   what `vibe-acp` implements; confirm exact param shapes against the running binary
   (`vibe-acp` + the ACP schema) before finalizing each method.
 
-> ⚠️ Detail confidence: method **names/directions** below are confirmed from Vibe's ACP server docs;
-> exact **param/result field names** should be verified against the live binary as we implement each
-> one. Treat this as the map, not the final schema.
+> ✅ **Confirmed against vibe-acp 2.18.0** (live capture). The **verbatim** message shapes are in
+> [acp-capture.md](./acp-capture.md) — treat that as authoritative; this page is the narrative map.
+> A few items remain unverified (mode-change method, trust grant, `session/load`, `session/cancel`).
 
 ---
 
@@ -23,38 +23,40 @@ same protocol Zed/JetBrains/Neovim use to drive Vibe. Our `src/main/acp/client.t
 
 | Method | Purpose |
 |---|---|
-| `initialize` | Handshake; negotiate capabilities. Agent reports `load_session`, `embedded_context`, and `auth_method: vibe-setup` (when client advertises `terminal-auth`). |
-| `session/new` | Create a fresh session (per workspace/thread). |
-| `session/load` | Load/resume an existing session; reports available models and **modes** (`chat`, `plan`, `auto-approve`). |
-| `session/prompt` | Send user input; kicks off the agent turn (streams `session/update` back). |
-| `session/cancel` | Cancel the active turn/operation. |
-| `set_config_option` | Change behavior mid-session: `mode` (plan/chat), `model`, `thinking` (reasoning level). |
-| `fs/read_text_file` | Agent-requested file read served by the client. |
-| `fs/write_text_file` | Agent-requested file write served by the client. |
+| `initialize` | Handshake. Agent returns `agentCapabilities` (`loadSession`, `promptCapabilities.image`), `agentInfo`, `authMethods` (`browser-auth`). camelCase params. |
+| `session/new` | Create a session for a workspace. Params `{cwd, mcpServers}`. Returns `sessionId`, `modes`, `models`, `configOptions`, `_meta.workspace_trust`. |
+| `session/load` | Load/resume an existing session (capability `loadSession:true`). **Shape unverified.** |
+| `session/prompt` | Send user input `{sessionId, prompt:[{type:"text",text}]}`; streams `session/update`; resolves with `{stopReason, usage, userMessageId}`. |
+| `session/cancel` | Cancel the active turn. **Shape unverified.** |
+| _(mode/model/thinking change)_ | Set via the `configOptions` ids (`mode`/`model`/`thinking`). **Method name unverified** — earlier notes guessed `set_config_option`; confirm before building a picker. |
 
 ### Agent → Client (we receive / must answer)
 
 | Method | Kind | Purpose |
 |---|---|---|
-| `session/update` | notification | **The streaming channel.** Reasoning steps, tool calls, status, message deltas. Drives the conversation view. |
-| `request_permission` | request (must respond) | Approval for a sensitive tool/operation. We show UI and reply with the chosen option. |
+| `session/update` | notification | **The streaming channel** — discriminated by `update.sessionUpdate` (`agent_thought_chunk`, `agent_message_chunk`, `tool_call`, `tool_call_update`, `session_info_update`, `usage_update`, `available_commands_update`). See capture §4. |
+| `session/request_permission` | request (must answer) | Approval for a write/command. Params `{sessionId, toolCall:{toolCallId}, options:[…]}`. Reply `{outcome:{outcome:"selected", optionId}}`. Capture §6. |
+| `fs/read_text_file` | request (must answer) | **Client serves the read.** `{path, limit, sessionId}` → `{content}`. |
+| `fs/write_text_file` | request (must answer) | **Client performs the write.** `{path, content, sessionId}` → `{}`. |
 
-(`fs/read_text_file` / `fs/write_text_file` may also arrive agent→client depending on capability
-negotiation — i.e. the agent asks the client to do file IO. Confirm direction at implementation.)
+> **The client owns file I/O.** `fs/read_text_file`/`fs/write_text_file` are not optional — the agent
+> delegates all reads/edits to us. Slice #1 must implement both or any file tool stalls the turn.
 
 ---
 
-## Permission model (`request_permission`)
+## Permission model (`session/request_permission`)
 
-Each request carries `PermissionOption`s; we render them and respond with one:
+Fires for **writes/commands** in `default` mode — **not for reads** (reads go straight to
+`fs/read_text_file`). Each request carries `options:[{kind, name, optionId}]`; render `name` as the
+button, reply with `optionId` via `{outcome:{outcome:"selected", optionId}}`. The four `optionId`s:
 
 - `allow_once` — permit this single execution.
 - `allow_always` — permit for the rest of the session.
-- `allow_always_permanent` — persist the approval across sessions.
+- `allow_always_permanent` — persist across sessions.
 - `reject_once` — deny this execution.
 
-Each option includes `required_permissions` metadata (scope + human-readable label) for display.
-→ Maps to CodexMonitor's approval toasts and to our roadmap slice #2.
+`toolCall.toolCallId` links the request to the pending `tool_call` item. → CodexMonitor's approval
+toasts; our slices #1 (once-off) / #2 (allow_always + remembered allowlist).
 
 ---
 

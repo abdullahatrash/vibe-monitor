@@ -54,6 +54,25 @@ async function recordThread(workspaceDir: string, thread: ThreadInfo): Promise<v
   }
 }
 
+/**
+ * Persist that a Workspace was opened, BEFORE the agent starts, so even a
+ * not-signed-in Workspace lists. Best-effort exactly like `recordThread`: a
+ * failing `persist()` (disk full / read-only userData) must NEVER reject the
+ * connect flow — the renderer's onClick has no `.catch`, so a throw here would
+ * wedge the UI on "Launching…".
+ */
+async function recordWorkspaceOpen(workspaceDir: string): Promise<void> {
+  if (!metadataStore) return
+  try {
+    await metadataStore.upsertWorkspace({
+      dir: workspaceDir,
+      displayName: basename(workspaceDir),
+    })
+  } catch {
+    // A persistence failure is non-fatal — the connect flow proceeds.
+  }
+}
+
 /** Build the renderer-facing connection (carries the sign-out gate + methods). */
 function connectionFor(agentId: string, agent: WorkspaceAgent, thread: ThreadInfo): ThreadConnection {
   return {
@@ -157,11 +176,8 @@ function registerIpc(): void {
     })
 
     // Persist the Workspace open up front (ADR-0005), so even a not-signed-in
-    // Workspace shows in the cold list. Keyed by dir — idempotent on re-open.
-    await metadataStore?.upsertWorkspace({
-      dir: args.workspaceDir,
-      displayName: basename(args.workspaceDir),
-    })
+    // Workspace shows in the cold list. Best-effort — must not reject connect.
+    await recordWorkspaceOpen(args.workspaceDir)
 
     try {
       await agent.start()

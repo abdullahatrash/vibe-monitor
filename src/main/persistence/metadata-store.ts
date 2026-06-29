@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, rename, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import type { ThreadMeta, WorkspaceMeta, WorkspaceThreads } from '../../shared/ipc'
 
@@ -55,6 +55,8 @@ export interface MetadataStoreDeps {
   filePath: string
   readFile?: (path: string) => Promise<string>
   writeFile?: (path: string, data: string) => Promise<void>
+  /** Atomic move of the temp file over the target. Defaults to `fs.rename`. */
+  rename?: (from: string, to: string) => Promise<void>
   now?: () => number
   mintId?: () => string
 }
@@ -63,6 +65,7 @@ export class MetadataStore {
   private readonly filePath: string
   private readonly readFileFn: (path: string) => Promise<string>
   private readonly writeFileFn: (path: string, data: string) => Promise<void>
+  private readonly renameFn: (from: string, to: string) => Promise<void>
   private readonly now: () => number
   private readonly mintId: () => string
   private state: MetadataSnapshot = { workspaces: [], threads: [] }
@@ -71,18 +74,26 @@ export class MetadataStore {
     this.filePath = deps.filePath
     this.readFileFn = deps.readFile ?? ((path) => readFile(path, 'utf8'))
     this.writeFileFn = deps.writeFile ?? ((path, data) => writeFile(path, data, 'utf8'))
+    this.renameFn = deps.rename ?? rename
     this.now = deps.now ?? Date.now
     this.mintId = deps.mintId ?? randomUUID
   }
 
-  /** Read the index into memory. A missing/corrupt file yields empty state. */
+  /**
+   * Read the index into memory. A missing/unparseable file yields empty state;
+   * a parseable-but-partially-malformed file degrades to its VALID subset —
+   * each record is shape-checked so a single bad entry (e.g. a `null` thread)
+   * can't later crash `snapshot()`/`groupThreadsByWorkspace`. Never throws.
+   */
   async load(): Promise<void> {
     try {
       const raw = await this.readFileFn(this.filePath)
       const parsed = JSON.parse(raw) as Partial<MetadataSnapshot>
       this.state = {
-        workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces : [],
-        threads: Array.isArray(parsed.threads) ? parsed.threads : [],
+        workspaces: (Array.isArray(parsed.workspaces) ? parsed.workspaces : []).filter(
+          isWorkspaceRecord,
+        ),
+        threads: (Array.isArray(parsed.threads) ? parsed.threads : []).filter(isThreadRecord),
       }
     } catch {
       this.state = { workspaces: [], threads: [] }
@@ -139,9 +150,42 @@ export class MetadataStore {
     }
   }
 
+  /**
+   * Write the index to a temp file then `rename` it over the target — atomic on
+   * POSIX, so a crash mid-write can't truncate/corrupt the index (a corrupt
+   * index loads empty = silent total data loss). Residual: with a single writer
+   * (main) this is safe; truly-concurrent writers would be last-rename-wins —
+   * revisit if write frequency rises (TB2). No write queue/mutex for now.
+   */
   private async persist(): Promise<void> {
-    await this.writeFileFn(this.filePath, JSON.stringify(this.state, null, 2))
+    const tmp = `${this.filePath}.tmp`
+    await this.writeFileFn(tmp, JSON.stringify(this.state, null, 2))
+    await this.renameFn(tmp, this.filePath)
   }
+}
+
+/** Well-formed-Workspace guard for `load()` — drops malformed persisted entries. */
+function isWorkspaceRecord(value: unknown): value is WorkspaceRecord {
+  const w = value as Record<string, unknown> | null
+  return (
+    !!w &&
+    typeof w.id === 'string' &&
+    typeof w.dir === 'string' &&
+    typeof w.displayName === 'string' &&
+    typeof w.lastOpenedAt === 'number'
+  )
+}
+
+/** Well-formed-Thread guard for `load()` — drops malformed persisted entries. */
+function isThreadRecord(value: unknown): value is ThreadRecord {
+  const t = value as Record<string, unknown> | null
+  return (
+    !!t &&
+    typeof t.id === 'string' &&
+    typeof t.workspaceId === 'string' &&
+    typeof t.createdAt === 'number' &&
+    typeof t.lastActiveAt === 'number'
+  )
 }
 
 /**

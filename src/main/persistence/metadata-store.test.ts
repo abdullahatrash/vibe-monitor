@@ -111,6 +111,65 @@ describe('MetadataStore round-trip', () => {
     expect(store.snapshot().workspaces).toHaveLength(1)
     expect(ws.dir).toBe('/proj/recover')
   })
+
+  it('degrades a partially-corrupt file to its valid subset (no throw on list)', async () => {
+    // Valid JSON, but a malformed (null) Thread alongside a valid one and a
+    // malformed Workspace alongside a valid one. Without per-record validation
+    // the null record reaches snapshot()/groupThreadsByWorkspace and throws on
+    // `b.lastActiveAt` — narrowing the corrupt-degrades-gracefully guarantee.
+    const file = join(dir, 'partial-corrupt.json')
+    writeFileSync(
+      file,
+      JSON.stringify({
+        workspaces: [
+          { id: 'w1', dir: '/ok', displayName: 'ok', lastOpenedAt: 100 },
+          { id: 'wBad', dir: 123 }, // dir not a string, no timestamp → dropped
+        ],
+        threads: [
+          null, // dropped, must not crash
+          { id: 't1', workspaceId: 'w1', sessionId: null, title: null, createdAt: 1, lastActiveAt: 10 },
+          { id: 'tBad', workspaceId: 'w1' }, // missing numeric timestamps → dropped
+        ],
+      }),
+    )
+    const store = new MetadataStore({ filePath: file })
+    await store.load()
+
+    const snap = store.snapshot()
+    expect(snap.workspaces.map((w) => w.id)).toEqual(['w1'])
+    expect(snap.threads.map((t) => t.id)).toEqual(['t1'])
+    // Listing the valid subset must not throw on the dropped malformed records.
+    expect(() => groupThreadsByWorkspace(snap)).not.toThrow()
+    expect(groupThreadsByWorkspace(snap)[0].threads.map((t) => t.id)).toEqual(['t1'])
+  })
+})
+
+describe('MetadataStore atomic persist', () => {
+  it('writes to a temp file then renames it over the target (crash-safe)', async () => {
+    const events: string[] = []
+    const target = join(dir, 'atomic.json')
+    let tmpContent = ''
+    const store = new MetadataStore({
+      filePath: target,
+      readFile: async () => {
+        throw new Error('ENOENT')
+      },
+      writeFile: async (path, data) => {
+        events.push(`write:${path}`)
+        tmpContent = data
+      },
+      rename: async (from, to) => {
+        // The rename must follow the temp write, and the temp must already hold
+        // the full payload — never a half-written target.
+        events.push(`rename:${from}->${to}`)
+        expect(tmpContent).toContain('/proj/atomic')
+      },
+    })
+    await store.load()
+    await store.upsertWorkspace({ dir: '/proj/atomic' })
+
+    expect(events).toEqual([`write:${target}.tmp`, `rename:${target}.tmp->${target}`])
+  })
 })
 
 describe('groupThreadsByWorkspace (pure)', () => {

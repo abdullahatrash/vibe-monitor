@@ -71,11 +71,38 @@ Each option includes `required_permissions` metadata (scope + human-readable lab
 `session/load`). `auto-approve` ≈ CodexMonitor's auto-approve / Vibe's `--yolo`.
 
 **Errors** (map to user-facing messages): `SessionNotFoundError`, `ConfigurationError`
-(bad `~/.vibe/config.toml`), `UnauthenticatedError` (missing/invalid API key), `RateLimitError`.
+(bad `~/.vibe/config.toml`), `UnauthenticatedError` (not signed in / no valid credential),
+`RateLimitError`.
 
 **Quirk:** history compaction has no native ACP message — Vibe surfaces it as a synthetic
 `tool_call` titled "Compacting conversation history…". Render it like CodexMonitor's
 `contextCompaction` item.
+
+---
+
+## Authentication (two paths — browser sign-in is the default)
+
+Vibe is **not** API-key-only. Per Mistral's
+[api-keys-profiles doc](https://docs.mistral.ai/vibe/code/cli/api-keys-profiles):
+
+1. **Browser-based sign-in — DEFAULT** when the config targets a Mistral-provider model. An
+   OAuth-style flow tied to the user's **subscription** (Free / Pro / Team / partner plans). Le Chat
+   is now Vibe — *same login*. The CLI provisions + stores credentials; no key pasting.
+2. **API key (BYOK)** — the alternative path: `vibe --setup` / `MISTRAL_API_KEY` / `~/.vibe/.env`.
+   Required for non-Mistral providers (OpenRouter, …), selected via presets in `config.toml`.
+
+**We never store credentials.** Like CodexMonitor with Codex, vibe-monitor delegates all auth and
+token storage to the `vibe` binary (`~/.vibe`). We only detect signed-in vs not.
+
+**Over ACP:** `initialize` advertises `auth_method: vibe-setup` (when the client supports
+`terminal-auth`). An in-app sign-in would mirror CodexMonitor's Codex OAuth orchestration
+(`account/login/start` → open `authUrl` in the system browser → `account/login/completed`), likely
+via ACP's `authenticate` method. ⚠️ **Unconfirmed** — verify the exact ACP auth mechanism against the
+live `vibe-acp` binary before building any in-app flow.
+
+**Slice #1 stance:** assume the user is **already authenticated** (browser sign-in *or* API key);
+do not build the flow; surface `UnauthenticatedError` with a hint to run `vibe` / `vibe --setup`.
+In-app sign-in is a later slice and warrants its own ADR.
 
 ---
 

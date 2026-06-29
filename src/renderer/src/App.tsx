@@ -13,6 +13,7 @@ import {
   signedInAuthViewState,
 } from './auth/auth-view'
 import { routeThreadResult, type ConnectState } from './connection/routing'
+import { ColdThread } from './conversation/ColdThread'
 import { Conversation } from './conversation/Conversation'
 
 export function App(): JSX.Element {
@@ -22,6 +23,9 @@ export function App(): JSX.Element {
   // Persisted Workspaces + Threads (ADR-0005), listed cold on launch from
   // metadata alone — no agent spawned, no transcript loaded.
   const [recents, setRecents] = useState<ListMetadataResult>([])
+  // A persisted Thread the user clicked to REOPEN read-only from its JSONL (TB3,
+  // #32) — rendered with no agent spawned. null = showing the cold launch list.
+  const [coldThread, setColdThread] = useState<ThreadMeta | null>(null)
 
   async function runDetect(): Promise<void> {
     setLoading(true)
@@ -99,11 +103,19 @@ export function App(): JSX.Element {
             </button>
           </div>
 
-          {connect.status === 'idle' && (
+          {/* Reopened Thread: render its saved conversation from JSONL, read-only,
+              with NO agent spawned (TB3). Takes over the idle view until closed. */}
+          {connect.status === 'idle' && coldThread && (
+            <ColdThread thread={coldThread} onClose={() => setColdThread(null)} />
+          )}
+
+          {connect.status === 'idle' && !coldThread && (
             <p className="hint">Open a project folder to start a Vibe agent and connect a Thread.</p>
           )}
 
-          {connect.status === 'idle' && recents.length > 0 && <RecentList workspaces={recents} />}
+          {connect.status === 'idle' && !coldThread && recents.length > 0 && (
+            <RecentList workspaces={recents} onOpenThread={setColdThread} />
+          )}
 
           {connect.status === 'connecting' && (
             <p className="hint">
@@ -311,11 +323,17 @@ function SignedInBar({
 
 /**
  * The cold launch list (ADR-0005 metadata-first lazy reopen): persisted
- * Workspaces with their Threads, most-recent-first, rendered read-only from
- * metadata alone — NO `vibe-acp` spawned. Opening an entry for its content is a
- * later slice (TB3), so entries are not yet clickable.
+ * Workspaces with their Threads, most-recent-first, rendered from metadata alone —
+ * NO `vibe-acp` spawned. Clicking a Thread reopens it read-only from its JSONL
+ * (`onOpenThread`, TB3) — still no agent; that replays the transcript locally.
  */
-function RecentList({ workspaces }: { workspaces: WorkspaceThreads[] }): JSX.Element {
+function RecentList({
+  workspaces,
+  onOpenThread,
+}: {
+  workspaces: WorkspaceThreads[]
+  onOpenThread: (thread: ThreadMeta) => void
+}): JSX.Element {
   return (
     <div className="recents">
       <div className="recents__title">Recent workspaces</div>
@@ -329,7 +347,9 @@ function RecentList({ workspaces }: { workspaces: WorkspaceThreads[] }): JSX.Ele
               <ul className="recents__threads">
                 {w.threads.map((t) => (
                   <li key={t.id} className="recents__thread">
-                    {threadLabel(t)}
+                    <button className="recents__thread-btn" onClick={() => onOpenThread(t)}>
+                      {threadLabel(t)}
+                    </button>
                   </li>
                 ))}
               </ul>

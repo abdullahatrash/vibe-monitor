@@ -26,6 +26,8 @@ export const IPC = {
   acpEvent: 'acp:event',
   /** List persisted Workspaces + their Threads for the cold launch list (ADR-0005). */
   listMetadata: 'metadata:list',
+  /** Read a Thread's persisted JSONL transcript for a process-free reopen (TB3). */
+  readTranscript: 'transcript:read',
 } as const
 
 /**
@@ -243,3 +245,24 @@ export interface WorkspaceThreads extends WorkspaceMeta {
 
 /** The `listMetadata` reply: persisted Workspaces with their Threads. */
 export type ListMetadataResult = WorkspaceThreads[]
+
+/**
+ * One line of a Thread's append-only JSONL transcript (ADR-0005). The main
+ * process tees these conversation INPUTS as they cross the IPC chokepoints; on
+ * reopen (TB3) the renderer replays them through the existing `conversationReducer`
+ * to rebuild the view with NO `vibe-acp` process. The union mirrors the reducer's
+ * `ConversationAction` inputs, so the replay is a near-mechanical entry -> action map.
+ *
+ * Declared here (not in the main-only transcript store) so BOTH the renderer
+ * replay and the preload bridge can name it across the composite project boundary
+ * — the renderer cannot import the main process. `transcript.ts` re-exports it.
+ */
+export type TranscriptEntry =
+  | { t: 'user-prompt'; id: string; text: string }
+  | { t: 'acp-event'; payload: unknown }
+  | { t: 'turn-complete' }
+  | { t: 'turn-error'; message: string }
+  | { t: 'resolve-permission'; requestId: number | string; optionId: string; name: string | null }
+
+/** The `readTranscript` reply: a Thread's transcript entries (empty when none). */
+export type ReadTranscriptResult = TranscriptEntry[]

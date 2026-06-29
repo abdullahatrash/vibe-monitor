@@ -3,6 +3,7 @@ import {
   IPC,
   type AcpEvent,
   type ListMetadataResult,
+  type ReadTranscriptResult,
   type RespondPermissionArgs,
   type OpenThreadArgs,
   type SendPromptArgs,
@@ -31,6 +32,8 @@ const api = {
   signOut: (args: SignOutArgs): Promise<SignOutResult> => ipcRenderer.invoke(IPC.signOut, args),
   stopAgent: (agentId: string): Promise<void> => ipcRenderer.invoke(IPC.stopAgent, agentId),
   listMetadata: (): Promise<ListMetadataResult> => ipcRenderer.invoke(IPC.listMetadata),
+  readTranscript: (threadId: string): Promise<ReadTranscriptResult> =>
+    ipcRenderer.invoke(IPC.readTranscript, threadId),
   onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {
     const handler = (_e: unknown, payload: AcpEvent): void => listener(payload)
     ipcRenderer.on(IPC.acpEvent, handler)

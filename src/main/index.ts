@@ -6,6 +6,7 @@ import {
   IPC,
   type ListMetadataResult,
   type OpenThreadArgs,
+  type ReadTranscriptResult,
   type RespondPermissionArgs,
   type SendPromptArgs,
   type SendPromptResult,
@@ -351,6 +352,14 @@ function registerIpc(): void {
     // metadata alone — no agent spawned, no transcript loaded.
     if (!metadataStore) return []
     return groupThreadsByWorkspace(metadataStore.snapshot())
+  })
+
+  ipcMain.handle(IPC.readTranscript, (_event, threadId: string): Promise<ReadTranscriptResult> => {
+    // The process-free reopen source (ADR-0005, TB3): hand the renderer the
+    // Thread's logged input stream so it can replay through the reducer with NO
+    // `vibe-acp` spawned. A missing/absent log reads back as [] (never throws).
+    if (!transcriptStore) return Promise.resolve([])
+    return transcriptStore.read(threadId)
   })
 }
 

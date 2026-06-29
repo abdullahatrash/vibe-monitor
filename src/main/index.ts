@@ -70,15 +70,35 @@ function registerIpc(): void {
 
     try {
       await agent.start()
+
+      // Detected not-signed-in: keep the agent (the sign-in flow will drive it)
+      // but don't open a Thread — session/new would fail with -32000. The
+      // renderer shows the sign-in panel (ADR-0003: detection only here).
+      if (agent.authState === 'not-signed-in') {
+        agents.set(agentId, agent)
+        return {
+          ok: false,
+          kind: 'not-signed-in',
+          agentId,
+          workspaceDir: args.workspaceDir,
+          authMethods: agent.authMethods,
+        }
+      }
+
       const thread = await agent.openThread()
       agents.set(agentId, agent)
       return { ok: true, thread: { agentId, workspaceDir: args.workspaceDir, ...thread } }
     } catch (err) {
       agent.stop()
       if (err instanceof WorkspaceAgentError) {
-        return { ok: false, error: err.message, hint: err.hint }
+        return { ok: false, kind: 'error', error: err.message, hint: err.hint }
       }
-      return { ok: false, error: err instanceof Error ? err.message : String(err), hint: null }
+      return {
+        ok: false,
+        kind: 'error',
+        error: err instanceof Error ? err.message : String(err),
+        hint: null,
+      }
     }
   })
 

@@ -90,7 +90,11 @@ export interface ThreadConnection extends ThreadInfo {
 
 export type StartThreadResult =
   | { ok: true; thread: ThreadConnection }
-  | { ok: false; error: string; hint: string | null }
+  // Detected (via `_auth/status`) that the user is not signed in: the agent is
+  // up and registered under `agentId` so the sign-in flow (#12) can drive it,
+  // but no Thread was opened. `authMethods` feeds the sign-in panel's label.
+  | { ok: false; kind: 'not-signed-in'; agentId: string; workspaceDir: string; authMethods: AuthMethod[] }
+  | { ok: false; kind: 'error'; error: string; hint: string | null }
 
 export interface AcpEvent {
   /** Id of the Workspace agent the payload came from. */

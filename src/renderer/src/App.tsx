@@ -1,11 +1,13 @@
 import { useEffect, useState, type JSX } from 'react'
-import type { ThreadConnection, VibeDetectResult } from '../../shared/ipc'
+import type { AuthMethod, ThreadConnection, VibeDetectResult } from '../../shared/ipc'
+import { selectAuthView } from './auth/auth-view'
 import { Conversation } from './conversation/Conversation'
 
 type ConnectState =
   | { status: 'idle' }
   | { status: 'connecting'; workspaceDir: string }
   | { status: 'connected'; thread: ThreadConnection }
+  | { status: 'not-signed-in'; agentId: string; workspaceDir: string; authMethods: AuthMethod[] }
   | { status: 'error'; message: string; hint: string | null }
 
 export function App(): JSX.Element {
@@ -32,6 +34,13 @@ export function App(): JSX.Element {
     const result = await window.api.startThread({ workspaceDir })
     if (result.ok) {
       setConnect({ status: 'connected', thread: result.thread })
+    } else if (result.kind === 'not-signed-in') {
+      setConnect({
+        status: 'not-signed-in',
+        agentId: result.agentId,
+        workspaceDir: result.workspaceDir,
+        authMethods: result.authMethods,
+      })
     } else {
       setConnect({ status: 'error', message: result.error, hint: result.hint })
     }
@@ -87,6 +96,10 @@ export function App(): JSX.Element {
             </p>
           )}
 
+          {connect.status === 'not-signed-in' && (
+            <SignInPanel authMethods={connect.authMethods} />
+          )}
+
           {connect.status === 'error' && (
             <div className="alert">
               <div className="alert__title">Couldn’t connect</div>
@@ -102,6 +115,26 @@ export function App(): JSX.Element {
           )}
         </section>
       </main>
+    </div>
+  )
+}
+
+/**
+ * The not-signed-in panel: visibly distinct from the binary-missing status and
+ * the generic-error alert. Renders the agent's advertised sign-in method name
+ * and a Sign-in button. The button is intentionally inert here — its click
+ * handler is wired in #12 (browser-auth-delegated).
+ */
+function SignInPanel({ authMethods }: { authMethods: AuthMethod[] }): JSX.Element | null {
+  const view = selectAuthView({ authState: 'not-signed-in', authMethods })
+  if (view.kind !== 'sign-in') return null
+  return (
+    <div className="signin">
+      <div className="signin__title">Not signed in to Mistral Vibe</div>
+      {view.description && <div className="signin__message">{view.description}</div>}
+      <button className="btn signin__action" onClick={() => {}}>
+        {view.methodName}
+      </button>
     </div>
   )
 }

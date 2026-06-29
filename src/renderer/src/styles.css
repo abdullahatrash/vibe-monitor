@@ -240,6 +240,33 @@ body {
   line-height: 1.4;
 }
 
+.signin {
+  border: 1px solid rgba(255, 122, 26, 0.4);
+  background: rgba(255, 122, 26, 0.08);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.signin__title {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.signin__message {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.signin__action {
+  margin-top: 2px;
+}
+
 /* --- Conversation (TB2) --- */
 
 .conv {

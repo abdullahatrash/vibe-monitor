@@ -35,8 +35,8 @@ function connectionFor(agentId: string, agent: WorkspaceAgent, thread: ThreadInf
 
 /**
  * Map a thread-open failure to a result. An auth-classified error (a -32000
- * mid-session/expiry) keeps the agent ALIVE and routes to the sign-in panel
- * (TODO(#13) C); any other failure stops + disposes the agent.
+ * mid-session/expiry) keeps the agent ALIVE and routes to the sign-in panel;
+ * any other failure stops + disposes the agent.
  */
 function threadFailureResult(agentId: string, agent: WorkspaceAgent, err: unknown): StartThreadResult {
   if (err instanceof WorkspaceAgentError && err.authState === 'not-signed-in') {
@@ -102,8 +102,7 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.startThread, async (event, args: StartThreadArgs): Promise<StartThreadResult> => {
     // Dedup: dispose any existing agent for this workspace before spawning, so a
-    // re-Connect (e.g. after a not-signed-in panel) can't orphan the previous
-    // child (TODO(#13) #1).
+    // re-Connect (e.g. after a not-signed-in panel) can't orphan the previous child.
     disposeAgentsForWorkspace(args.workspaceDir)
 
     const agentId = `a${++agentCounterSeed}`
@@ -161,7 +160,7 @@ function registerIpc(): void {
         return { ok: true, result }
       } catch (err) {
         // Mid-session expiry (-32000): keep the agent alive so the renderer can
-        // re-auth in place on the same agent (TODO(#13) D); don't stop it.
+        // re-auth in place on the same agent; don't stop it.
         if (err instanceof WorkspaceAgentError && err.authState === 'not-signed-in') {
           return { ok: false, kind: 'not-signed-in', agentId: args.agentId, authMethods: agent.authMethods }
         }

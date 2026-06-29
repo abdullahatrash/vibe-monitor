@@ -14,6 +14,8 @@ export const IPC = {
   stopAgent: 'agent:stop',
   /** Send a prompt to a Thread (`session/prompt`); resolves on turn completion. */
   sendPrompt: 'thread:prompt',
+  /** Answer a `session/request_permission` by its JSON-RPC request id. */
+  respondPermission: 'permission:respond',
   /** Main -> renderer: streamed ACP event tagged by the owning agent. */
   acpEvent: 'acp:event',
 } as const
@@ -109,3 +111,13 @@ export interface SendPromptArgs {
 export type SendPromptResult =
   | { ok: true; result: PromptResult }
   | { ok: false; error: string }
+
+/** Reply to an agent `session/request_permission` with the user's choice. */
+export interface RespondPermissionArgs {
+  /** Id of the Workspace agent (one `vibe-acp` process) hosting the Thread. */
+  agentId: string
+  /** The JSON-RPC id of the agent's `session/request_permission` request. */
+  requestId: number | string
+  /** The `optionId` of the option the user selected. */
+  optionId: string
+}

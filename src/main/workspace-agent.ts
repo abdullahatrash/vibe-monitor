@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { AcpClient, type SpawnFn } from './acp/client'
 import { handleFsReadTextFile, type ReadTextFn } from './acp/fs-read'
+import { handleFsWriteTextFile, type WriteTextFn } from './acp/fs-write'
 import type { PromptResult, ThreadInfo, ThreadModes, ThreadModels } from '../shared/ipc'
 
 /**
@@ -57,12 +58,15 @@ export interface WorkspaceAgentOptions {
   spawn?: SpawnFn
   /** Override the file reader used to serve `fs/read_text_file` (testing). */
   readTextFile?: ReadTextFn
+  /** Override the file writer used to serve `fs/write_text_file` (testing). */
+  writeTextFile?: WriteTextFn
 }
 
 export class WorkspaceAgent extends EventEmitter {
   private readonly client: AcpClient
   private readonly workspaceDir: string
   private readonly readTextFile?: ReadTextFn
+  private readonly writeTextFile?: WriteTextFn
   /** Threads hosted by this agent, keyed by their ACP `sessionId`. */
   private readonly threads = new Map<string, ThreadInfo>()
   private initialized = false
@@ -71,6 +75,7 @@ export class WorkspaceAgent extends EventEmitter {
     super()
     this.workspaceDir = options.workspaceDir
     this.readTextFile = options.readTextFile
+    this.writeTextFile = options.writeTextFile
     this.client = new AcpClient({
       command: options.command,
       cwd: options.workspaceDir,
@@ -190,22 +195,45 @@ export class WorkspaceAgent extends EventEmitter {
   }
 
   /**
+   * Answer a `session/request_permission` by the agent's JSON-RPC request id
+   * with the option the user picked (docs/acp-capture.md §6). Per ADR-0001 the
+   * decision is made in the renderer; main just relays the chosen `optionId`
+   * back by id — no client-side allowlist, no persistence.
+   */
+  respondPermission(requestId: number | string, optionId: string): void {
+    this.client.respond(requestId, { outcome: { outcome: 'selected', optionId } })
+  }
+
+  /**
    * Forward every server-initiated request for transparency, and serve the
-   * read-only `fs/read_text_file` ourselves so read prompts don't stall
-   * (docs/acp-capture.md §5). Writes / `request_permission` are TB3 — they are
-   * forwarded but not answered here; we just don't crash on them.
+   * file-I/O requests Vibe delegates to us so turns don't stall: `fs/read` for
+   * reads and `fs/write` for approved writes (docs/acp-capture.md §5, §7).
+   * `session/request_permission` is forwarded raw — the renderer renders the
+   * approval prompt and answers via `respondPermission()` (ADR-0001).
    */
   private onServerRequest(msg: unknown): void {
     this.emit('event', msg)
 
     const request = msg as { id?: number | string; method?: string; params?: unknown }
-    if (request.method === 'fs/read_text_file' && request.id !== undefined) {
+    if (request.id === undefined) return
+    if (request.method === 'fs/read_text_file') {
       void this.serveFsRead(request.id, request.params)
+    } else if (request.method === 'fs/write_text_file') {
+      void this.serveFsWrite(request.id, request.params)
     }
   }
 
   private async serveFsRead(id: number | string, params: unknown): Promise<void> {
     const outcome = await handleFsReadTextFile(params, this.readTextFile)
+    if ('result' in outcome) this.client.respond(id, outcome.result)
+    else this.client.respondError(id, outcome.error)
+  }
+
+  private async serveFsWrite(id: number | string, params: unknown): Promise<void> {
+    const outcome = await handleFsWriteTextFile(params, {
+      write: this.writeTextFile,
+      workspaceDir: this.workspaceDir,
+    })
     if ('result' in outcome) this.client.respond(id, outcome.result)
     else this.client.respondError(id, outcome.error)
   }

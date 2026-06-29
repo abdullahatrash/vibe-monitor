@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import {
   IPC,
   type AcpEvent,
+  type RespondPermissionArgs,
   type SendPromptArgs,
   type SendPromptResult,
   type StartThreadArgs,
@@ -16,6 +17,8 @@ const api = {
     ipcRenderer.invoke(IPC.startThread, args),
   sendPrompt: (args: SendPromptArgs): Promise<SendPromptResult> =>
     ipcRenderer.invoke(IPC.sendPrompt, args),
+  respondPermission: (args: RespondPermissionArgs): Promise<void> =>
+    ipcRenderer.invoke(IPC.respondPermission, args),
   stopAgent: (agentId: string): Promise<void> => ipcRenderer.invoke(IPC.stopAgent, agentId),
   onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {
     const handler = (_e: unknown, payload: AcpEvent): void => listener(payload)

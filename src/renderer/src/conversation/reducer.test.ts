@@ -4,8 +4,11 @@ import {
   initialConversationState,
   type AssistantItem,
   type ConversationState,
+  type ErrorItem,
   type FallbackItem,
+  type PermissionItem,
   type ReasoningItem,
+  type ToolItem,
 } from './reducer'
 
 /**
@@ -27,7 +30,7 @@ function feed(state: ConversationState, payload: unknown): ConversationState {
 }
 
 /** The verbatim read-turn stream: title, reasoning x2, answer x2, a read tool
- *  (no dedicated renderer in TB2 → fallback), then usage. */
+ *  (a tool card since TB3), then usage. */
 const READ_TURN: unknown[] = [
   update({ sessionUpdate: 'session_info_update', title: 'Read the README' }),
   update({
@@ -76,8 +79,8 @@ describe('conversationReducer (Seam A)', () => {
     expect(state.usage).toEqual({ used: 21047, size: 128000 })
     expect(state.cost).toEqual({ amount: 0.0123, currency: 'USD' })
 
-    // Ordered items: reasoning (1, accumulated), tool_call fallback, assistant (1, accumulated).
-    expect(state.items.map((i) => i.kind)).toEqual(['reasoning', 'fallback', 'assistant'])
+    // Ordered items: reasoning (1, accumulated), tool card, assistant (1, accumulated).
+    expect(state.items.map((i) => i.kind)).toEqual(['reasoning', 'tool', 'assistant'])
 
     const reasoning = state.items[0] as ReasoningItem
     expect(reasoning.messageId).toBe('r1')
@@ -168,5 +171,161 @@ describe('conversationReducer (Seam A)', () => {
       { name: 'init', description: 'Initialize' },
       { name: 'compact', description: undefined },
     ])
+  })
+})
+
+/**
+ * TB3 Seam A: the captured write-with-permission turn (docs/acp-capture.md §7).
+ * Order: tool_call (pending edit) → request_permission → tool_call_update
+ * (completed, rawOutput) → usage. We assert one tool item keyed by toolCallId
+ * transitions pending → completed (merging rawOutput), and that the permission
+ * server request becomes a permission item linked to that toolCallId.
+ */
+
+const TOOL_CALL_ID = 'EcjzekVw0'
+
+/** Wrap a `session/request_permission` server request (agent → client). */
+function permissionRequest(id: number | string): unknown {
+  return {
+    jsonrpc: '2.0',
+    id,
+    method: 'session/request_permission',
+    params: {
+      sessionId: SESSION_ID,
+      toolCall: { toolCallId: TOOL_CALL_ID },
+      options: [
+        { kind: 'allow_once', name: 'Allow once', optionId: 'allow_once' },
+        { kind: 'allow_always', name: 'Allow for remainder of this session', optionId: 'allow_always' },
+        { kind: 'allow_always', name: 'Always allow', optionId: 'allow_always_permanent' },
+        { kind: 'reject_once', name: 'Deny', optionId: 'reject_once' },
+      ],
+    },
+  }
+}
+
+const WRITE_TURN: unknown[] = [
+  update({
+    sessionUpdate: 'tool_call',
+    toolCallId: TOOL_CALL_ID,
+    kind: 'edit',
+    status: 'pending',
+    title: 'Write note.txt',
+    locations: [{ path: '/abs/workspace/note.txt' }],
+    content: [{ type: 'diff', path: '/abs/workspace/note.txt', newText: 'vibe-monitor works.' }],
+  }),
+  permissionRequest(0),
+  update({
+    sessionUpdate: 'tool_call_update',
+    toolCallId: TOOL_CALL_ID,
+    status: 'completed',
+    rawOutput: { bytes_written: 19 },
+  }),
+  update({ sessionUpdate: 'usage_update', used: 21047, size: 128000 }),
+]
+
+describe('conversationReducer — write + permission (TB3 Seam A)', () => {
+  it('reduces the captured write turn into one tool item that transitions pending → completed', () => {
+    const state = WRITE_TURN.reduce<ConversationState>(feed, initialConversationState)
+
+    // Exactly one tool item, keyed by toolCallId across tool_call + tool_call_update.
+    const tools = state.items.filter((i): i is ToolItem => i.kind === 'tool')
+    expect(tools).toHaveLength(1)
+    const tool = tools[0]
+    expect(tool.toolCallId).toBe(TOOL_CALL_ID)
+    expect(tool.id).toBe(`tool:${TOOL_CALL_ID}`)
+    // tool_call_update merged: status advanced and rawOutput captured…
+    expect(tool.status).toBe('completed')
+    expect(tool.rawOutput).toEqual({ bytes_written: 19 })
+    // …while fields only the original tool_call carried are preserved.
+    expect(tool.toolKind).toBe('edit')
+    expect(tool.title).toBe('Write note.txt')
+    expect(tool.locations).toEqual([{ path: '/abs/workspace/note.txt' }])
+    expect(tool.content).toHaveLength(1)
+  })
+
+  it('turns the request_permission server request into a permission item linked by toolCallId', () => {
+    const state = WRITE_TURN.reduce<ConversationState>(feed, initialConversationState)
+    const perms = state.items.filter((i): i is PermissionItem => i.kind === 'permission')
+    expect(perms).toHaveLength(1)
+    const perm = perms[0]
+    expect(perm.requestId).toBe(0) // JSON-RPC id we must answer by (0 is valid)
+    expect(perm.toolCallId).toBe(TOOL_CALL_ID)
+    expect(perm.options.map((o) => o.optionId)).toEqual([
+      'allow_once',
+      'allow_always',
+      'allow_always_permanent',
+      'reject_once',
+    ])
+    expect(perm.chosenOptionId).toBeNull()
+  })
+
+  it('records the chosen option on resolve-permission so the prompt stops asking', () => {
+    let state = WRITE_TURN.reduce<ConversationState>(feed, initialConversationState)
+    state = conversationReducer(state, {
+      type: 'resolve-permission',
+      requestId: 0,
+      optionId: 'allow_once',
+      name: 'Allow once',
+    })
+    const perm = state.items.find((i): i is PermissionItem => i.kind === 'permission')!
+    expect(perm.chosenOptionId).toBe('allow_once')
+    expect(perm.chosenName).toBe('Allow once')
+  })
+
+  it('does not create a second tool item if tool_call_update arrives first (defensive merge)', () => {
+    const state = [
+      update({ sessionUpdate: 'tool_call_update', toolCallId: 'X', status: 'completed', rawOutput: { ok: true } }),
+      update({ sessionUpdate: 'tool_call', toolCallId: 'X', kind: 'edit', status: 'pending', title: 'T' }),
+    ].reduce<ConversationState>(feed, initialConversationState)
+    const tools = state.items.filter((i): i is ToolItem => i.kind === 'tool')
+    expect(tools).toHaveLength(1)
+    // A later pending tool_call must not clobber an already-captured rawOutput.
+    expect(tools[0].rawOutput).toEqual({ ok: true })
+    expect(tools[0].title).toBe('T')
+  })
+})
+
+describe('conversationReducer — hung-turn recovery (TB3)', () => {
+  it('clears isProcessing and surfaces an error when the agent exits mid-turn', () => {
+    let state = conversationReducer(initialConversationState, {
+      type: 'send-prompt',
+      id: 'user:0',
+      text: 'write a file',
+    })
+    expect(state.isProcessing).toBe(true)
+
+    state = feed(state, { type: 'exit', info: { code: 1, signal: null } })
+    expect(state.isProcessing).toBe(false)
+    const err = state.items.find((i): i is ErrorItem => i.kind === 'error')
+    expect(err?.message).toMatch(/exited/i)
+  })
+
+  it('ignores an agent exit when no turn is in flight (no phantom error)', () => {
+    const state = feed(initialConversationState, { type: 'exit', info: { code: 0, signal: null } })
+    expect(state.items).toHaveLength(0)
+    expect(state.isProcessing).toBe(false)
+  })
+
+  it('the recover action re-enables input for a wedged (e.g. dismissed-permission) turn', () => {
+    let state = conversationReducer(initialConversationState, {
+      type: 'send-prompt',
+      id: 'user:0',
+      text: 'write a file',
+    })
+    state = conversationReducer(state, { type: 'recover' })
+    expect(state.isProcessing).toBe(false)
+    expect(state.items.some((i) => i.kind === 'error')).toBe(true)
+  })
+
+  it('surfaces a failed turn (turn-error) as an item and ends processing', () => {
+    let state = conversationReducer(initialConversationState, {
+      type: 'send-prompt',
+      id: 'user:0',
+      text: 'do thing',
+    })
+    state = conversationReducer(state, { type: 'turn-error', message: 'boom' })
+    expect(state.isProcessing).toBe(false)
+    const err = state.items.find((i): i is ErrorItem => i.kind === 'error')
+    expect(err?.message).toBe('boom')
   })
 })

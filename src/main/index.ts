@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
 import {
   IPC,
+  type RespondPermissionArgs,
   type SendPromptArgs,
   type SendPromptResult,
   type StartThreadArgs,
@@ -94,6 +95,13 @@ function registerIpc(): void {
       }
     },
   )
+
+  ipcMain.handle(IPC.respondPermission, (_event, args: RespondPermissionArgs) => {
+    // Main only relays the user's choice back to the agent by request id; the
+    // approve/deny decision lives in the renderer (ADR-0001).
+    const agent = agents.get(args.agentId)
+    agent?.respondPermission(args.requestId, args.optionId)
+  })
 
   ipcMain.handle(IPC.stopAgent, (_event, agentId: string) => {
     const agent = agents.get(agentId)

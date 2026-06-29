@@ -127,6 +127,21 @@ body {
   background: var(--bad);
 }
 
+.dot--pending {
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
 .hint {
   color: var(--muted);
   font-size: 13px;
@@ -333,6 +348,89 @@ body {
   color: var(--muted);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* --- Tool cards + permission prompt (TB3) --- */
+
+.tool {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--panel);
+}
+
+.tool__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool__name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tool__status {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.tool__path {
+  margin-top: 4px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.permission {
+  border: 1px solid rgba(255, 122, 26, 0.4);
+  background: rgba(255, 122, 26, 0.08);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.permission__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.permission__chosen {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.permission__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.recover {
+  align-self: flex-start;
+  background: transparent;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.recover:hover {
+  color: var(--text);
+  border-color: var(--accent);
 }
 
 .composer {

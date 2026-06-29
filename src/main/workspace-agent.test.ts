@@ -166,7 +166,8 @@ interface SentRpc {
   id?: number
   method?: string
   params?: { sessionId?: string; prompt?: Array<{ type: string; text: string }> }
-  result?: { content?: string }
+  result?: { content?: string; outcome?: { outcome?: string; optionId?: string } } | Record<string, never>
+  error?: { code?: number; message?: string }
 }
 
 function sent(fake: CapturingFake): SentRpc[] {
@@ -239,5 +240,83 @@ describe('WorkspaceAgent.prompt()', () => {
 
     const reply = sent(fake).find((m) => m.id === 0 && m.result !== undefined)
     expect(reply?.result).toEqual({ content: 'file body' })
+  })
+})
+
+// --- TB3: fs/write serving + permission responder ---------------------------
+
+/** Drive a ready agent over the capturing fake, with an injected writer. */
+async function connectWriting(
+  fake: CapturingFake,
+  writeTextFile: (path: string, content: string) => Promise<void>,
+): Promise<WorkspaceAgent> {
+  const agent = new WorkspaceAgent({
+    workspaceDir: '/abs/workspace',
+    spawn: () => fake.child,
+    writeTextFile,
+  })
+  const started = agent.start()
+  fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } }) + '\n')
+  await started
+  const opened = agent.openThread()
+  fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 2, result: { sessionId: SESSION_ID } }) + '\n')
+  await opened
+  return agent
+}
+
+describe('WorkspaceAgent — write + permission (TB3)', () => {
+  it('serves an in-Workspace fs/write_text_file by writing and replying {}', async () => {
+    const fake = makeCapturingFake()
+    const writes: Array<{ path: string; content: string }> = []
+    await connectWriting(fake, async (path, content) => {
+      writes.push({ path, content })
+    })
+
+    fake.feed(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 0,
+        method: 'fs/write_text_file',
+        params: { path: '/abs/workspace/note.txt', content: 'hi', sessionId: SESSION_ID },
+      }) + '\n',
+    )
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(writes).toEqual([{ path: '/abs/workspace/note.txt', content: 'hi' }])
+    const reply = sent(fake).find((m) => m.id === 0 && m.result !== undefined)
+    expect(reply?.result).toEqual({})
+  })
+
+  it('rejects an out-of-Workspace fs/write with a JSON-RPC error and no write', async () => {
+    const fake = makeCapturingFake()
+    let wrote = false
+    await connectWriting(fake, async () => {
+      wrote = true
+    })
+
+    fake.feed(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 0,
+        method: 'fs/write_text_file',
+        params: { path: '/etc/passwd', content: 'pwned', sessionId: SESSION_ID },
+      }) + '\n',
+    )
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(wrote).toBe(false)
+    const reply = sent(fake).find((m) => m.id === 0 && m.error !== undefined)
+    expect(reply?.error?.code).toBe(-32602)
+  })
+
+  it('respondPermission answers by request id with {outcome:{outcome:"selected",optionId}}', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectWriting(fake, async () => {})
+
+    // The agent's request id is in its own namespace (starts at 0); echo it back.
+    agent.respondPermission(0, 'allow_once')
+
+    const reply = sent(fake).find((m) => m.id === 0 && m.result !== undefined)
+    expect(reply?.result).toEqual({ outcome: { outcome: 'selected', optionId: 'allow_once' } })
   })
 })

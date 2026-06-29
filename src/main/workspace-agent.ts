@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { AcpClient, type SpawnFn } from './acp/client'
 import { handleFsReadTextFile, type ReadTextFn } from './acp/fs-read'
 import { handleFsWriteTextFile, type WriteTextFn } from './acp/fs-write'
+import { classifyAuthError } from './auth/auth-state'
 import type { PromptResult, ThreadInfo, ThreadModes, ThreadModels } from '../shared/ipc'
 
 /**
@@ -269,20 +270,12 @@ export class WorkspaceAgent extends EventEmitter {
     const rpc = err as { code?: number; message?: string; data?: unknown }
     const message = rpc?.message ?? (err instanceof Error ? err.message : String(err))
 
-    if (this.isUnauthenticated(message)) {
+    // Classify by JSON-RPC code: Vibe reserves -32000 exclusively for
+    // UnauthenticatedError (docs/acp-capture.md §8). This replaces the earlier
+    // message-regex heuristic, which missed the real "Missing API key" wording.
+    if (classifyAuthError(rpc) === 'not-signed-in') {
       return new WorkspaceAgentError(`Not signed in to Mistral Vibe: ${message}`, AUTH_HINT)
     }
     return new WorkspaceAgentError(message)
-  }
-
-  private isUnauthenticated(message: string): boolean {
-    // The real UnauthenticatedError code is unconfirmed — we never captured one.
-    // We deliberately do NOT key on the JSON-RPC code (`-32000` is the generic
-    // server-error code, so trusting it misclassifies generic/internal errors
-    // as "Not signed in"). Match on the message only. Verify the actual auth
-    // error shape against the live binary and tighten this later.
-    return /unauthenticated|not authenticated|authentication required|requires authentication|sign[- ]?in/i.test(
-      message,
-    )
   }
 }

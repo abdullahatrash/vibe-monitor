@@ -29,6 +29,20 @@ export interface VibeDetectResult {
   error: string | null
 }
 
+/**
+ * Whether the user is signed in to Mistral Vibe. `unknown` covers states we
+ * can't conclude from the available signal (e.g. a non-auth error). Main
+ * classifies; the renderer renders (ADR-0001, ADR-0003).
+ */
+export type AuthState = 'signed-in' | 'not-signed-in' | 'unknown'
+
+/** An advertised sign-in method from the `initialize` response (`authMethods`). */
+export interface AuthMethod {
+  id: string
+  name: string
+  description?: string
+}
+
 /** A selectable agent mode from `session/new` (e.g. `default`, `plan`). */
 export interface AcpMode {
   id: string

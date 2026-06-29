@@ -85,44 +85,48 @@ describe('WorkspaceAgent.start()', () => {
     expect((err as WorkspaceAgentError).hint).toBe(SPAWN_HINT)
   })
 
-  it('does NOT classify a generic (non-auth) initialize error as unauthenticated', async () => {
+  it('does NOT classify a generic (non--32000) initialize error as unauthenticated', async () => {
     const fake = makeFakeChild()
     const agent = makeAgent(fake)
 
     const pending = startAndCatch(agent)
-    // initialize is request id 1.
+    // A genuine non-auth failure (internal error). The discriminator is the
+    // JSON-RPC code, not the message — so this must NOT read as not-signed-in.
     fake.feed(
       JSON.stringify({
         jsonrpc: '2.0',
         id: 1,
-        error: { code: -32000, message: 'workspace trust required' },
+        error: { code: -32603, message: 'internal error' },
       }) + '\n',
     )
 
     const err = await pending
     expect(err).toBeInstanceOf(WorkspaceAgentError)
-    expect((err as WorkspaceAgentError).message).toBe('workspace trust required')
+    expect((err as WorkspaceAgentError).message).toBe('internal error')
     expect((err as WorkspaceAgentError).message).not.toMatch(/not signed in/i)
     expect((err as WorkspaceAgentError).hint).toBeNull()
   })
 
-  it('classifies an auth-style initialize error as unauthenticated + AUTH_HINT', async () => {
+  it('classifies a -32000 error as unauthenticated + AUTH_HINT (by code, not message)', async () => {
     const fake = makeFakeChild()
     const agent = makeAgent(fake)
 
     const pending = startAndCatch(agent)
+    // The real UnauthenticatedError message (docs/acp-capture.md §8) — which the
+    // old "sign in / unauthenticated" regex would have MISSED. Code -32000 is
+    // the reliable signal.
     fake.feed(
       JSON.stringify({
         jsonrpc: '2.0',
         id: 1,
-        error: { code: -32000, message: 'authentication required' },
+        error: { code: -32000, message: 'Missing API key for mistral provider.' },
       }) + '\n',
     )
 
     const err = await pending
     expect(err).toBeInstanceOf(WorkspaceAgentError)
     expect((err as WorkspaceAgentError).message).toMatch(/not signed in/i)
-    expect((err as WorkspaceAgentError).message).toContain('authentication required')
+    expect((err as WorkspaceAgentError).message).toContain('Missing API key for mistral provider.')
     expect((err as WorkspaceAgentError).hint).toBe(AUTH_HINT)
   })
 })

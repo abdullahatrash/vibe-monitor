@@ -36,4 +36,10 @@ describe('classifyAuthStatus', () => {
       classifyAuthStatus({ authenticated: true, authState: 'os_keyring', signOutAvailable: true }),
     ).toBe('signed-in')
   })
+
+  it('returns unknown for a malformed status missing the authenticated field', () => {
+    // Defensive: never guess sign-in state from a shape we don't recognize.
+    expect(classifyAuthStatus({})).toBe('unknown')
+    expect(classifyAuthStatus({ authState: 'os_keyring' })).toBe('unknown')
+  })
 })

@@ -59,6 +59,12 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC.startThread, async (event, args: StartThreadArgs): Promise<StartThreadResult> => {
+    // TODO(#12): a retained not-signed-in agent (below) is NOT deduped by
+    // workspaceDir — we always mint a fresh agentId + spawn a new
+    // WorkspaceAgent. Not reachable in this slice (the sign-in button is
+    // inert), but once #12 makes it actionable a re-Connect to the same
+    // workspace would orphan the previous not-signed-in agent (its child
+    // lingers). #12 must reuse or stop the existing agent for this workspace.
     const agentId = `a${++agentCounterSeed}`
     const agent = new WorkspaceAgent({ workspaceDir: args.workspaceDir, env: getShellEnv() })
 
@@ -90,6 +96,13 @@ function registerIpc(): void {
       return { ok: true, thread: { agentId, workspaceDir: args.workspaceDir, ...thread } }
     } catch (err) {
       agent.stop()
+      // TODO(#12): fallback UX gap. When `_auth/status` returned `unknown` but
+      // the user is actually signed out, `session/new` (openThread) fails with
+      // -32000 and lands here — we surface it as a generic error alert (still
+      // carrying AUTH_HINT) rather than the SignInPanel. Routing this auth-error
+      // path to the panel requires keeping the agent alive (not stop()-ing it)
+      // so the sign-in flow can drive it, which is coupled to the
+      // agent-dedup/lifecycle work in #12.
       if (err instanceof WorkspaceAgentError) {
         return { ok: false, kind: 'error', error: err.message, hint: err.hint }
       }

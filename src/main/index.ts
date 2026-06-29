@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
 import { IPC, type AcpStartArgs, type AcpStartResult } from '../shared/ipc'
 import { detectVibe } from './vibe-detect'
+import { getShellEnv } from './shell-env'
 import { AcpClient } from './acp/client'
 
 /** Active ACP sessions keyed by a generated session id. */
@@ -43,7 +44,7 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.acpStart, (event, args: AcpStartArgs): AcpStartResult => {
     const sessionId = `s${++sessionCounterSeed}`
-    const client = new AcpClient({ cwd: args.workspaceDir })
+    const client = new AcpClient({ cwd: args.workspaceDir, env: getShellEnv() })
 
     const forward = (payload: unknown): void => {
       if (!event.sender.isDestroyed()) {

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { VibeDetectResult } from '../shared/ipc'
+import { getShellEnv } from './shell-env'
 
 const execFileAsync = promisify(execFile)
 
@@ -8,7 +9,7 @@ const execFileAsync = promisify(execFile)
 async function which(binary: string): Promise<string | null> {
   const finder = process.platform === 'win32' ? 'where' : 'which'
   try {
-    const { stdout } = await execFileAsync(finder, [binary], { env: process.env })
+    const { stdout } = await execFileAsync(finder, [binary], { env: getShellEnv() })
     const first = stdout.split(/\r?\n/).map((l) => l.trim()).find(Boolean)
     return first ?? null
   } catch {
@@ -39,7 +40,7 @@ export async function detectVibe(): Promise<VibeDetectResult> {
 
     if (result.vibeFound) {
       try {
-        const { stdout } = await execFileAsync('vibe', ['--version'], { env: process.env })
+        const { stdout } = await execFileAsync('vibe', ['--version'], { env: getShellEnv() })
         result.vibeVersion = stdout.trim() || null
       } catch {
         // Version probe failed but binary exists; leave version null.

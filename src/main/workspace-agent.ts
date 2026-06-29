@@ -2,8 +2,15 @@ import { EventEmitter } from 'node:events'
 import { AcpClient, type SpawnFn } from './acp/client'
 import { handleFsReadTextFile, type ReadTextFn } from './acp/fs-read'
 import { handleFsWriteTextFile, type WriteTextFn } from './acp/fs-write'
-import { classifyAuthError } from './auth/auth-state'
-import type { PromptResult, ThreadInfo, ThreadModes, ThreadModels } from '../shared/ipc'
+import { classifyAuthError, classifyAuthStatus } from './auth/auth-state'
+import type {
+  AuthMethod,
+  AuthState,
+  PromptResult,
+  ThreadInfo,
+  ThreadModes,
+  ThreadModels,
+} from '../shared/ipc'
 
 /**
  * A Workspace agent: one `vibe-acp` child process plus its `AcpClient`,
@@ -71,6 +78,10 @@ export class WorkspaceAgent extends EventEmitter {
   /** Threads hosted by this agent, keyed by their ACP `sessionId`. */
   private readonly threads = new Map<string, ThreadInfo>()
   private initialized = false
+  /** Sign-in state detected via `_auth/status` during start(). */
+  private authStateValue: AuthState = 'unknown'
+  /** Sign-in methods advertised by `initialize` (e.g. `browser-auth`). */
+  private authMethodsValue: AuthMethod[] = []
 
   constructor(options: WorkspaceAgentOptions) {
     super()
@@ -126,7 +137,7 @@ export class WorkspaceAgent extends EventEmitter {
     }
 
     try {
-      await Promise.race([
+      const init = await Promise.race([
         this.client.request<InitializeResult>('initialize', {
           protocolVersion: PROTOCOL_VERSION,
           clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
@@ -134,11 +145,41 @@ export class WorkspaceAgent extends EventEmitter {
         }),
         earlyFailure,
       ])
+      this.authMethodsValue = extractAuthMethods(init)
+      // `initialize` can't reveal auth state (its authMethods is always
+      // present), so query the `_auth/status` extension method (acp-capture §8).
+      await this.detectAuthState(earlyFailure)
       this.initialized = true
     } catch (err) {
       throw this.toAgentError(err)
     } finally {
       this.detachStartGuards(onError, onExit)
+    }
+  }
+
+  /** The sign-in state detected during start() (`unknown` until started). */
+  get authState(): AuthState {
+    return this.authStateValue
+  }
+
+  /** The sign-in methods advertised by the agent's `initialize` response. */
+  get authMethods(): AuthMethod[] {
+    return this.authMethodsValue
+  }
+
+  /**
+   * Query the `_auth/status` extension method and classify the result. Process
+   * death during the call is fatal (races `earlyFailure`); a plain RPC failure
+   * is not — we fall back to `unknown` and let `session/new` surface any real
+   * auth gate (the -32000 UnauthenticatedError).
+   */
+  private async detectAuthState(earlyFailure: Promise<never>): Promise<void> {
+    try {
+      const status = await Promise.race([this.client.request('_auth/status'), earlyFailure])
+      this.authStateValue = classifyAuthStatus(status)
+    } catch (err) {
+      if (err instanceof WorkspaceAgentError) throw err
+      this.authStateValue = 'unknown'
     }
   }
 
@@ -278,4 +319,19 @@ export class WorkspaceAgent extends EventEmitter {
     }
     return new WorkspaceAgentError(message)
   }
+}
+
+/** Pull the well-formed `authMethods` out of an `initialize` result. */
+function extractAuthMethods(init: InitializeResult): AuthMethod[] {
+  const methods = init.authMethods
+  if (!Array.isArray(methods)) return []
+  return methods
+    .filter(
+      (m): m is AuthMethod => !!m && typeof m.id === 'string' && typeof m.name === 'string',
+    )
+    .map((m) => ({
+      id: m.id,
+      name: m.name,
+      description: typeof m.description === 'string' ? m.description : undefined,
+    }))
 }

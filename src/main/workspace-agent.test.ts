@@ -131,6 +131,76 @@ describe('WorkspaceAgent.start()', () => {
   })
 })
 
+// --- Auth detection over the wire (_auth/status) ----------------------------
+
+/** Initialize result carrying the captured browser-auth method (acp-capture §1/§8). */
+const INITIALIZE_RESULT = {
+  protocolVersion: 1,
+  agentInfo: { name: '@mistralai/mistral-vibe', title: 'Mistral Vibe', version: '2.18.0' },
+  authMethods: [
+    {
+      id: 'browser-auth',
+      name: 'Sign in through Mistral AI Studio',
+      description: 'Sign into Mistral Vibe through your Mistral AI Studio account.',
+    },
+  ],
+}
+
+/**
+ * Drive start() to completion over a capturing fake, answering `initialize`
+ * (id 1) then `_auth/status` (id 2) with the supplied status result. Returns the
+ * ready agent so the test can read its detected `authState`.
+ */
+async function startWithAuthStatus(
+  fake: CapturingFake,
+  statusResult: Record<string, unknown>,
+): Promise<WorkspaceAgent> {
+  const agent = new WorkspaceAgent({ workspaceDir: '/abs/workspace', spawn: () => fake.child })
+  const started = agent.start()
+  fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 1, result: INITIALIZE_RESULT }) + '\n')
+  // Let initialize resolve so the agent issues its _auth/status follow-up.
+  await new Promise((r) => setTimeout(r, 0))
+  const statusReq = sent(fake).find((m) => m.method === '_auth/status')
+  fake.feed(JSON.stringify({ jsonrpc: '2.0', id: statusReq?.id, result: statusResult }) + '\n')
+  await started
+  return agent
+}
+
+describe('WorkspaceAgent — auth detection (_auth/status)', () => {
+  it('queries _auth/status after initialize and reports not-signed-in when signed out', async () => {
+    const fake = makeCapturingFake()
+    const agent = await startWithAuthStatus(fake, {
+      authenticated: false,
+      authState: 'signed_out',
+      signOutAvailable: false,
+    })
+
+    // The extension method is sent verbatim with its leading underscore.
+    const statusReq = sent(fake).find((m) => m.method === '_auth/status')
+    expect(statusReq).toBeDefined()
+    expect(agent.authState).toBe('not-signed-in')
+  })
+
+  it('reports signed-in for an authenticated status and exposes the advertised authMethods', async () => {
+    const fake = makeCapturingFake()
+    const agent = await startWithAuthStatus(fake, {
+      authenticated: true,
+      authState: 'os_keyring',
+      signOutAvailable: true,
+    })
+
+    expect(agent.authState).toBe('signed-in')
+    // The sign-in method name the renderer renders comes from initialize.
+    expect(agent.authMethods).toEqual([
+      {
+        id: 'browser-auth',
+        name: 'Sign in through Mistral AI Studio',
+        description: 'Sign into Mistral Vibe through your Mistral AI Studio account.',
+      },
+    ])
+  })
+})
+
 // --- TB2: prompt + fs/read serving (a writes-capturing fake) ----------------
 
 interface CapturingFake extends FakeChild {
@@ -192,9 +262,16 @@ async function connect(
   })
   const started = agent.start()
   fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } }) + '\n')
+  // start() now follows initialize with an _auth/status query (id 2); answer
+  // signed-in so the connect flow proceeds. session/new is therefore id 3.
+  await new Promise((r) => setTimeout(r, 0))
+  fake.feed(
+    JSON.stringify({ jsonrpc: '2.0', id: 2, result: { authenticated: true, authState: 'os_keyring' } }) +
+      '\n',
+  )
   await started
   const opened = agent.openThread()
-  fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 2, result: { sessionId: SESSION_ID } }) + '\n')
+  fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 3, result: { sessionId: SESSION_ID } }) + '\n')
   await opened
   return agent
 }
@@ -261,9 +338,15 @@ async function connectWriting(
   })
   const started = agent.start()
   fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } }) + '\n')
+  // start() follows initialize with an _auth/status query (id 2); session/new is id 3.
+  await new Promise((r) => setTimeout(r, 0))
+  fake.feed(
+    JSON.stringify({ jsonrpc: '2.0', id: 2, result: { authenticated: true, authState: 'os_keyring' } }) +
+      '\n',
+  )
   await started
   const opened = agent.openThread()
-  fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 2, result: { sessionId: SESSION_ID } }) + '\n')
+  fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 3, result: { sessionId: SESSION_ID } }) + '\n')
   await opened
   return agent
 }

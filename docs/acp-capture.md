@@ -277,3 +277,58 @@ Vibe also exposes these ACP extension methods (all `_`-prefixed on the wire): `t
   `signInUrl` via the system opener → `authenticate(complete, attemptId)`. (Fallback: blocking
   `browser-auth`.)
 - **#13 Sign out / status:** `_auth/signOut`, gated on `signOutAvailable`; show `authState`.
+
+## 9. `session/load` — resume behaviour (captured 2026-06-29 via the #29 spike, vibe-acp 2.18.0)
+
+Captured live by `scripts/spike-session-load.ts` against the real binary (signed-in user,
+`authState: os_keyring`). The probe created a session (`session/new` + a trivial prompt),
+then resumed it from a **fresh process**. This is the protocol truth TB4 (#33) builds on.
+
+### `agentCapabilities.loadSession: true`
+`initialize` advertises `loadSession: true` — so we may call `session/load`. Gate the resume
+path on this flag (fall straight to (b) re-bind if a future build drops it).
+
+### Resume SUCCEEDS — `session/load` (client → agent)
+Request params mirror `session/new` but carry the prior `sessionId`:
+
+```json
+{ "sessionId": "4d8e9017-925b-e223-27d0-5b2107d5dbdd", "cwd": "/tmp/vibe-spike", "mcpServers": [] }
+```
+
+Two things happen, in this order:
+
+1. **History is replayed OVER THE WIRE as `session/update` notifications, BEFORE the result
+   resolves.** Observed replay for a one-turn session (5 notifications):
+   `user_message_chunk` → `agent_thought_chunk` → `agent_message_chunk` → `usage_update`
+   → `available_commands_update`. Each carries the original `messageId`s. Note the replayed
+   `usage_update` reports `used: 0` / `cost: 0` (replay, not a re-charge).
+2. **The `session/load` result resolves** with the SAME shape as `session/new`
+   (`configOptions`, `models`, `modes`, `_meta.workspace_trust`) **except there is NO
+   `sessionId` field** in the result — the caller already knows the id it loaded.
+
+> **Design consequence for TB4:** because WE own the JSONL transcript and replay it through
+> our reducer on reopen, the wire-replayed `session/update` notifications during `session/load`
+> are DUPLICATES of history we already have. TB4 must **suppress/ignore** the notifications
+> that arrive between the `session/load` request and its result (don't tee them, don't render
+> them) — otherwise the conversation doubles. The result resolving is the "resume complete"
+> signal; live streaming resumes only on the NEXT user prompt.
+
+### Resume FAILS — unknown/expired session id
+`session/load` with a `sessionId` the agent doesn't know rejects with a JSON-RPC error:
+
+```json
+{ "code": -32602, "message": "Session not found: <id>", "data": { "session_id": "<id>" } }
+```
+
+> **This `-32602` ("Session not found") is the exact signal the (b) re-bind branch keys on.**
+> On it (or any `session/load` rejection), TB4 falls back to binding a FRESH session
+> (`session/new`) under the SAME Thread id, keeping our JSONL history visible — Vibe loses its
+> agent-side context, we don't lose the user's visible transcript. Match on `code === -32602`
+> AND/OR a `Session not found` message; treat any other load error as re-bind too (fail safe).
+
+### Infra gotcha — the spike runs under `node`, NOT `bun`
+Bun 1.3.8's `node:child_process` does **not** deliver `stdin.write()` to a piped child, so
+vibe-acp never receives `initialize` and the handshake times out at 30s with no stderr/exit.
+The same `AcpClient` code works instantly under `node` (initialize replies in ~0.9s) and under
+Electron (which is why the app itself was unaffected). To re-run the probe:
+`bun build scripts/spike-session-load.ts --target=node --outfile=/tmp/spike.mjs && node /tmp/spike.mjs --phase=all --cwd=/tmp/vibe-spike`.

@@ -35,6 +35,16 @@ export default tseslint.config(
     },
   },
 
+  // One-off Node CLI probes (e.g. the issue #29 session/load spike). Run via
+  // `bun scripts/*.ts`; not part of the app/build graph, so they live outside
+  // tsconfig — this block keeps `eslint .` covering them with Node globals.
+  {
+    files: ['scripts/**/*.{ts,mts,mjs}'],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+  },
+
   // Renderer runs in the browser; React 19 (no react-in-jsx-scope needed).
   //
   // We register eslint-plugin-react-hooks manually and enable just the two

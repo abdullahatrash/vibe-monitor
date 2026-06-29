@@ -1,5 +1,6 @@
 import { appendFile, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { TranscriptEntry } from '../../shared/ipc'
 
 /**
  * The per-Thread visible-conversation transcript we OWN (ADR-0005). The main
@@ -10,15 +11,11 @@ import { join } from 'node:path'
  * view with NO `vibe-acp` process. The renderer stays pure (ADR-0001) — it never
  * writes here.
  *
- * The entry union mirrors the reducer's INPUTS (`ConversationAction`), so a
- * replay is a near-mechanical map from entry -> dispatched action.
+ * `TranscriptEntry` (the entry union, mirroring the reducer's `ConversationAction`
+ * inputs) lives in `src/shared/ipc.ts` so the renderer replay can name it across
+ * the composite project boundary; re-exported here for the main-side writers.
  */
-export type TranscriptEntry =
-  | { t: 'user-prompt'; id: string; text: string }
-  | { t: 'acp-event'; payload: unknown }
-  | { t: 'turn-complete' }
-  | { t: 'turn-error'; message: string }
-  | { t: 'resolve-permission'; requestId: number | string; optionId: string; name: string | null }
+export type { TranscriptEntry }
 
 /** The user's prompt, teed at `sendPrompt` — mirrors the `send-prompt` action. */
 export function userPromptEntry(id: string, text: string): TranscriptEntry {

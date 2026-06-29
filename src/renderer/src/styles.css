@@ -215,6 +215,32 @@ body {
   padding: 2px 0;
 }
 
+/* Clickable Thread in the cold list — reopens its saved conversation (TB3). */
+.recents__thread-btn {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  padding: 2px 4px;
+  margin: 0 -4px;
+  font: inherit;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.recents__thread-btn:hover {
+  color: var(--accent-text);
+  background: var(--accent-tint);
+}
+
+/* The read-only reopened-Thread view (TB3): a muted variant of the live conv. */
+.conv--cold .badge {
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  border-color: var(--accent-tint-border);
+}
+
 .thread {
   display: flex;
   flex-direction: column;

@@ -171,7 +171,7 @@ export function Conversation({
   )
 }
 
-function UsageBar({ state }: { state: { usage: { used: number; size: number } | null; cost: { amount: number; currency: string } | null } }): JSX.Element | null {
+export function UsageBar({ state }: { state: { usage: { used: number; size: number } | null; cost: { amount: number; currency: string } | null } }): JSX.Element | null {
   if (!state.usage && !state.cost) return null
   return (
     <div className="usage">
@@ -190,7 +190,7 @@ function UsageBar({ state }: { state: { usage: { used: number; size: number } | 
   )
 }
 
-function Item({
+export function Item({
   item,
   onPermission,
 }: {

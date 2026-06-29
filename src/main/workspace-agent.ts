@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { AcpClient, type SpawnFn } from './acp/client'
 import { handleFsReadTextFile, type ReadTextFn } from './acp/fs-read'
 import { handleFsWriteTextFile, type WriteTextFn } from './acp/fs-write'
-import { classifyAuthError, classifyAuthStatus } from './auth/auth-state'
+import { classifyAuthError, classifyAuthStatus, extractSignOutAvailable } from './auth/auth-state'
 import { DELEGATED_AUTH_METHOD_ID } from '../shared/ipc'
 import type {
   AuthMethod,
@@ -86,6 +86,8 @@ export class WorkspaceAgent extends EventEmitter {
   private authStateValue: AuthState = 'unknown'
   /** Sign-in methods advertised by `initialize` (e.g. `browser-auth`). */
   private authMethodsValue: AuthMethod[] = []
+  /** Whether `_auth/status` reports sign-out is available — gates the control. */
+  private signOutAvailableValue = false
 
   constructor(options: WorkspaceAgentOptions) {
     super()
@@ -178,6 +180,18 @@ export class WorkspaceAgent extends EventEmitter {
     return this.authMethodsValue
   }
 
+  /** Whether sign-out is currently available (from the last `_auth/status`). */
+  get signOutAvailable(): boolean {
+    return this.signOutAvailableValue
+  }
+
+  /** Fold a fresh `_auth/status` result into the cached auth state + sign-out gate. */
+  private applyAuthStatus(status: unknown): AuthState {
+    this.authStateValue = classifyAuthStatus(status)
+    this.signOutAvailableValue = extractSignOutAvailable(status)
+    return this.authStateValue
+  }
+
   /**
    * Query the `_auth/status` extension method and classify the result. Process
    * death during the call is fatal (races `earlyFailure`); a plain RPC failure
@@ -187,7 +201,7 @@ export class WorkspaceAgent extends EventEmitter {
   private async detectAuthState(earlyFailure: Promise<never>): Promise<void> {
     try {
       const status = await Promise.race([this.client.request('_auth/status'), earlyFailure])
-      this.authStateValue = classifyAuthStatus(status)
+      this.applyAuthStatus(status)
     } catch (err) {
       if (err instanceof WorkspaceAgentError) throw err
       this.authStateValue = 'unknown'
@@ -237,11 +251,41 @@ export class WorkspaceAgent extends EventEmitter {
       })
 
       const status = await this.client.request('_auth/status')
-      this.authStateValue = classifyAuthStatus(status)
-      return this.authStateValue
+      return this.applyAuthStatus(status)
     } catch (err) {
       throw this.toSignInError(err)
     }
+  }
+
+  /**
+   * Sign out via the `_auth/signOut` extension method (acp-capture §8): Vibe
+   * removes the api key from its keyring (we never see it). On `{}` we re-query
+   * `_auth/status` and transition `signed-in → not-signed-in`. Gated on the last
+   * known `signOutAvailable` so we don't round-trip a call the agent will reject
+   * (-32602). Resolves the post-sign-out `AuthState`; rejects (no wedge) on a
+   * keyring failure (-32603) or early exit.
+   */
+  async signOut(): Promise<AuthState> {
+    if (!this.initialized) {
+      throw new WorkspaceAgentError('Agent is not initialized; call start() first.')
+    }
+    if (!this.signOutAvailableValue) {
+      throw new WorkspaceAgentError('Sign-out is not available for this session.', AUTH_HINT)
+    }
+    try {
+      await this.client.request('_auth/signOut')
+      const status = await this.client.request('_auth/status')
+      return this.applyAuthStatus(status)
+    } catch (err) {
+      throw this.toSignOutError(err)
+    }
+  }
+
+  /** Map a sign-out failure to a clear message (not a bare RPC string). */
+  private toSignOutError(err: unknown): WorkspaceAgentError {
+    if (err instanceof WorkspaceAgentError) return err
+    const detail = (err as { message?: string })?.message ?? (err instanceof Error ? err.message : String(err))
+    return new WorkspaceAgentError(`Sign-out failed: ${detail}`, AUTH_HINT)
   }
 
   /** Map a sign-in failure to a clear message (not a bare RPC string). */

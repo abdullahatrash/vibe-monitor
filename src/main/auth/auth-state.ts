@@ -31,3 +31,12 @@ export function classifyAuthStatus(status: unknown): AuthState {
   if (authenticated === false) return 'not-signed-in'
   return 'unknown'
 }
+
+/**
+ * Whether `_auth/status` reports sign-out is available (`signOutAvailable`).
+ * Gates the renderer's Sign-out control — only `true` enables it (acp-capture §8;
+ * `_auth/signOut` errors -32602 when it's false).
+ */
+export function extractSignOutAvailable(status: unknown): boolean {
+  return (status as { signOutAvailable?: unknown } | null)?.signOutAvailable === true
+}

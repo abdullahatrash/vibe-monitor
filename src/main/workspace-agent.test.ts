@@ -199,6 +199,24 @@ describe('WorkspaceAgent — auth detection (_auth/status)', () => {
       },
     ])
   })
+
+  it('surfaces signOutAvailable from _auth/status (gates the sign-out control)', async () => {
+    const fakeIn = makeCapturingFake()
+    const signedIn = await startWithAuthStatus(fakeIn, {
+      authenticated: true,
+      authState: 'os_keyring',
+      signOutAvailable: true,
+    })
+    expect(signedIn.signOutAvailable).toBe(true)
+
+    const fakeOut = makeCapturingFake()
+    const signedOut = await startWithAuthStatus(fakeOut, {
+      authenticated: false,
+      authState: 'signed_out',
+      signOutAvailable: false,
+    })
+    expect(signedOut.signOutAvailable).toBe(false)
+  })
 })
 
 // --- TB3: browser-auth-delegated sign-in ------------------------------------
@@ -368,6 +386,81 @@ describe('WorkspaceAgent — sign in (browser-auth-delegated)', () => {
     expect((err as WorkspaceAgentError).message).toMatch(/delegated/i)
     // It never round-trips delegated-shaped requests to the blocking method.
     expect(authSent(fake)).toEqual([])
+  })
+})
+
+/** Drive start() to a ready, signed-in agent (signOut available). */
+async function connectSignedIn(fake: CapturingFake): Promise<WorkspaceAgent> {
+  return startWithAuthStatus(fake, {
+    authenticated: true,
+    authState: 'os_keyring',
+    signOutAvailable: true,
+  })
+}
+
+describe('WorkspaceAgent — sign out (_auth/signOut)', () => {
+  it('sends _auth/signOut, re-queries status, and transitions signed-in → not-signed-in', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectSignedIn(fake)
+
+    const out = agent.signOut()
+
+    await new Promise((r) => setTimeout(r, 0))
+    const signOutReq = sent(fake).find((m) => m.method === '_auth/signOut')
+    expect(signOutReq).toBeDefined() // extension method, leading underscore on the wire
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: signOutReq?.id, result: {} }) + '\n')
+
+    await new Promise((r) => setTimeout(r, 0))
+    const statusReqs = sent(fake).filter((m) => m.method === '_auth/status')
+    fake.feed(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: statusReqs[statusReqs.length - 1]?.id,
+        result: { authenticated: false, authState: 'signed_out', signOutAvailable: false },
+      }) + '\n',
+    )
+
+    await expect(out).resolves.toBe('not-signed-in')
+    expect(agent.authState).toBe('not-signed-in')
+    expect(agent.signOutAvailable).toBe(false)
+  })
+
+  it('refuses (and sends nothing) when signOutAvailable is false', async () => {
+    const fake = makeCapturingFake()
+    const agent = await startWithAuthStatus(fake, {
+      authenticated: true,
+      authState: 'os_keyring',
+      signOutAvailable: false,
+    })
+
+    const err = await agent.signOut().catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(WorkspaceAgentError)
+    expect((err as WorkspaceAgentError).message).toMatch(/not available/i)
+    expect(sent(fake).some((m) => m.method === '_auth/signOut')).toBe(false)
+  })
+
+  it('rejects with a clear message when the keyring removal fails (-32603)', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectSignedIn(fake)
+
+    const out = agent.signOut()
+    const settled = out.catch((e: unknown) => e)
+
+    await new Promise((r) => setTimeout(r, 0))
+    const signOutReq = sent(fake).find((m) => m.method === '_auth/signOut')
+    fake.feed(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: signOutReq?.id,
+        error: { code: -32603, message: 'keyring error' },
+      }) + '\n',
+    )
+
+    const err = await settled
+    expect(err).toBeInstanceOf(WorkspaceAgentError)
+    expect((err as WorkspaceAgentError).message).toMatch(/sign-out failed/i)
+    // Failed sign-out leaves the session signed-in — never wedged.
+    expect(agent.authState).toBe('signed-in')
   })
 })
 

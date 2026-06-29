@@ -165,13 +165,20 @@ function SignInPanel({
     dispatch({ type: 'sign-in-cancel' })
   }
 
-  if (view.kind === 'none') {
-    // Reaching `none` in this panel means we just signed in. This terminal
-    // confirmation is #12's end state; opening a Thread from here (routing
-    // Open-project through sign-in) is #13.
+  if (view.kind === 'signed-in') {
+    // Interim terminal confirmation; behavior B replaces this with auto-opening
+    // a Thread on the same retained agent (routing Open-project through sign-in).
     return (
       <div className="signin signin--done">
         <div className="signin__title">Signed in to Mistral Vibe</div>
+      </div>
+    )
+  }
+
+  if (view.kind === 'signing-out') {
+    return (
+      <div className="signin">
+        <div className="signin__title">Signing out…</div>
       </div>
     )
   }

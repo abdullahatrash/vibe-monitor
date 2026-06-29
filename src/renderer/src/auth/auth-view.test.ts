@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { authReducer, initialAuthViewState, selectAuthView } from './auth-view'
+import {
+  authReducer,
+  initialAuthViewState,
+  selectAuthView,
+  signedInAuthViewState,
+} from './auth-view'
 import type { AuthMethod } from '../../../shared/ipc'
 
 /**
@@ -32,8 +37,14 @@ describe('authReducer', () => {
     state = authReducer(state, { type: 'sign-in-success' })
     expect(state.phase).toBe('signed-in')
     // ADR-0003: we only reflect state — the view state carries no token/secret.
-    // Its keys are exactly the lifecycle fields, nothing credential-shaped.
-    expect(Object.keys(state).sort()).toEqual(['authMethods', 'error', 'phase'])
+    // Its keys are exactly the lifecycle/display fields, nothing credential-shaped.
+    expect(Object.keys(state).sort()).toEqual([
+      'authMethods',
+      'error',
+      'identity',
+      'phase',
+      'signOutAvailable',
+    ])
   })
 
   it('transitions signing-in → error on failure, carrying a recoverable message', () => {
@@ -57,6 +68,26 @@ describe('authReducer', () => {
     expect(state.phase).toBe('not-signed-in')
     expect(state.error).toBeNull()
   })
+
+  it('signs out: signed-in → signing-out → not-signed-in (account switch entry)', () => {
+    let state = signedInAuthViewState([BROWSER_AUTH, DELEGATED], true)
+    expect(state.phase).toBe('signed-in')
+    state = authReducer(state, { type: 'sign-out-start' })
+    expect(state.phase).toBe('signing-out')
+    state = authReducer(state, { type: 'sign-out-success' })
+    // Back to not-signed-in so the same panel can sign a (possibly different)
+    // account back in — the authMethods are preserved for that.
+    expect(state.phase).toBe('not-signed-in')
+    expect(state.authMethods).toEqual([BROWSER_AUTH, DELEGATED])
+    expect(state.error).toBeNull()
+  })
+
+  it('keeps the user signed in (recoverably) when sign-out fails', () => {
+    let state = authReducer(signedInAuthViewState([BROWSER_AUTH], true), { type: 'sign-out-start' })
+    state = authReducer(state, { type: 'sign-out-error', message: 'Sign-out failed.' })
+    expect(state.phase).toBe('signed-in')
+    expect(state.error).toBe('Sign-out failed.')
+  })
 })
 
 describe('selectAuthView', () => {
@@ -77,10 +108,30 @@ describe('selectAuthView', () => {
     expect(selectAuthView(state)).toEqual({ kind: 'signing-in' })
   })
 
-  it('shows no auth panel once signed in', () => {
-    let state = authReducer(initialAuthViewState([DELEGATED]), { type: 'sign-in-start' })
-    state = authReducer(state, { type: 'sign-in-success' })
-    expect(selectAuthView(state)).toEqual({ kind: 'none' })
+  it('shows a signed-in indicator with the sign-out control gated on signOutAvailable', () => {
+    const state = signedInAuthViewState([DELEGATED], true)
+    expect(selectAuthView(state)).toEqual({
+      kind: 'signed-in',
+      signOutAvailable: true,
+      identity: null, // Vibe exposes no identity — omitted gracefully
+      error: null,
+    })
+  })
+
+  it('hides the sign-out control when signOutAvailable is false', () => {
+    const view = selectAuthView(signedInAuthViewState([DELEGATED], false))
+    expect(view).toMatchObject({ kind: 'signed-in', signOutAvailable: false })
+  })
+
+  it('surfaces an account identity in the signed-in view when one is present', () => {
+    // Forward-compatible: if Vibe ever supplies identity, the selector shows it.
+    const state = { ...signedInAuthViewState([DELEGATED], true), identity: 'jane@acme.test' }
+    expect(selectAuthView(state)).toMatchObject({ kind: 'signed-in', identity: 'jane@acme.test' })
+  })
+
+  it('shows a signing-out view during the sign-out step', () => {
+    const state = authReducer(signedInAuthViewState([DELEGATED], true), { type: 'sign-out-start' })
+    expect(selectAuthView(state)).toEqual({ kind: 'signing-out' })
   })
 
   it('shows a recoverable error view (with the method to retry) on failure', () => {

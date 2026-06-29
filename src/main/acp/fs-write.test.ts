@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { handleFsWriteTextFile, isPathWithin, type WriteTextFn } from './fs-write'
@@ -113,6 +113,46 @@ describe('handleFsWriteTextFile — symlink confinement (#8)', () => {
 
     rmSync(ws, { recursive: true, force: true })
     rmSync(outside, { recursive: true, force: true })
+  })
+
+  it('rejects a `..` that climbs out THROUGH a symlink (raw uncollapsed path)', async () => {
+    // base/{workspace, outside}; workspace/link -> outside.
+    const base = mkdtempSync(join(tmpdir(), 'vibe-base-'))
+    const ws = join(base, 'workspace')
+    const outside = join(base, 'outside')
+    mkdirSync(ws)
+    mkdirSync(outside)
+    symlinkSync(outside, join(ws, 'link'))
+
+    // RAW string concat (NOT path.join/resolve) so the `..` is NOT collapsed at
+    // construction — exactly as the agent's JSON-RPC string arrives. The kernel
+    // follows link -> outside, THEN applies `..` -> base, landing at base/pwned.txt.
+    const attack = ws + '/link/../pwned.txt'
+
+    const outcome = await handleFsWriteTextFile({ path: attack, content: 'pwned' }, { workspaceDir: ws })
+
+    expect('error' in outcome).toBe(true)
+    if ('error' in outcome) expect(outcome.error.code).toBe(-32602)
+    // Nothing may land outside the Workspace.
+    expect(existsSync(join(base, 'pwned.txt'))).toBe(false)
+    expect(existsSync(join(outside, 'pwned.txt'))).toBe(false)
+
+    rmSync(base, { recursive: true, force: true })
+  })
+
+  it('allows a `..` that stays within the Workspace (between existing dirs)', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'vibe-ws-'))
+    mkdirSync(join(ws, 'a'))
+    mkdirSync(join(ws, 'b'))
+    // a/../b/note.txt resolves to b/note.txt — inside the Workspace.
+    const outcome = await handleFsWriteTextFile(
+      { path: ws + '/a/../b/note.txt', content: 'ok' },
+      { workspaceDir: ws },
+    )
+    expect(outcome).toEqual({ result: {} })
+    expect(readFileSync(join(ws, 'b', 'note.txt'), 'utf8')).toBe('ok')
+
+    rmSync(ws, { recursive: true, force: true })
   })
 
   it('allows a not-yet-existing file in an existing in-Workspace subdir', async () => {

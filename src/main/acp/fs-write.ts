@@ -1,5 +1,5 @@
 import { realpath, writeFile } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
 
 /**
  * Serve the agent's `fs/write_text_file` request (agent → client). Like reads,
@@ -56,17 +56,26 @@ export async function handleFsWriteTextFile(
   if (typeof content !== 'string') {
     return { error: { code: -32602, message: 'fs/write_text_file: missing or invalid `content`' } }
   }
-  if (deps.workspaceDir && !(await isWriteWithinWorkspace(deps.workspaceDir, path))) {
-    return {
-      error: {
-        code: -32602,
-        message: `fs/write_text_file: path escapes the Workspace directory: ${path}`,
-      },
+  // Confine to the Workspace. We resolve the target the way the KERNEL will at
+  // write time and write back that same canonical path, so the path we validated
+  // is the path we write (a residual realpath→write TOCTOU race remains — fully
+  // closing it needs openat/O_NOFOLLOW, out of scope here).
+  let writeTarget = path
+  if (deps.workspaceDir) {
+    const confined = await confinedWriteTarget(deps.workspaceDir, path)
+    if (!confined) {
+      return {
+        error: {
+          code: -32602,
+          message: `fs/write_text_file: path escapes the Workspace directory: ${path}`,
+        },
+      }
     }
+    writeTarget = confined
   }
 
   try {
-    await write(path, content)
+    await write(writeTarget, content)
     return { result: {} }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -75,38 +84,49 @@ export async function handleFsWriteTextFile(
 }
 
 /**
- * True when `target`'s real path resolves to the Workspace's real path or a
- * descendant — symlink-resolved confinement (ADR-0004). Both sides are
- * realpath-resolved before the lexical comparison, so a symlink inside the
+ * The canonical real path of `target` IF it stays inside `workspaceDir`, else
+ * `null` — symlink-resolved confinement (ADR-0004). Both sides are realpath-
+ * resolved before the lexical containment check, so a symlink inside the
  * Workspace pointing out cannot escape and a symlinked Workspace root isn't
- * falsely rejected. The target may not exist yet, so we realpath the nearest
- * existing ancestor and re-append the non-existent tail.
+ * falsely rejected.
  */
-export async function isWriteWithinWorkspace(workspaceDir: string, target: string): Promise<boolean> {
+async function confinedWriteTarget(workspaceDir: string, target: string): Promise<string | null> {
   const realRoot = await realpath(workspaceDir).catch(() => resolve(workspaceDir))
-  const realTarget = await realpathNearest(target)
-  return isPathWithin(realRoot, realTarget)
+  const realTarget = await resolveLikeKernel(target)
+  return isPathWithin(realRoot, realTarget) ? realTarget : null
+}
+
+/** Boolean form of {@link confinedWriteTarget}. */
+export async function isWriteWithinWorkspace(workspaceDir: string, target: string): Promise<boolean> {
+  return (await confinedWriteTarget(workspaceDir, target)) !== null
 }
 
 /**
- * Resolve the real path of `target` by realpath-ing its nearest existing
- * ancestor and re-appending the not-yet-existing tail. Falls back to a lexical
- * resolve if nothing along the path exists.
+ * Resolve `target` the way the OS does at write time: walk its RAW components,
+ * resolving a symlink the moment it's traversed and applying `..` to the already
+ * symlink-resolved accumulator. This matters because `path.resolve` would
+ * collapse a `link/..` LEXICALLY (dropping `link` before realpath sees it),
+ * whereas the kernel follows `link` first and THEN applies `..` — so a `..`
+ * after an in-Workspace symlink could otherwise escape. Non-existent components
+ * (the not-yet-created tail) stay literal; later `..` still pops, names append.
  */
-async function realpathNearest(target: string): Promise<string> {
-  let current = resolve(target)
-  const tail: string[] = []
-  for (;;) {
+async function resolveLikeKernel(target: string): Promise<string> {
+  const parts = target.split(/[/\\]+/).filter((p) => p.length > 0)
+  let acc = isAbsolute(target) ? parse(target).root : resolve('.')
+  for (const part of parts) {
+    if (part === '.') continue
+    if (part === '..') {
+      acc = dirname(acc)
+      continue
+    }
+    acc = join(acc, part)
     try {
-      const real = await realpath(current)
-      return tail.length ? join(real, ...tail.reverse()) : real
+      acc = await realpath(acc) // resolves a symlink component as the kernel would
     } catch {
-      const parent = dirname(current)
-      if (parent === current) return resolve(target) // reached the root, nothing exists
-      tail.push(basename(current))
-      current = parent
+      // Doesn't exist yet — leave it literal; deeper `..`/names still apply.
     }
   }
+  return acc
 }
 
 /**

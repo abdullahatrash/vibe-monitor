@@ -666,6 +666,16 @@ async function connectWriting(
   return agent
 }
 
+/**
+ * Yield the event loop until `done()` is true or a tick budget runs out. Write
+ * confinement (ADR-0004) is symlink-resolved, so serving a write now performs
+ * several sequential `realpath` round-trips that settle over multiple event-loop
+ * ticks — a single `setTimeout(0)` is racy. Poll the observable outcome instead.
+ */
+async function waitFor(done: () => boolean, ticks = 50): Promise<void> {
+  for (let i = 0; i < ticks && !done(); i++) await new Promise((r) => setTimeout(r, 0))
+}
+
 describe('WorkspaceAgent — write + permission (TB3)', () => {
   it('serves an in-Workspace fs/write_text_file by writing and replying {}', async () => {
     const fake = makeCapturingFake()
@@ -682,7 +692,7 @@ describe('WorkspaceAgent — write + permission (TB3)', () => {
         params: { path: '/abs/workspace/note.txt', content: 'hi', sessionId: SESSION_ID },
       }) + '\n',
     )
-    await new Promise((r) => setTimeout(r, 0))
+    await waitFor(() => writes.length > 0)
 
     expect(writes).toEqual([{ path: '/abs/workspace/note.txt', content: 'hi' }])
     const reply = sent(fake).find((m) => m.id === 0 && m.result !== undefined)
@@ -704,7 +714,7 @@ describe('WorkspaceAgent — write + permission (TB3)', () => {
         params: { path: '/etc/passwd', content: 'pwned', sessionId: SESSION_ID },
       }) + '\n',
     )
-    await new Promise((r) => setTimeout(r, 0))
+    await waitFor(() => sent(fake).some((m) => m.id === 0 && m.error !== undefined))
 
     expect(wrote).toBe(false)
     const reply = sent(fake).find((m) => m.id === 0 && m.error !== undefined)

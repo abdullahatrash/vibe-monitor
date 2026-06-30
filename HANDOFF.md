@@ -3,7 +3,7 @@
 > You are picking up an in-flight project. Read this top to bottom once, then keep it open.
 > It tells you **what this is**, **how we work**, **what exists**, **what's next**, and **where the
 > authoritative information lives** (in-repo docs + three local reference repos). Last updated
-> 2026-06-30, `main` @ `85e95ef`, **288 tests**, **2 open issues (#60, #61)**.
+> 2026-06-30, `main` @ `f0c07a5`, **337 tests**, **1 open issue (#72)**.
 
 ---
 
@@ -15,8 +15,11 @@
 - **Where:** `/Users/abdullahatrash/mistral/vibe-mistro` (repo, dir, and package all named `vibe-mistro`).
   GitHub: `https://github.com/abdullahatrash/vibe-mistro` (owner `abdullahatrash`, host `github.com`).
 - **State:** MVP works end-to-end (open project → prompt → streamed reasoning → tool calls with approval).
-  Auth, fs-hardening, a full **persistence epic**, and a full **UI/layout-shell epic** are all merged.
-  Backlog is **one issue: #60** (message-level composer drafts). Then a deferred roadmap (see §6).
+  Merged: Auth, fs-hardening, the **persistence epic**, the **UI/layout-shell epic**, **composer drafts**
+  (#60), the **t3code UI stack** (#61: Tailwind v4 + base-ui + lucide + react-markdown), and the
+  **Agent controls** feature (Mode/Model/Reasoning-effort picker, per-Thread — #65 spike → #66 → #70).
+  Backlog is **one issue: #72** (re-assert a non-default agent-control selection after `session/load`).
+  Then a deferred roadmap (see §6).
 - **How we work:** PRD → tracer-bullet issues → **per-slice agent team** (implement → independent
   verify → adversarial review → fold fixes → **user merges**). TDD, vertical slices. Details in §3.
 
@@ -58,6 +61,12 @@ the agent, an LSP, or Vibe's own context management.
   The Electron app itself is unaffected (it uses its own node). This cost us a day; it's in memory.
 - **🔴 Worktree isolation gotcha:** the Agent tool's `isolation: worktree` forks the *session's* cwd
   repo (which is **CodexMonitor**, not vibe-mistro). So we create worktrees **manually** (see §3).
+- **🔴 Worktree node_modules gotcha (learned the hard way, #64):** do **NOT** `ln -s` the main
+  `node_modules` into a worktree. `.gitignore`'s `node_modules/` (now hardened to `node_modules`) didn't
+  match the *symlink*, a `git add -A` committed it, and on checkout it became a self-referential loop
+  that broke `bun install`/tsc/vitest. Instead run a real `bun install` **inside** the worktree (~3.5s).
+  Corollary: **fold with targeted `git add <paths>`, never `git add -A`**; and **re-run gates on `main`
+  after worktree cleanup** (a `git worktree remove` after a checkout/pull dance can drop node_modules).
 - **Run the app:** `bun run dev` (window titled "Vibe Mistro", user-data-dir `vibe-mistro`).
 
 ---
@@ -74,7 +83,7 @@ repeat — never horizontal "all tests then all code").
    cd /Users/abdullahatrash/mistral/vibe-mistro
    git fetch origin main
    git worktree add -b feat/<N>-<slug> /Users/abdullahatrash/mistral/vibe-mistro-wt<N> origin/main
-   ln -s /Users/abdullahatrash/mistral/vibe-mistro/node_modules /Users/abdullahatrash/mistral/vibe-mistro-wt<N>/node_modules
+   cd /Users/abdullahatrash/mistral/vibe-mistro-wt<N> && bun install   # real install — do NOT symlink node_modules (see §2 gotcha)
    ```
 2. **Implementer agent** works only in that worktree, TDD, runs gates, **commits to the branch**.
    It does **NOT** push, PR, or merge.
@@ -191,36 +200,55 @@ active one), via a main-side pure `ThreadStatusTracker` (`src/main/thread-status
 `crypto.randomUUID()`, hosts it live, selects it; the first prompt binds + persists under that preserved
 id via the existing `mintAndBind` path.
 
+**#60 composer drafts** — unsent composer text persists per-Thread to **localStorage** (key
+`vibe-mistro:composer-drafts:v1`) so it survives unmount/eviction/restart. Pure store
+`src/renderer/src/conversation/composer-draft-store.ts` over an injected `DraftStorage` seam: stores raw
+text, prunes empties (removes the key when the map empties), clear-on-send, delete-cascade, malformed/
+throwing/absent-storage tolerant. localStorage only — never touches JSONL/metadata.
+
+**#61 t3code UI stack** — Tailwind v4 (`@tailwindcss/vite` in the **renderer** config only) + base-ui
+(`@base-ui/react`) + lucide + react-markdown, all installed/wired. Brand tokens bridged via
+`@theme inline` in `styles.css` with the radius scale pinned to 0 (sharp edges can't regress through a
+utility). `cn()` at `src/renderer/src/lib/utils.ts`; `ui/menu.tsx` base-ui primitive. `ChatMarkdown.tsx`
+renders assistant + reasoning text as GFM markdown — **no `rehype-raw`** (untrusted agent output; react-
+markdown's default escaping + `defaultUrlTransform` neutralize `javascript:` hrefs). Plain CSS coexists;
+per-area migration is follow-up.
+
+**Agent controls (#65 spike → #66 → #70)** — per-Thread **Mode / Model / Reasoning effort** picker in
+the composer (CONTEXT.md "Agent controls"; ADR-0007). The #65 spike captured the change methods live
+(acp-capture §10): Mode `session/set_mode {sessionId,modeId}`, Model `session/set_model {sessionId,
+modelId}` (⚠️ false-accepts any string — only send `availableModels` ids), Reasoning effort
+`session/set_config_option {sessionId,configId,value}` (`configId`, NOT `id`). A change emits **no**
+notification → the renderer updates **optimistically** (revert on error). Mode is **not** preserved
+across `session/load` (resets to `default`). UI: `AgentControls.tsx` (base-ui menus, disabled while
+streaming / pre-session). Per-Thread config lives in `connection/workspace-threads.ts` (`config` map),
+seeded on `connect`/`bind` from each session's controls (plumbed via `ThreadAgentControls` on
+`thread:bound`); optimistic `set-config` keyed by `threadId`. Probe: `scripts/spike-config-option.ts`.
+
 ---
 
 ## 6. What's next
 
-**Open backlog (2):**
-- **#61 — Adopt t3code's UI stack: base-ui + Tailwind v4 + lucide + react-markdown** (`ready-for-agent`,
-  not started). FOUNDATIONAL WIRING slice (not a rewrite): install + configure `@base-ui/react`,
-  `tailwindcss ^4` + `@tailwindcss/vite` + `tailwind-merge`, `lucide-react`, `react-markdown` +
-  `remark-gfm/remark-breaks` (t3code's stack); wire Tailwind v4 into the **renderer** config of
-  electron-vite; **preserve the brand** by mapping the existing tokens (`--accent`, `--accent-text`,
-  `--radius: 0` sharp edges) into Tailwind v4 `@theme` (don't regress `docs/design/brand.md`); first
-  payoff = render agent assistant/reasoning text as markdown via a `ChatMarkdown` (NO `rehype-raw` —
-  agent output is untrusted); seed a `cn()` util + a `ui/` folder with ≥1 base-ui primitive wired into a
-  real call site + a couple of lucide icons. Plain CSS coexists; per-area migration is follow-up slices.
-  References: t3code `apps/web/vite.config.ts`, `src/index.css`, `components/ui/*`, `ChatMarkdown.tsx`.
-  This is the natural foundation to lay before more UI work. → `start 61`.
-- **#60 — Persist message-level composer drafts across navigation** (`ready-for-agent`, not started).
-  Unsent composer textarea text is lost on unmount/eviction/restart (it's `useState('')` in
-  `Conversation.tsx`). Build a **pure renderer composer-draft store** keyed by Thread id, persisted to
-  **localStorage** (key `vibe-mistro:composer-drafts:v1`), with empty-pruning (`shouldRemoveDraft`-style),
-  clear-on-send, delete-cascade, and malformed-storage tolerance. **Text only** (no attachments/model —
-  we don't have those affordances). localStorage only — it's ephemeral UI state, NOT conversation
-  history, so it must NOT touch the JSONL/metadata store. Reference: t3code `composerDraftStore.ts`.
-  Test the pure store at its seam over an injected `Storage` fake (like `unified-threads.ts` /
-  `workspace-threads.ts` / `thread-status.ts` tests) — not the React component.
-  → To start: `start 60` and run the full team loop in §3.
+**Open backlog (1):**
+- **#72 — Agent controls: cache + re-assert a non-default selection after `session/load`**
+  (`ready-for-agent`, not started). The last ADR-0007 piece: #65 found Vibe resets Mode to `default` on
+  `session/load`, so a Thread that loses its session and resumes silently reverts. Cache the user's last
+  Mode/Model/Reasoning-effort **per Thread** in a store that survives BOTH agent eviction AND the
+  `connect`-reset, and on a successful resume re-assert it via the existing `thread:set-config` IPC if it
+  differs from the resumed (default) value. Narrow **within-session** edge (a cold-reopen-after-restart
+  has no cache; ADR-0007 keeps it out of the durable store). See the deferred-comment markers in
+  `App.tsx applyConnectResult` and `index.ts runPromptTurn`. → `start 72`, full team loop in §3.
+
+**Recommended before more features:** a **manual `bun run dev` smoke** of the Agent controls feature
+(#66 + #70 shipped with static/unit verification only — neither was driven against a live agent, since
+`vibe-acp` can't be driven headless): open a workspace, change Mode/Model/effort, start a 2nd Thread,
+confirm each shows its own values + changes don't bleed, force an error to see the optimistic revert.
 
 **Deferred roadmap (no issues yet — propose as PRDs/tracer bullets when the user picks one up):**
-composer extras (attachments/model selection), git/GitHub panel, terminal dock (node-pty — see opencode),
-app updates + packaging (electron-updater/electron-builder — see opencode). The feature-parity target is
+remaining **composer extras** (attachments/image paste, queue-vs-steer, `$`/`/`/`@` autocomplete),
+git/GitHub panel, file tree + prompt library, terminal dock (node-pty — see opencode), app updates +
+packaging (electron-updater/electron-builder — see opencode), and **per-area base-ui/Tailwind component
+migration** onto the #61 foundation (composer/sidebar/conversation/auth). Parity target:
 `docs/codexmonitor-reference.md`.
 
 ---
@@ -235,6 +263,10 @@ app updates + packaging (electron-updater/electron-builder — see opencode). Th
   via `session/load` (re-bind on resume failure). Durable Thread id ≠ ACP sessionId.
 - **0006** — app shell: persistent two-pane shell; pure nav reducer (no router/Zustand); one warm agent
   per open Workspace via a bounded pool.
+- **0007** — Agent controls (Mode/Model/Reasoning effort): Vibe-owned, display-from-session-state,
+  sticky per-Thread, between-turns + forward-acting; changed via `session/set_mode`/`set_model`/
+  `set_config_option`; optimistic (no change-notification); cache + re-assert after `session/load`
+  (Vibe resets Mode to default on resume). Status: spike #65 resolved.
 
 If a new slice needs to revisit one of these, that's an **HITL** decision — write a new ADR and get the
 user's call; don't just diverge.
@@ -246,11 +278,13 @@ user's call; don't just diverge.
 1. Read this file, then skim `docs/acp-capture.md` and the memory file `vibe-monitor-project.md`.
 2. Confirm the baseline: `cd /Users/abdullahatrash/mistral/vibe-mistro` (on `main`), run the gates
    (`export PATH=...nvm...; bun run lint && bun run typecheck && bun run build && bun run test`) →
-   expect **288 tests green**.
-3. Check the backlog: `GH_HOST=github.com gh issue list --state open` → expect **#60 and #61**
-   (#61 = the UI-stack foundation, the natural one to do first before more UI work).
-4. When the user says "start 60" (or picks a roadmap item), run the **team loop in §3** — manual
-   worktree, implementer agent, your independent verify, adversarial reviewer, fold, push, **user merges**,
-   cleanup, update memory.
+   expect **337 tests green**.
+3. Check the backlog: `GH_HOST=github.com gh issue list --state open` → expect **#72**
+   (the last Agent-controls piece — re-assert after `session/load`). A `bun run dev` smoke of the
+   Agent-controls feature (§6) is also recommended before more features.
+4. When the user says "start 72" (or picks a roadmap item), run the **team loop in §3** — manual
+   worktree (real `bun install`, NOT a node_modules symlink — §2), implementer agent, your independent
+   verify, adversarial reviewer, fold (targeted `git add`, never `-A`), push, **user merges**, cleanup,
+   re-run gates on `main`, update memory.
 5. Keep slices thin and vertical. Verify everything yourself. The user trusts terse approvals
    ("merge", "yes", "start N") — earn it by never reporting "done" on something you didn't actually run.

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, type WebContents } from 'electron'
 import { mkdir } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
@@ -36,12 +36,27 @@ import {
   type TranscriptEntry,
 } from './persistence/transcript'
 import { WorkspaceAgent, WorkspaceAgentError } from './workspace-agent'
+import { AgentPool } from './agent-pool'
 import { ensureBoundSession, resolveContinueTarget } from './thread-binding'
 import { createThreadDraft } from './persistence/drafts'
 import { deleteThread } from './persistence/delete-thread'
 
-/** Active Workspace agents keyed by a generated agent id. */
-const agents = new Map<string, WorkspaceAgent>()
+/**
+ * The warm-agent pool (ADR-0006 decision 3, TB2 #47): one `vibe-acp` agent per
+ * OPEN Workspace, lazily spawned on first select and kept warm thereafter — the
+ * lifecycle owner that replaces the old dispose-then-respawn `agents` map. The
+ * renderer still addresses an agent by the pool-minted `agentId` handle (one
+ * handle per Workspace), so `signIn`/`prompt`/etc resolve via `pool.get(agentId)`.
+ */
+const pool = new AgentPool({
+  createAgent: (workspaceDir) =>
+    new WorkspaceAgent({
+      workspaceDir,
+      env: getShellEnv(),
+      // Delegated sign-in (#12): open the returned signInUrl in the system browser.
+      openUrl: (url) => void shell.openExternal(url),
+    }),
+})
 
 /**
  * The single-writer metadata index (ADR-0005). Assigned at app-ready (needs
@@ -102,7 +117,7 @@ function bestEffortCloseFor(threadId: string): (() => Promise<void>) | undefined
   const sessionId = metadataStore?.snapshot().threads.find((t) => t.id === threadId)?.sessionId
   if (!sessionId) return undefined
   return async () => {
-    for (const agent of agents.values()) await agent.closeSession(sessionId)
+    for (const agent of pool.agents()) await agent.closeSession(sessionId)
   }
 }
 
@@ -258,28 +273,33 @@ function continueConnection(
  */
 function threadFailureResult(agentId: string, agent: WorkspaceAgent, err: unknown): StartThreadResult {
   if (err instanceof WorkspaceAgentError && err.authState === 'not-signed-in') {
-    // Keep the agent alive AND registered so the renderer's follow-up
-    // signIn({agentId}) finds it. Idempotent: startThread already registers on a
-    // successful start(), but a -32000 thrown from start() itself reaches here
-    // before that, so without this the child would leak + the button would dead-end.
-    agents.set(agentId, agent)
+    // Keep the agent WARM in the pool so the renderer's follow-up signIn({agentId})
+    // reuses it (it's already registered by `pool.acquire`) — a warm-but-unauthed
+    // Workspace is driven to sign-in, never respawned.
     return { ok: false, kind: 'not-signed-in', agentId, workspaceDir: agent.workspaceDir, authMethods: agent.authMethods }
   }
-  agent.stop()
-  agents.delete(agentId)
+  // A non-auth failure: dispose the agent so the next select re-warms fresh.
+  pool.dispose(agentId)
   if (err instanceof WorkspaceAgentError) return { ok: false, kind: 'error', error: err.message, hint: err.hint }
   return { ok: false, kind: 'error', error: err instanceof Error ? err.message : String(err), hint: null }
 }
 
-/** Stop + drop any live agent bound to this workspace (dedup before re-spawn). */
-function disposeAgentsForWorkspace(workspaceDir: string): void {
-  for (const [id, agent] of agents) {
-    if (agent.workspaceDir !== workspaceDir) continue
-    agent.stop()
-    agents.delete(id)
-  }
+/**
+ * Wire a freshly-spawned pool agent's `event` tee — called exactly ONCE per spawn
+ * (a reused warm agent already has its listener). Each streamed payload is teed to
+ * ITS Thread's JSONL, routed by the event's OWN sessionId so that with several
+ * warm agents an event always lands in the right Thread regardless of which
+ * Workspace is focused, then forwarded to the renderer tagged by `agentId`.
+ * Best-effort: the tee never gates the live forward.
+ */
+function wireAgentEvents(agentId: string, agent: WorkspaceAgent, sender: WebContents): void {
+  agent.on('event', (payload: unknown) => {
+    teeTranscript(threadIdForTee(agentId, sessionIdFromPayload(payload)), acpEventEntry(payload))
+    if (!sender.isDestroyed()) {
+      sender.send(IPC.acpEvent, { agentId, payload })
+    }
+  })
 }
-let agentCounterSeed = 0
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -324,38 +344,24 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC.startThread, async (event, args: StartThreadArgs): Promise<StartThreadResult> => {
-    // Dedup: dispose any existing agent for this workspace before spawning, so a
-    // re-Connect (e.g. after a not-signed-in panel) can't orphan the previous child.
-    disposeAgentsForWorkspace(args.workspaceDir)
-
-    const agentId = `a${++agentCounterSeed}`
-    const agent = new WorkspaceAgent({
-      workspaceDir: args.workspaceDir,
-      env: getShellEnv(),
-      // Delegated sign-in (#12): open the returned signInUrl in the system browser.
-      openUrl: (url) => void shell.openExternal(url),
-    })
-
-    agent.on('event', (payload: unknown) => {
-      // Tee each streamed payload to its Thread's transcript (ADR-0005), routed
-      // by the event's OWN sessionId, before forwarding it — best-effort, never
-      // gating the live forward.
-      teeTranscript(threadIdForTee(agentId, sessionIdFromPayload(payload)), acpEventEntry(payload))
-      if (!event.sender.isDestroyed()) {
-        event.sender.send(IPC.acpEvent, { agentId, payload })
-      }
-    })
+    // Warm pool (ADR-0006 decision 3): lazily spawn this Workspace's agent on its
+    // first select and REUSE it thereafter — no dispose-then-respawn. A reused warm
+    // agent skips the handshake (start() early-returns below) and its event tee is
+    // already wired, so a re-select / continue never re-handshakes.
+    const { agentId, agent, created } = pool.acquire(args.workspaceDir)
+    if (created) wireAgentEvents(agentId, agent, event.sender)
 
     // Persist the Workspace open up front (ADR-0005), so even a not-signed-in
     // Workspace shows in the cold list. Best-effort — must not reject connect.
     await recordWorkspaceOpen(args.workspaceDir)
 
     try {
+      // Idempotent: spawns + handshakes a fresh agent, no-ops a warm one (already
+      // initialized) — so reuse never re-spawns the child or re-runs the handshake.
       await agent.start()
-      agents.set(agentId, agent)
 
-      // Detected not-signed-in: keep the agent (the sign-in flow drives it) but
-      // don't open a Thread — session/new would fail with -32000. The renderer
+      // Detected not-signed-in: keep the agent warm (the sign-in flow drives it)
+      // but don't open a Thread — session/new would fail with -32000. The renderer
       // shows the sign-in panel and re-tries openThread after sign-in.
       if (agent.authState === 'not-signed-in') {
         return { ok: false, kind: 'not-signed-in', agentId, workspaceDir: args.workspaceDir, authMethods: agent.authMethods }
@@ -381,7 +387,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.openThread, async (_event, args: OpenThreadArgs): Promise<StartThreadResult> => {
     // Open a Thread on an agent already started + signed in (after sign-in or an
     // in-place re-auth). Reuses the retained agent — no re-spawn.
-    const agent = agents.get(args.agentId)
+    const agent = pool.get(args.agentId)
     if (!agent) return { ok: false, kind: 'error', error: `No active agent for id ${args.agentId}.`, hint: null }
     try {
       const thread = await agent.openThread()
@@ -395,7 +401,7 @@ function registerIpc(): void {
   ipcMain.handle(
     IPC.sendPrompt,
     async (event, args: SendPromptArgs): Promise<SendPromptResult> => {
-      const agent = agents.get(args.agentId)
+      const agent = pool.get(args.agentId)
       if (!agent) return { ok: false, kind: 'error', error: `No active agent for id ${args.agentId}.` }
 
       // Bind on first prompt (ADR-0005, TB5): a draft (sessionId null) mints its
@@ -466,7 +472,7 @@ function registerIpc(): void {
     // Tee by the renderer-supplied `threadId` directly (TB5), NOT the agent's
     // last-prompted map: answering Thread A's permission after switching+prompting
     // a sibling B must land in A's log, not B's.
-    const agent = agents.get(args.agentId)
+    const agent = pool.get(args.agentId)
     teeTranscript(args.threadId, resolvePermissionEntry(args.requestId, args.optionId))
     agent?.respondPermission(args.requestId, args.optionId)
   })
@@ -475,7 +481,7 @@ function registerIpc(): void {
     // Drive Vibe's browser sign-in on the agent retained from startThread; main
     // orchestrates + relays the resulting AuthState, the renderer owns the view
     // state (ADR-0001). Credentials never touch us — Vibe owns the keyring (ADR-0003).
-    const agent = agents.get(args.agentId)
+    const agent = pool.get(args.agentId)
     if (!agent) return { ok: false, error: `No active agent for id ${args.agentId}.` }
     try {
       const authState = await agent.signIn(args.methodId)
@@ -488,7 +494,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.signOut, async (_event, args: SignOutArgs): Promise<SignOutResult> => {
     // Sign out via Vibe's keyring removal and relay the new state; the agent
     // stays alive so the user can sign a different account back in (ADR-0003).
-    const agent = agents.get(args.agentId)
+    const agent = pool.get(args.agentId)
     if (!agent) return { ok: false, error: `No active agent for id ${args.agentId}.` }
     try {
       const authState = await agent.signOut()
@@ -499,9 +505,9 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC.stopAgent, (_event, agentId: string) => {
-    const agent = agents.get(agentId)
-    agent?.stop()
-    agents.delete(agentId)
+    // Explicit close: the pool stops the child and drops it; the Workspace
+    // re-warms transparently on its next select (metadata + JSONL survive).
+    pool.dispose(agentId)
   })
 
   ipcMain.handle(IPC.createDraft, async (_event, args: CreateDraftArgs): Promise<CreateDraftResult> => {
@@ -587,9 +593,8 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  // The agents Map is process-global, which is fine for single-window TB1.
-  // A future multi-window slice should track + dispose agents per window.
-  for (const agent of agents.values()) agent.stop()
-  agents.clear()
+  // The pool is process-global, which is fine for single-window TB1/TB2.
+  // A future multi-window slice should scope the pool per window.
+  pool.disposeAll()
   if (process.platform !== 'darwin') app.quit()
 })

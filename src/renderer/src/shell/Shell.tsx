@@ -1,53 +1,51 @@
-import { useReducer, useState, type JSX, type ReactNode } from 'react'
+import { useState, type JSX, type ReactNode } from 'react'
 import type { ListMetadataResult, ThreadMeta } from '../../../shared/ipc'
-import { ColdThread } from '../conversation/ColdThread'
-import { findSelectedThread, initialNavState, navReducer, type NavState } from './nav-reducer'
+import type { NavState } from './nav-reducer'
 
 /**
  * The persistent two-pane app shell (ADR-0006 decision 1): a left sidebar that
- * stays mounted and a right conversation OUTLET whose content swaps. Selection is
- * a pure nav reducer at this root (decision 2) — no router, no UI store.
+ * stays mounted and a right conversation OUTLET whose content swaps. Navigation
+ * (the pure nav reducer, decision 2) and the per-Workspace connection registry
+ * (decision 3) live in App now; Shell is the presentational layout — it renders the
+ * always-there sidebar (the Workspace switcher + each Workspace's Threads) and the
+ * App-computed `outlet`. The sidebar element is fixed, so navigating never unmounts
+ * it — the whole point of the shell.
  *
- * The sidebar lists the persisted Workspaces + Threads (cold metadata) and is the
- * always-there navigation surface. The outlet shows EITHER the connection-active
- * view App routes in (`connectionOutlet` — connecting / sign-in / error / the live
- * `ConnectedWorkspace`; TB4 #49 moves these inline), OR, on the idle path, the
- * nav-selected cold Thread replayed read-only (`ColdThread`). Both render INTO the
- * same outlet element while the sidebar element is fixed, so navigating never
- * unmounts the sidebar — that's the whole point of the shell.
- *
- * The warm-agent pool (decision 3) and a unified live/cold Thread list are TB2
- * (#47); here the sidebar is the cold list and live Threads surface only inside
- * the `connectionOutlet`.
+ * Two TB1-review findings are resolved by this split (TB2 #47): the outlet is
+ * routed off the nav SELECTION (App), so a cold click on a never-connected
+ * Workspace replays correctly even after another connected (finding 2); and a
+ * connected Workspace's per-Thread highlight is SUPPRESSED here, since its live view
+ * (in the outlet) owns Thread selection — the sidebar and outlet can't disagree
+ * (finding 1). The unified live/cold Thread list is TB3 (#48).
  */
 export function Shell({
   workspaces,
   sidebarTop,
-  connectionOutlet,
-  onContinueColdThread,
+  nav,
+  connectedWorkspaceIds,
+  outlet,
+  onSelectWorkspace,
+  onSelectThread,
   onDeleteThread,
 }: {
   /** Persisted Workspaces + Threads for the sidebar list (cold metadata). */
   workspaces: ListMetadataResult
   /** App-owned controls pinned above the list (Open project + environment status). */
   sidebarTop: ReactNode
-  /** The connection-active outlet (non-idle connect states), or null on the idle path. */
-  connectionOutlet: ReactNode | null
-  /** Continue a selected cold Thread live (TB4 #33) — App drives the connect flow. */
-  onContinueColdThread: (thread: ThreadMeta) => void
+  /** The current navigation selection (controlled by App). */
+  nav: NavState
+  /** Workspace ids with a live agent — suppress their Thread highlight + delete. */
+  connectedWorkspaceIds: string[]
+  /** The fully-computed conversation outlet (connection views / cold replay). */
+  outlet: ReactNode
+  /** Select a Workspace — App pins it in nav and connect-or-reuses its warm agent. */
+  onSelectWorkspace: (workspaceId: string) => void
+  /** Select a Thread — App pins it in nav (the idle outlet then replays it). */
+  onSelectThread: (workspaceId: string, threadId: string) => void
   /** Delete a Thread (TB6) — removes its metadata + JSONL, then refreshes the list. */
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
 }): JSX.Element {
-  const [nav, dispatch] = useReducer(navReducer, initialNavState)
-  const selectedThread = findSelectedThread(workspaces, nav)
-  // Offer delete only while NO connection is active (`connectionOutlet` null). The
-  // always-mounted sidebar would otherwise expose delete DURING a live connection,
-  // letting a user remove the Thread the agent is hosting out from under it —
-  // orphaning the live conversation, whose next prompt would write a deleted/
-  // recreated JSONL. On `origin/main` delete lived in the idle-gated cold list and
-  // was structurally impossible while connected; we preserve that invariant. Safe
-  // live-list delete (with teardown) is TB2/TB3 (#47/#48).
-  const deletable = connectionOutlet === null
+  const connected = new Set(connectedWorkspaceIds)
 
   return (
     <div className="shell">
@@ -56,34 +54,14 @@ export function Shell({
         <WorkspaceNav
           workspaces={workspaces}
           nav={nav}
-          deletable={deletable}
-          onSelectWorkspace={(workspaceId) => dispatch({ type: 'select-workspace', workspaceId })}
-          onSelectThread={(workspaceId, threadId) =>
-            dispatch({ type: 'select-thread', workspaceId, threadId })
-          }
+          connected={connected}
+          onSelectWorkspace={onSelectWorkspace}
+          onSelectThread={onSelectThread}
           onDeleteThread={onDeleteThread}
         />
       </aside>
 
-      <main className="shell__outlet">
-        {connectionOutlet ??
-          (selectedThread ? (
-            // Idle path: reopen the selected Thread read-only from its JSONL (TB3),
-            // with a Continue affordance that hands back to App's connect flow (TB4).
-            <ColdThread
-              key={selectedThread.id}
-              thread={selectedThread}
-              onClose={() => dispatch({ type: 'clear' })}
-              onContinue={() => onContinueColdThread(selectedThread)}
-            />
-          ) : (
-            <div className="shell__empty">
-              <p className="hint">
-                Select a thread from the sidebar to view it, or open a project to start a live agent.
-              </p>
-            </div>
-          ))}
-      </main>
+      <main className="shell__outlet">{outlet}</main>
     </div>
   )
 }
@@ -91,21 +69,24 @@ export function Shell({
 /**
  * The sidebar's navigation list: persisted Workspaces with their Threads, most-
  * recent-first, rendered from cold metadata alone — NO `vibe-acp` spawned. The
- * selected Workspace / Thread are highlighted; clicking a Thread selects it (the
- * outlet then reopens it read-only). Delete (TB6) is preserved per row.
+ * selected Workspace is highlighted; clicking one selects it (App connect-or-reuses
+ * its warm agent). A Thread row highlights only when its Workspace is NOT connected
+ * (a connected Workspace's live view owns Thread selection — finding 1). Delete
+ * (TB6) is offered only for a non-connected Workspace's Threads, so we never remove
+ * a Thread a warm agent is hosting.
  */
 function WorkspaceNav({
   workspaces,
   nav,
-  deletable,
+  connected,
   onSelectWorkspace,
   onSelectThread,
   onDeleteThread,
 }: {
   workspaces: ListMetadataResult
   nav: NavState
-  /** Whether per-row delete is offered (false while a connection is active). */
-  deletable: boolean
+  /** Workspace ids with a live agent (suppress Thread highlight + delete). */
+  connected: ReadonlySet<string>
   onSelectWorkspace: (workspaceId: string) => void
   onSelectThread: (workspaceId: string, threadId: string) => void
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
@@ -117,37 +98,43 @@ function WorkspaceNav({
     <nav className="recents">
       <div className="recents__title">Workspaces</div>
       <ul className="recents__list">
-        {workspaces.map((w) => (
-          <li key={w.id} className="recents__workspace">
-            <button
-              className={
-                w.id === nav.selectedWorkspaceId
-                  ? 'recents__ws-name recents__ws-name--active'
-                  : 'recents__ws-name'
-              }
-              title={w.dir}
-              onClick={() => onSelectWorkspace(w.id)}
-            >
-              {w.displayName}
-            </button>
-            {w.threads.length > 0 ? (
-              <ul className="recents__threads">
-                {w.threads.map((t) => (
-                  <NavThread
-                    key={t.id}
-                    thread={t}
-                    selected={t.id === nav.selectedThreadId}
-                    deletable={deletable}
-                    onOpen={() => onSelectThread(w.id, t.id)}
-                    onDelete={onDeleteThread}
-                  />
-                ))}
-              </ul>
-            ) : (
-              <div className="recents__empty">No threads yet</div>
-            )}
-          </li>
-        ))}
+        {workspaces.map((w) => {
+          const isConnected = connected.has(w.id)
+          return (
+            <li key={w.id} className="recents__workspace">
+              <button
+                className={
+                  w.id === nav.selectedWorkspaceId
+                    ? 'recents__ws-name recents__ws-name--active'
+                    : 'recents__ws-name'
+                }
+                title={w.dir}
+                onClick={() => onSelectWorkspace(w.id)}
+              >
+                {w.displayName}
+              </button>
+              {w.threads.length > 0 ? (
+                <ul className="recents__threads">
+                  {w.threads.map((t) => (
+                    <NavThread
+                      key={t.id}
+                      thread={t}
+                      // Suppress the per-Thread highlight for a connected Workspace —
+                      // its live outlet owns Thread selection (finding 1).
+                      selected={!isConnected && t.id === nav.selectedThreadId}
+                      // No delete while the Workspace's agent is live (it may host it).
+                      deletable={!isConnected}
+                      onOpen={() => onSelectThread(w.id, t.id)}
+                      onDelete={onDeleteThread}
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <div className="recents__empty">No threads yet</div>
+              )}
+            </li>
+          )
+        })}
       </ul>
     </nav>
   )
@@ -156,10 +143,10 @@ function WorkspaceNav({
 /**
  * One Thread row in the sidebar: selecting it on click (the outlet reopens it
  * read-only — TB3), highlighted when selected, with a delete control (TB6) shown
- * only when `deletable` (i.e. no live connection — see Shell). Delete is two-step —
- * a first click arms an INLINE confirm (Delete / Cancel) rather than a native
- * `confirm()` (which would block the renderer), so a single misclick can't nuke a
- * Thread's history.
+ * only when `deletable` (i.e. its Workspace has no live connection — see Shell).
+ * Delete is two-step — a first click arms an INLINE confirm (Delete / Cancel)
+ * rather than a native `confirm()` (which would block the renderer), so a single
+ * misclick can't nuke a Thread's history.
  */
 function NavThread({
   thread,

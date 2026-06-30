@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState, type JSX, type ReactNode } fro
 import type {
   AuthMethod,
   ListMetadataResult,
+  ThreadConnection,
   ThreadMeta,
   VibeDetectResult,
 } from '../../shared/ipc'
@@ -12,24 +13,45 @@ import {
   signedInAuthViewState,
 } from './auth/auth-view'
 import { routeThreadResult, type ConnectState } from './connection/routing'
+import {
+  connectedWorkspaceIds,
+  connectionsReducer,
+  initialConnections,
+  selectedConnection,
+  shouldConnect,
+} from './connection/connections'
 import { ConnectedWorkspace } from './connection/ConnectedWorkspace'
+import { ColdThread } from './conversation/ColdThread'
 import { Shell } from './shell/Shell'
+import { findSelectedThread, initialNavState, navReducer } from './shell/nav-reducer'
 
 /**
  * Thin glue (ADR-0006): App owns IPC/data wiring — detection, the persisted
- * Workspace/Thread metadata, and the connect flow — and renders the persistent
- * `<Shell>`. The shell owns navigation (its pure nav reducer) and the two-pane
- * layout; App feeds it the cold list, the sidebar's top controls, and the
- * connection-active outlet, plus the connect-flow callbacks.
+ * Workspace/Thread metadata, NAVIGATION (the pure nav reducer), and the
+ * PER-WORKSPACE connection registry — and renders the persistent `<Shell>`, which
+ * is now a presentational two-pane layout fed a fully-computed outlet.
  *
- * Connection/auth states (connecting / not-signed-in / error / connected) still
- * route as before, but now INTO the outlet (`connectionOutlet`) rather than
- * swapping the whole view — the sidebar stays put. TB4 (#49) moves these inline.
+ * The warm-agent pool (TB2 #47) keeps many Workspaces' agents alive at once, so
+ * connection state is tracked PER Workspace (`connections`, keyed by `workspaceId`)
+ * rather than TB1's single `connect`. Selecting a Workspace connect-or-REUSES its
+ * warm agent and routes the outlet to THAT Workspace; every connected Workspace's
+ * view stays MOUNTED (hidden when not selected) so its background turn keeps
+ * streaming and switching back is instant with no re-handshake. The outlet is
+ * routed off the NAV SELECTION (not a single global connect), so a cold click on a
+ * never-connected Workspace replays correctly even after another connected
+ * (TB1-review finding 2); the sidebar suppresses per-Thread highlights for a
+ * connected Workspace, whose live view owns Thread selection (finding 1).
  */
 export function App(): JSX.Element {
   const [detect, setDetect] = useState<VibeDetectResult | null>(null)
   const [loading, setLoading] = useState(true)
-  const [connect, setConnect] = useState<ConnectState>({ status: 'idle' })
+  const [opening, setOpening] = useState(false)
+  // Navigation (decision 2): WHICH Workspace/Thread the user is looking at —
+  // lifted here so the connect flow (Open project, Continue, sign-in) can drive it.
+  const [nav, navDispatch] = useReducer(navReducer, initialNavState)
+  // Per-Workspace connection registry (decision 3): one ConnectState per warm
+  // Workspace, so switching between two is instant and both keep streaming.
+  const [connections, connDispatch] = useReducer(connectionsReducer, initialConnections)
   // Persisted Workspaces + Threads (ADR-0005), listed cold on launch from
   // metadata alone — no agent spawned, no transcript loaded.
   const [recents, setRecents] = useState<ListMetadataResult>([])
@@ -49,7 +71,9 @@ export function App(): JSX.Element {
    * Delete a persisted Thread (TB6): main removes its metadata + JSONL and
    * best-effort closes any live session; we then re-fetch so it disappears from
    * the list. The shell derives its selected (cold) Thread from `recents`, so a
-   * deleted-and-selected Thread collapses to the placeholder on its own.
+   * deleted-and-selected Thread collapses to the placeholder on its own. Gated in
+   * the sidebar to NON-connected Workspaces, so we never delete a Thread a warm
+   * agent is hosting out from under it.
    */
   async function deleteThread(thread: ThreadMeta): Promise<void> {
     await window.api.deleteThread(thread.id)
@@ -61,58 +85,146 @@ export function App(): JSX.Element {
     void refreshRecents()
   }, [])
 
-  async function openProject(): Promise<void> {
-    const workspaceDir = await window.api.openWorkspaceDialog()
-    if (!workspaceDir) return
-    setConnect({ status: 'connecting', workspaceDir })
-    setConnect(routeThreadResult(await window.api.startThread({ workspaceDir })))
-    // Main has now persisted the Workspace (and any Thread); reflect it in the list.
+  /**
+   * Select a Workspace from the sidebar: pin it in the nav reducer and
+   * connect-OR-REUSE its warm agent. A never-connected (or errored) Workspace
+   * lazily spawns its agent; a warm one (connecting / not-signed-in / connected) is
+   * reused as-is — instant, no second spawn or handshake.
+   */
+  function selectWorkspace(workspaceId: string): void {
+    navDispatch({ type: 'select-workspace', workspaceId })
+    if (shouldConnect(connections[workspaceId])) void connectWorkspace(workspaceId)
+  }
+
+  /** Spawn-or-reuse a Workspace's agent and record its connection (keyed by id). */
+  async function connectWorkspace(workspaceId: string): Promise<void> {
+    const workspace = recents.find((w) => w.id === workspaceId)
+    if (!workspace) return
+    connDispatch({ type: 'set', workspaceId, state: { status: 'connecting', workspaceDir: workspace.dir } })
+    const result = await window.api.startThread({ workspaceDir: workspace.dir })
+    connDispatch({ type: 'set', workspaceId, state: routeThreadResult(result) })
     void refreshRecents()
   }
 
-  // After sign-in (or in-place re-auth) the agent is already started + signed in;
-  // open a Thread on it and land in a connected conversation.
-  async function continueToThread(agentId: string, workspaceDir: string): Promise<void> {
-    setConnect({ status: 'connecting', workspaceDir })
-    setConnect(routeThreadResult(await window.api.openThread({ agentId })))
+  async function openProject(): Promise<void> {
+    const workspaceDir = await window.api.openWorkspaceDialog()
+    if (!workspaceDir) return
+    setOpening(true)
+    try {
+      const result = await window.api.startThread({ workspaceDir })
+      // Main has now persisted the Workspace (even on not-signed-in / error, since
+      // it records the open BEFORE the handshake), so re-fetch to learn its minted
+      // id, then key the connection by it and select it.
+      const list = await window.api.listMetadata()
+      setRecents(list)
+      const ws = list.find((w) => w.dir === workspaceDir)
+      if (!ws) return // degraded (no store) — nothing to key/select
+      connDispatch({ type: 'set', workspaceId: ws.id, state: routeThreadResult(result) })
+      navDispatch({ type: 'select-workspace', workspaceId: ws.id })
+    } finally {
+      setOpening(false)
+    }
+  }
+
+  // After sign-in (or in-place re-auth) the Workspace's warm agent is already
+  // started + signed in; open a Thread on it and land in a connected conversation.
+  async function continueToThread(workspaceId: string, agentId: string): Promise<void> {
+    connDispatch({ type: 'set', workspaceId, state: routeThreadResult(await window.api.openThread({ agentId })) })
+    void refreshRecents()
   }
 
   /**
-   * Continue a reopened Thread from the sidebar's cold list (TB4 #33). No agent
-   * runs for a cold-list Thread, so we spawn its Workspace agent via `startThread`,
-   * passing `continueThreadId` so main opens NO extra Thread and instead seeds the
-   * connection with THIS Thread (its first prompt drives the `session/load`
-   * resume). The connection thread IS the continued one, so it lands selected +
-   * live with no separate plumbing. The Workspace dir comes from the cold list (a
-   * `ThreadMeta` carries only `workspaceId`).
+   * Continue a reopened Thread from the sidebar's cold list (TB4 #33). Spawn-or-
+   * reuse its Workspace agent via `startThread`, passing `continueThreadId` so main
+   * opens NO extra Thread and instead seeds the connection with THIS Thread (its
+   * first prompt drives the `session/load` resume). Select the Workspace so the
+   * outlet routes to its now-connected view.
    */
   async function continueColdThread(thread: ThreadMeta): Promise<void> {
     const workspace = recents.find((w) => w.id === thread.workspaceId)
     if (!workspace) return
-    setConnect({ status: 'connecting', workspaceDir: workspace.dir })
-    setConnect(
-      routeThreadResult(
-        await window.api.startThread({ workspaceDir: workspace.dir, continueThreadId: thread.id }),
-      ),
-    )
+    navDispatch({ type: 'select-workspace', workspaceId: workspace.id })
+    connDispatch({ type: 'set', workspaceId: workspace.id, state: { status: 'connecting', workspaceDir: workspace.dir } })
+    const result = await window.api.startThread({ workspaceDir: workspace.dir, continueThreadId: thread.id })
+    connDispatch({ type: 'set', workspaceId: workspace.id, state: routeThreadResult(result) })
     void refreshRecents()
   }
 
-  /** Sign-out / mid-session expiry: drop back to the sign-in panel (same agent). */
-  function toSignInPanel(agentId: string, workspaceDir: string, authMethods: AuthMethod[]): void {
-    setConnect({ status: 'not-signed-in', agentId, workspaceDir, authMethods })
+  /** Sign-out / mid-session expiry: drop a Workspace back to its sign-in panel
+   *  (same warm agent — never respawned). */
+  function toSignInPanel(workspaceId: string, agentId: string, workspaceDir: string, authMethods: AuthMethod[]): void {
+    connDispatch({ type: 'set', workspaceId, state: { status: 'not-signed-in', agentId, workspaceDir, authMethods } })
   }
-
-  const connecting = connect.status === 'connecting'
 
   // The sidebar's pinned top: the environment check + the Open-project control.
   const sidebarTop = (
     <div className="shell__top">
       <Environment detect={detect} loading={loading} onRecheck={() => void runDetect()} />
-      <button className="btn shell__open" onClick={() => void openProject()} disabled={connecting}>
-        {connecting ? 'Connecting…' : 'Open project'}
+      <button className="btn shell__open" onClick={() => void openProject()} disabled={opening}>
+        {opening ? 'Connecting…' : 'Open project'}
       </button>
     </div>
+  )
+
+  const connectedIds = connectedWorkspaceIds(connections)
+  const selected = selectedConnection(connections, nav.selectedWorkspaceId)
+
+  /** The connected view for a Workspace (SignedInBar + ConnectedWorkspace). */
+  function renderConnected(thread: ThreadConnection): ReactNode {
+    return (
+      <>
+        {/* Key by agentId (like Conversation) so its useReducer seed resets across
+            connections — a new agent can't inherit the prior session's sign-out gate. */}
+        <SignedInBar
+          key={`bar-${thread.agentId}`}
+          agentId={thread.agentId}
+          authMethods={thread.authMethods}
+          signOutAvailable={thread.signOutAvailable}
+          onSignedOut={(authMethods) =>
+            toSignInPanel(thread.workspaceId, thread.agentId, thread.workspaceDir, authMethods)
+          }
+        />
+        {/* Key by agentId so per-Workspace Thread state can't bleed across
+            connections. Hosts multiple Threads on the one agent + switching (TB5). */}
+        <ConnectedWorkspace
+          key={thread.agentId}
+          connection={thread}
+          threads={threadsForWorkspace(recents, thread.workspaceId)}
+          refreshRecents={refreshRecents}
+          onAuthExpired={(authMethods) =>
+            toSignInPanel(thread.workspaceId, thread.agentId, thread.workspaceDir, authMethods)
+          }
+        />
+      </>
+    )
+  }
+
+  // The outlet: every connected Workspace stays MOUNTED (hidden unless selected) so
+  // its background turn keeps streaming and a switch-back is instant; the selected
+  // Workspace's transient state (connecting / sign-in / error) or its cold Thread
+  // renders inline. Routed off the nav selection, so cold clicks always route right.
+  const outlet = (
+    <>
+      {connectedIds.map((wid) => {
+        const conn = connections[wid]
+        if (conn.status !== 'connected') return null
+        return (
+          <div key={wid} className="shell__connection" hidden={wid !== nav.selectedWorkspaceId}>
+            {renderConnected(conn.thread)}
+          </div>
+        )
+      })}
+      {selected.status === 'connected'
+        ? null // rendered (visible) in the keep-mounted map above
+        : selected.status !== 'idle'
+          ? renderTransientOutlet(selected, {
+              continueToThread: (agentId) => void continueToThread(nav.selectedWorkspaceId ?? '', agentId),
+            })
+          : renderColdOutlet(recents, nav, {
+              onClose: () => navDispatch({ type: 'clear' }),
+              onContinue: (thread) => void continueColdThread(thread),
+            })}
+    </>
   )
 
   return (
@@ -125,13 +237,11 @@ export function App(): JSX.Element {
       <Shell
         workspaces={recents}
         sidebarTop={sidebarTop}
-        connectionOutlet={renderConnectionOutlet(connect, {
-          continueToThread,
-          toSignInPanel,
-          refreshRecents,
-          threads: connect.status === 'connected' ? threadsForWorkspace(recents, connect.thread.workspaceId) : [],
-        })}
-        onContinueColdThread={(thread) => void continueColdThread(thread)}
+        nav={nav}
+        connectedWorkspaceIds={connectedIds}
+        outlet={outlet}
+        onSelectWorkspace={selectWorkspace}
+        onSelectThread={(workspaceId, threadId) => navDispatch({ type: 'select-thread', workspaceId, threadId })}
         onDeleteThread={deleteThread}
       />
     </div>
@@ -139,23 +249,15 @@ export function App(): JSX.Element {
 }
 
 /**
- * The connection-active outlet (everything but `idle`). Routed exactly as before,
- * now rendered INTO the shell outlet rather than swapping the whole view — the
- * sidebar persists across it. `null` on `idle` hands the outlet back to the shell's
- * nav-selected cold Thread (or placeholder). TB4 (#49) folds these inline.
+ * The selected Workspace's NON-connected outlet state (connecting / not-signed-in /
+ * error). Only the selected Workspace shows a transient view; connected Workspaces
+ * render via the keep-mounted map instead.
  */
-function renderConnectionOutlet(
+function renderTransientOutlet(
   connect: ConnectState,
-  handlers: {
-    continueToThread: (agentId: string, workspaceDir: string) => void
-    toSignInPanel: (agentId: string, workspaceDir: string, authMethods: AuthMethod[]) => void
-    refreshRecents: () => Promise<void>
-    threads: ThreadMeta[]
-  },
-): ReactNode | null {
+  handlers: { continueToThread: (agentId: string) => void },
+): ReactNode {
   switch (connect.status) {
-    case 'idle':
-      return null
     case 'connecting':
       return (
         <p className="hint">
@@ -169,7 +271,7 @@ function renderConnectionOutlet(
           key={connect.agentId}
           agentId={connect.agentId}
           authMethods={connect.authMethods}
-          onSignedIn={() => handlers.continueToThread(connect.agentId, connect.workspaceDir)}
+          onSignedIn={() => handlers.continueToThread(connect.agentId)}
         />
       )
     case 'error':
@@ -180,35 +282,40 @@ function renderConnectionOutlet(
           {connect.hint && <div className="alert__hint">{connect.hint}</div>}
         </div>
       )
-    case 'connected':
-      return (
-        <>
-          {/* Key by agentId (like Conversation) so its useReducer seed resets
-              across connections — a new agent can't inherit the prior session's
-              sign-out gate. */}
-          <SignedInBar
-            key={connect.thread.agentId}
-            agentId={connect.thread.agentId}
-            authMethods={connect.thread.authMethods}
-            signOutAvailable={connect.thread.signOutAvailable}
-            onSignedOut={(authMethods) =>
-              handlers.toSignInPanel(connect.thread.agentId, connect.thread.workspaceDir, authMethods)
-            }
-          />
-          {/* Key by agentId so the per-Workspace Thread state can't bleed across
-              connections. Hosts multiple Threads on the one agent + switching (TB5). */}
-          <ConnectedWorkspace
-            key={connect.thread.agentId}
-            connection={connect.thread}
-            threads={handlers.threads}
-            refreshRecents={handlers.refreshRecents}
-            onAuthExpired={(authMethods) =>
-              handlers.toSignInPanel(connect.thread.agentId, connect.thread.workspaceDir, authMethods)
-            }
-          />
-        </>
-      )
+    default:
+      return null
   }
+}
+
+/**
+ * The idle (no live agent) outlet for the selected Workspace: the nav-selected cold
+ * Thread replayed read-only from JSONL (TB3) with a Continue affordance (TB4), or a
+ * placeholder when nothing is selected. Reached only when the selected Workspace has
+ * no connection — so a cold click after another Workspace connected still routes here.
+ */
+function renderColdOutlet(
+  recents: ListMetadataResult,
+  nav: { selectedWorkspaceId: string | null; selectedThreadId: string | null },
+  handlers: { onClose: () => void; onContinue: (thread: ThreadMeta) => void },
+): ReactNode {
+  const selectedThread = findSelectedThread(recents, nav)
+  if (!selectedThread) {
+    return (
+      <div className="shell__empty">
+        <p className="hint">
+          Select a thread from the sidebar to view it, or open a project to start a live agent.
+        </p>
+      </div>
+    )
+  }
+  return (
+    <ColdThread
+      key={selectedThread.id}
+      thread={selectedThread}
+      onClose={handlers.onClose}
+      onContinue={() => handlers.onContinue(selectedThread)}
+    />
+  )
 }
 
 /** The environment check: whether `vibe` / `vibe-acp` are installed + reachable. */

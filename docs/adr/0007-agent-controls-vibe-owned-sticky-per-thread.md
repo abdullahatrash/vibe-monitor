@@ -27,16 +27,20 @@ ACP's session-state model), not per-turn.
   Thread is bound (after first prompt); a draft starts under Vibe's defaults. A draft-level pending
   selection (extending the #60 composer-draft store) is a deferred follow-up.
 
-## Status: blocked on a verification spike
+## Status: spike resolved (#65, 2026-06-30) — the cache-and-re-assert fallback applies
 
-The change mechanism is unverified. `session/new` exposes `configOptions` with ids `mode`/`model`/
-`thinking`, and notes guess the setter is `set_config_option` — but the exact method name/shape is not
-captured on the wire. A probe spike (run under node, not bun — the bun child-process gotcha; safe under
-the house rules since it only touches `session/*`) must capture, before the picker is built (mirroring
-the #29 `session/load` spike): (1) the change method name + params, (2) whether a resumed session
-preserves the last-set Mode or resets to default — if it **resets**, we add our-side caching +
-re-assert via the setter after `session/load` (the only case where Mode/Model touches our metadata), and
-(3) whether a change emits a `current_mode_update` notification.
+The #65 spike captured the change mechanism against vibe-acp 2.18.0 (acp-capture §10). Outcome:
+- **Change methods are three distinct calls**, not one `set_config_option`: Mode → `session/set_mode
+  {sessionId, modeId}`; Model → `session/set_model {sessionId, modelId}`; Reasoning effort →
+  `session/set_config_option {sessionId, configId, value}` (note `configId`, not `id`). All return `{}`.
+- **No change-notification** is emitted ⇒ the renderer updates the displayed value **optimistically**
+  (revert on error). The "agent-authoritative via `current_mode_update`" path in the change-flow decision
+  above does NOT exist on vibe-acp 2.18.0 — optimistic is the primary path, not the fallback.
+- **Mode is NOT preserved across `session/load`** (set `plan`, reload → `default`) ⇒ the **fallback is
+  now the required design**: the picker caches the selected Mode (and Model) per-Thread and re-asserts
+  via the setters after a resume. This is the one place Agent-controls state touches our side; it stays
+  out of the durable metadata store unless we choose otherwise.
+- ⚠️ `session/set_model` false-accepts any string as a `modelId` — pass only `availableModels` ids.
 
 ## Considered alternatives
 

@@ -13,7 +13,8 @@ same protocol Zed/JetBrains/Neovim use to drive Vibe. Our `src/main/acp/client.t
 
 > ✅ **Confirmed against vibe-acp 2.18.0** (live capture). The **verbatim** message shapes are in
 > [acp-capture.md](./acp-capture.md) — treat that as authoritative; this page is the narrative map.
-> A few items remain unverified (mode-change method, trust grant, `session/load`, `session/cancel`).
+> A few items remain unverified (trust grant, `session/cancel`). The mode/model/thinking change
+> methods and `session/load` are now confirmed (acp-capture §9, §10).
 
 ---
 
@@ -25,10 +26,12 @@ same protocol Zed/JetBrains/Neovim use to drive Vibe. Our `src/main/acp/client.t
 |---|---|
 | `initialize` | Handshake. Agent returns `agentCapabilities` (`loadSession`, `promptCapabilities.image`), `agentInfo`, `authMethods` (`browser-auth`). camelCase params. |
 | `session/new` | Create a session for a workspace. Params `{cwd, mcpServers}`. Returns `sessionId`, `modes`, `models`, `configOptions`, `_meta.workspace_trust`. |
-| `session/load` | Load/resume an existing session (capability `loadSession:true`). **Shape unverified.** |
+| `session/load` | Load/resume an existing session (capability `loadSession:true`). Params `{sessionId, cwd, mcpServers}`; replays history as `session/update`s then resolves session-new-shaped (acp-capture §9). |
 | `session/prompt` | Send user input `{sessionId, prompt:[{type:"text",text}]}`; streams `session/update`; resolves with `{stopReason, usage, userMessageId}`. |
 | `session/cancel` | Cancel the active turn. **Shape unverified.** |
-| _(mode/model/thinking change)_ | Set via the `configOptions` ids (`mode`/`model`/`thinking`). **Method name unverified** — earlier notes guessed `set_config_option`; confirm before building a picker. |
+| `session/set_mode` | Change Mode. Params `{sessionId, modeId}` → `{}`. (acp-capture §10) |
+| `session/set_model` | Change Model. Params `{sessionId, modelId}` → `{}`. ⚠️ false-accepts any string; pass only `availableModels` ids. (§10) |
+| `session/set_config_option` | Change a config option (Reasoning effort). Params `{sessionId, configId, value}` → `{}` (note `configId`, not `id`). (§10) |
 
 ### Agent → Client (we receive / must answer)
 
@@ -69,8 +72,10 @@ toasts; our slices #1 (once-off) / #2 (allow_always + remembered allowlist).
 5. **permission requests** — `request_permission` mid-turn; client responds.
 6. **terminate** — `session/cancel` or natural completion.
 
-**Modes:** `chat`, `plan`, `auto-approve` (set via `set_config_option { mode }` or chosen at
-`session/load`). `auto-approve` ≈ CodexMonitor's auto-approve / Vibe's `--yolo`.
+**Modes (5):** `default` (approval-gated), `plan` (read-only), `accept-edits` (auto-approves edits
+only), `auto-approve` (auto-approves all), `chat` (read-only conversational). Changed via
+`session/set_mode {sessionId, modeId}` (acp-capture §10); NOT preserved across `session/load` (resets to
+`default`). `auto-approve` ≈ CodexMonitor's auto-approve / Vibe's `--yolo`.
 
 **Errors** (map to user-facing messages): `SessionNotFoundError`, `ConfigurationError`
 (bad `~/.vibe/config.toml`), `UnauthenticatedError` (not signed in / no valid credential),

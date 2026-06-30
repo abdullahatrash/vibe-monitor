@@ -332,3 +332,49 @@ vibe-acp never receives `initialize` and the handshake times out at 30s with no 
 The same `AcpClient` code works instantly under `node` (initialize replies in ~0.9s) and under
 Electron (which is why the app itself was unaffected). To re-run the probe:
 `bun build scripts/spike-session-load.ts --target=node --outfile=/tmp/spike.mjs && node /tmp/spike.mjs --phase=all --cwd=/tmp/vibe-spike`.
+
+## 10. Agent controls — change Mode / Model / Reasoning effort (captured 2026-06-30 via the #65 spike, vibe-acp 2.18.0)
+
+`session/new` (§2) returns the current values + options as `modes`, `models`, and `configOptions`
+(ids `mode` / `model` / `thinking`). The **5 modes** are `default` (requires approval for tool
+executions), `plan` (read-only — exploration/planning), `accept-edits` (auto-approves file edits only),
+`auto-approve` (auto-approves all tool executions), `chat` (read-only conversational). `thinking` is a
+select of `off` / `low` / `medium` / `high` / `max`. There are **three distinct setters** — confirmed on
+the wire AND against the agent source (`acp/schema.py`):
+
+| Axis | Method | Params | Response |
+|---|---|---|---|
+| Mode | `session/set_mode` | `{ sessionId, modeId }` | `{}` |
+| Model | `session/set_model` | `{ sessionId, modelId }` | `{}` |
+| Reasoning effort | `session/set_config_option` | `{ sessionId, configId, value }` | `{}` |
+
+```jsonc
+// e.g. switch to plan mode:
+{"jsonrpc":"2.0","id":3,"method":"session/set_mode","params":{"sessionId":"…","modeId":"plan"}}
+// → {"jsonrpc":"2.0","id":3,"result":{}}
+```
+
+Gotchas (cost real guesses — captured so the picker doesn't repeat them):
+- The config-option param is **`configId`, NOT `id`** (`{id, value}` returns `-32602` Invalid params).
+  `session/set_config_option` is the GENERIC setter; `thinking` goes through it.
+- `set_config_option` (no `session/` prefix) does **not** exist (`-32601`). Mode/Model have **dedicated**
+  methods (`session/set_mode` / `session/set_model`) — they do NOT go through `set_config_option`.
+- `session/set_model` **false-accepts any string** as a `modelId` (returns `{}` for `"off"`) without
+  validating against `availableModels` — so a successful `{}` is NOT proof the value was valid. Pass only
+  ids from `models.availableModels`.
+
+### Q3 — no change-notification
+A successful change emits **no** `session/update` (no `current_mode_update`/`current_model_update`); the
+empty `{}` result is the only signal. **The renderer must update the displayed current value
+optimistically** and revert on an error response (ADR-0007).
+
+### Q2 — Mode does NOT survive `session/load`
+Set `mode=plan`, prompted (to persist the session), then `session/load` in a fresh process →
+`modes.currentModeId` came back **`default`**, not `plan`. So Vibe does **not** persist the Mode across a
+resume. (`currentModelId` did come back as the set value in this run, but treat persistence as
+unreliable.) ⇒ ADR-0007's fallback applies: the picker must **cache the selected Mode (and Model)
+per-Thread and re-assert via the setters after `session/load`**, since display-from-session-state alone
+would silently revert to `default` on every reopen.
+
+### Infra — same `node`-not-`bun` gotcha as §9
+Run the probe built to a node target: `bun build scripts/spike-config-option.ts --target=node --outfile=/tmp/spike-config.mjs && node /tmp/spike-config.mjs`. `--skip-q2` skips the credit-costing prompt+reload. Safe under the house rules — it touches only `session/*` (no `authenticate`/`_auth`).

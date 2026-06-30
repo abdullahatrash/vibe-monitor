@@ -31,9 +31,10 @@ The three per-Thread knobs the agent runs under, surfaced from `session/new` and
 Sticky per-Thread (set once, holds until changed), not per-turn.
 
 **Mode**:
-The agent's collaboration/approval posture for a Thread (`default` = writes gated behind a Permission
-request; `chat` = read-only; `plan`; `auto-approve` = no prompts). Governs whether Permission requests
-fire.
+The agent's collaboration/approval posture for a Thread — one of five: `default` (tool use gated behind
+a Permission request), `plan` (read-only, for exploration/planning), `accept-edits` (auto-approves file
+edits only), `auto-approve` (auto-approves all tool use), `chat` (read-only conversational). Governs
+whether Permission requests fire. Changed via `session/set_mode`; not preserved across a resume.
 _Avoid_: collaboration mode, interaction mode, access mode. (Auth "modes" are a separate, unrelated axis.)
 
 **Model**:

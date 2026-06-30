@@ -5,6 +5,8 @@ import { basename, join } from 'node:path'
 import {
   IPC,
   type DeleteThreadResult,
+  type GitStatusEvent,
+  type GitStatusSubscriptionArgs,
   type ListMetadataResult,
   type OpenThreadArgs,
   type ReadTranscriptResult,
@@ -46,6 +48,9 @@ import { isProtected } from './agent-protection'
 import { controlsOf, ensureBoundSession, resolveContinueTarget } from './thread-binding'
 import { deleteThread } from './persistence/delete-thread'
 import { permissionRequestIdOf, ThreadStatusTracker, type ThreadStatusChange } from './thread-status'
+import { gitFetch, readGitStatus } from './git/status'
+import { GitStatusManager } from './git/status-stream'
+import { chokidarWatchFactory, realClock } from './git/runtime'
 
 /**
  * The warm-agent pool (ADR-0006 decision 3, TB2 #47): one `vibe-acp` agent per
@@ -135,6 +140,26 @@ function emitThreadStatus(changes: ThreadStatusChange | ThreadStatusChange[] | n
     for (const change of list) win.webContents.send(IPC.threadStatus, change satisfies ThreadStatusEvent)
   }
 }
+
+/**
+ * The streamed git-status manager (#84, ADR-0008): per active Workspace it ref-counts
+ * subscribers and runs one debounced fs watcher + one background `git fetch`,
+ * emitting `snapshot`/`localUpdated`/`remoteUpdated`. Git runs in main via
+ * `child_process` (ADR-0002); the manager itself is electron-free (deps injected
+ * here), so its emit is wired to `webContents.send` below — mirroring
+ * `emitThreadStatus`. Torn down on quit so no watcher/timer outlives the app.
+ */
+const gitStatus = new GitStatusManager({
+  read: (workspaceDir) => readGitStatus(workspaceDir),
+  fetch: (workspaceDir) => gitFetch(workspaceDir),
+  watch: chokidarWatchFactory,
+  clock: realClock,
+  emit: (event: GitStatusEvent) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.webContents.isDestroyed()) win.webContents.send(IPC.gitStatus, event)
+    }
+  },
+})
 
 function beginTurn(agentId: string): void {
   inFlightTurns.set(agentId, (inFlightTurns.get(agentId) ?? 0) + 1)
@@ -668,6 +693,11 @@ function registerIpc(): void {
         // permission (see `ThreadStatusTracker.clearThread`).
         emitThreadStatus(threadStatus.endTurn(args.agentId, args.threadId))
         emitThreadStatus(threadStatus.clearThread(args.threadId))
+        // Re-read git status for THIS Workspace at turn end (#84): the working-tree
+        // watcher ignores `.git/`, so the agent's OWN git commands (e.g. a commit) are
+        // invisible to it — this trigger catches them. No-op unless the Workspace's
+        // Changes panel is subscribed.
+        gitStatus.refresh(agent.workspaceDir)
       }
     },
   )
@@ -847,6 +877,19 @@ function registerIpc(): void {
     if (!transcriptStore) return Promise.resolve([])
     return transcriptStore.read(threadId)
   })
+
+  ipcMain.handle(IPC.gitSubscribeStatus, (_event, args: GitStatusSubscriptionArgs) => {
+    // Subscribe the active Workspace's Changes panel to its streamed git status (#84).
+    // Ref-counted in the manager: the first subscribe starts the watcher + fetch and
+    // emits a snapshot, later ones just bump the count + re-emit the snapshot.
+    gitStatus.subscribe(args.workspaceDir)
+  })
+
+  ipcMain.handle(IPC.gitUnsubscribeStatus, (_event, args: GitStatusSubscriptionArgs) => {
+    // Panel unmount / Workspace switch-away (#84): the last unsubscribe tears the
+    // watcher + fetch timer down (active-Workspace-only streaming, ADR-0008).
+    gitStatus.unsubscribe(args.workspaceDir)
+  })
 }
 
 app.whenReady().then(async () => {
@@ -903,4 +946,7 @@ app.on('will-quit', () => {
     clearInterval(sweepTimer)
     sweepTimer = null
   }
+  // Tear down every git-status subscription (#84) so no fs watcher or fetch timer
+  // outlives the app — mirrors the sweep-timer cleanup above.
+  gitStatus.disposeAll()
 })

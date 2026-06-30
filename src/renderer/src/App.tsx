@@ -525,7 +525,7 @@ export function App(): JSX.Element {
   }
 
   /** The connected view for a Workspace (SignedInBar + the controlled outlet). */
-  function renderConnected(conn: ThreadConnection): ReactNode {
+  function renderConnected(conn: ThreadConnection, isActive: boolean): ReactNode {
     const wts = workspaceThreadStateFor(workspaceThreads, conn.workspaceId)
     const cold = threadsForWorkspace(recents, conn.workspaceId)
     const activeId = wts?.active ?? conn.threadId
@@ -555,6 +555,7 @@ export function App(): JSX.Element {
           connection={conn}
           activeThread={activeThread}
           isLive={isLive}
+          isActive={isActive}
           seedSessionId={seed}
           controls={
             // A bound Thread sources its OWN live config (#70); a draft (no config
@@ -610,7 +611,7 @@ export function App(): JSX.Element {
         if (conn.status !== 'connected') return null
         return (
           <div key={wid} className="shell__connection" hidden={wid !== selectedWs}>
-            {renderConnected(conn.thread)}
+            {renderConnected(conn.thread, wid === selectedWs)}
           </div>
         )
       })}

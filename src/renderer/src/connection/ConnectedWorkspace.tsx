@@ -8,6 +8,7 @@ import type {
 } from '../../../shared/ipc'
 import { ColdThread } from '../conversation/ColdThread'
 import { Conversation } from '../conversation/Conversation'
+import { ChangesPanel } from '../git/ChangesPanel'
 
 /**
  * A connected Workspace's conversation OUTLET (ADR-0006, TB3 #48). It no longer
@@ -34,6 +35,7 @@ export function ConnectedWorkspace({
   connection,
   activeThread,
   isLive,
+  isActive,
   seedSessionId,
   controls,
   onSetConfig,
@@ -47,6 +49,12 @@ export function ConnectedWorkspace({
   activeThread: ThreadMeta
   /** Whether `activeThread` is hosted live on this session's agent (vs cold replay). */
   isLive: boolean
+  /**
+   * Whether this is the ON-SCREEN Workspace (#84). A background Workspace stays
+   * mounted (hidden), so the Changes panel gates its git-status subscription on this
+   * — not mere mount — to keep streaming active-Workspace-only (one watcher + fetch).
+   */
+  isActive: boolean
   /** The session to seed a live view with (bound-this-session wins over the cursor). */
   seedSessionId: string | null
   /** The active Thread's OWN agent-controls (#70), or null when none are seeded yet. */
@@ -64,27 +72,32 @@ export function ConnectedWorkspace({
   onAuthExpired: (authMethods: AuthMethod[]) => void
 }): JSX.Element {
   return (
-    <div className="workspace">
-      {isLive ? (
-        <Conversation
-          key={activeThread.id}
-          thread={{
-            agentId: connection.agentId,
-            threadId: activeThread.id,
-            workspaceId: connection.workspaceId,
-            sessionId: seedSessionId,
-            title: activeThread.title,
-          }}
-          modes={controls?.modes ?? null}
-          models={controls?.models ?? null}
-          reasoningEffort={controls?.reasoningEffort ?? null}
-          onSetConfig={onSetConfig}
-          onAuthExpired={onAuthExpired}
-          onBound={onBound}
-        />
-      ) : (
-        <ColdThread key={activeThread.id} thread={activeThread} onClose={onCloseCold} onContinue={onContinue} />
-      )}
+    <div className="flex min-h-0 flex-1 items-start gap-4">
+      <div className="workspace min-w-0 flex-1">
+        {isLive ? (
+          <Conversation
+            key={activeThread.id}
+            thread={{
+              agentId: connection.agentId,
+              threadId: activeThread.id,
+              workspaceId: connection.workspaceId,
+              sessionId: seedSessionId,
+              title: activeThread.title,
+            }}
+            modes={controls?.modes ?? null}
+            models={controls?.models ?? null}
+            reasoningEffort={controls?.reasoningEffort ?? null}
+            onSetConfig={onSetConfig}
+            onAuthExpired={onAuthExpired}
+            onBound={onBound}
+          />
+        ) : (
+          <ColdThread key={activeThread.id} thread={activeThread} onClose={onCloseCold} onContinue={onContinue} />
+        )}
+      </div>
+      {/* Streamed git status (#84) — observational only; renders nothing for a non-repo
+          Workspace and subscribes only while this is the active Workspace. */}
+      <ChangesPanel workspaceDir={connection.workspaceDir} isActive={isActive} />
     </div>
   )
 }

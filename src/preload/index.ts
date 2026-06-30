@@ -4,6 +4,8 @@ import {
   type AcpEvent,
   type AgentEvictedEvent,
   type DeleteThreadResult,
+  type GitStatusEvent,
+  type GitStatusSubscriptionArgs,
   type ListMetadataResult,
   type ReadTranscriptResult,
   type RespondPermissionArgs,
@@ -51,6 +53,10 @@ const api = {
     ipcRenderer.invoke(IPC.setThreadConfig, args),
   readTranscript: (threadId: string): Promise<ReadTranscriptResult> =>
     ipcRenderer.invoke(IPC.readTranscript, threadId),
+  gitSubscribeStatus: (args: GitStatusSubscriptionArgs): Promise<void> =>
+    ipcRenderer.invoke(IPC.gitSubscribeStatus, args),
+  gitUnsubscribeStatus: (args: GitStatusSubscriptionArgs): Promise<void> =>
+    ipcRenderer.invoke(IPC.gitUnsubscribeStatus, args),
   onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {
     const handler = (_e: unknown, payload: AcpEvent): void => listener(payload)
     ipcRenderer.on(IPC.acpEvent, handler)
@@ -70,6 +76,11 @@ const api = {
     const handler = (_e: unknown, payload: AgentEvictedEvent): void => listener(payload)
     ipcRenderer.on(IPC.agentEvicted, handler)
     return () => ipcRenderer.removeListener(IPC.agentEvicted, handler)
+  },
+  onGitStatus: (listener: (event: GitStatusEvent) => void): (() => void) => {
+    const handler = (_e: unknown, payload: GitStatusEvent): void => listener(payload)
+    ipcRenderer.on(IPC.gitStatus, handler)
+    return () => ipcRenderer.removeListener(IPC.gitStatus, handler)
   },
 }
 

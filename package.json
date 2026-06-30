@@ -20,6 +20,7 @@
   "dependencies": {
     "@base-ui/react": "^1.4.1",
     "@tailwindcss/vite": "^4",
+    "chokidar": "^5.0.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.564",
     "react": "^19.1.0",

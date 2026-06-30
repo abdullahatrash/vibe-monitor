@@ -82,6 +82,28 @@ export const IPC = {
    * displayed value OPTIMISTICALLY and reverts on an `{ok:false}` (ADR-0007).
    */
   setThreadConfig: 'thread:set-config',
+  /**
+   * Renderer -> main: subscribe to the active Workspace's STREAMED git status
+   * (#84, ADR-0008). Ref-counted per `workspaceDir` in main — the first subscribe
+   * starts one fs watcher + one background fetch and emits a `snapshot`; later
+   * subscribes only bump the count (and re-emit the current snapshot). Returns void;
+   * status arrives on the `gitStatus` push channel. Active-Workspace-only by
+   * construction: only the mounted Changes panel subscribes (ADR-0008).
+   */
+  gitSubscribeStatus: 'git:subscribe-status',
+  /**
+   * Renderer -> main: drop one subscriber's hold on a Workspace's status stream
+   * (#84). The last unsubscribe tears down the watcher + fetch timer; an over-count
+   * unsubscribe is a no-op. Paired with `gitSubscribeStatus` on panel mount/unmount.
+   */
+  gitUnsubscribeStatus: 'git:unsubscribe-status',
+  /**
+   * Main -> renderer: a streamed git-status update for a subscribed Workspace (#84).
+   * `kind` distinguishes the trigger — `snapshot` (on subscribe), `localUpdated` (fs
+   * watcher / turn-end / manual refresh), `remoteUpdated` (background fetch refreshed
+   * ahead/behind). The renderer filters by `workspaceDir` and holds the latest status.
+   */
+  gitStatus: 'git:status',
 } as const
 
 /**
@@ -493,3 +515,55 @@ export type TranscriptEntry =
 
 /** The `readTranscript` reply: a Thread's transcript entries (empty when none). */
 export type ReadTranscriptResult = TranscriptEntry[]
+
+/**
+ * One changed path in a Workspace's working tree (#84, ADR-0008). `status` is the
+ * raw `git status --porcelain=2` XY code (e.g. `.M`, `A.`, `RM`, `MM`) or `?` for an
+ * untracked path — the renderer maps it to a display glyph. `insertions`/`deletions`
+ * are the merged `git diff` + `git diff --cached` numstat for the path (0 for a
+ * binary `-`/`-` entry). `staged` is true when the index half (X) is non-clean; a
+ * path can be both staged and worktree-dirty (e.g. `MM`) — `staged` then still true.
+ */
+export interface GitFile {
+  path: string
+  status: string
+  insertions: number
+  deletions: number
+  staged: boolean
+  untracked: boolean
+}
+
+/**
+ * A Workspace working tree's git status (#84, ADR-0008) — the observational v1
+ * payload. `isRepo:false` (with the empty defaults) covers a non-repo Workspace OR
+ * any git failure swallowed into the stream (never a throw): the renderer then shows
+ * no Changes panel ("a Workspace need not be a git repo", CONTEXT.md). `ahead`/
+ * `behind` are 0 with no upstream; `branch`/`upstream` are null when detached / unset.
+ */
+export interface GitStatus {
+  isRepo: boolean
+  branch: string | null
+  upstream: string | null
+  ahead: number
+  behind: number
+  files: GitFile[]
+}
+
+/** Which trigger produced a `gitStatus` push (#84). */
+export type GitStatusKind = 'snapshot' | 'localUpdated' | 'remoteUpdated'
+
+/**
+ * Main -> renderer streamed git-status update (#84). Tagged by `workspaceDir` so a
+ * renderer with one mounted Changes panel ignores events for other Workspaces (the
+ * push fans out to every window, like `thread:status`).
+ */
+export interface GitStatusEvent {
+  workspaceDir: string
+  kind: GitStatusKind
+  status: GitStatus
+}
+
+/** Args for `gitSubscribeStatus` / `gitUnsubscribeStatus` (#84). */
+export interface GitStatusSubscriptionArgs {
+  workspaceDir: string
+}

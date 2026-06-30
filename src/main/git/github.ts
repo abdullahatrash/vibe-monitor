@@ -119,7 +119,11 @@ export function classifyGhError(stderr: string): GhErrorCategory {
   ) {
     return 'no-remote'
   }
-  if (s.includes('must first push') || s.includes('push the') || s.includes('aborted')) return 'push'
+  // Narrow: ONLY the explicit unpushed-branch message. Bare `'aborted'` / `'push the'`
+  // were too broad — a permission error ("you do not have permission to push the branch…")
+  // or any "aborted" failure would be mislabeled "push first", HIDING the real reason.
+  // Everything else falls to `other` and is surfaced verbatim.
+  if (s.includes('must first push') || s.includes('push the current branch')) return 'push'
   return 'other'
 }
 

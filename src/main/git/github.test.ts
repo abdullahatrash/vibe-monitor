@@ -73,6 +73,13 @@ describe('classifyGhError', () => {
     expect(classifyGhError('aborted: you must first push the current branch to a remote')).toBe('push')
   })
 
+  it('does NOT mislabel a permission/other error as push (narrowed match)', () => {
+    // A permission error mentions "push the branch" but isn't an unpushed-branch case —
+    // must surface verbatim, not the "push first" hint (review fold).
+    expect(classifyGhError('you do not have permission to push the branch to this repository')).toBe('other')
+    expect(classifyGhError('aborted: operation cancelled by hook')).toBe('other')
+  })
+
   it('falls back to other for an unrecognised reason', () => {
     expect(classifyGhError('GraphQL: Something exploded')).toBe('other')
   })

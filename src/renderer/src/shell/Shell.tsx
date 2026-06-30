@@ -1,7 +1,9 @@
-import { useState, type JSX, type ReactNode } from 'react'
+import { type JSX, type ReactNode } from 'react'
+import { Loader2, MoreVertical, Trash2 } from 'lucide-react'
 import type { ListMetadataResult, ThreadMeta } from '../../../shared/ipc'
 import type { NavState } from './nav-reducer'
 import { isThreadDeletable, type UnifiedThreadRow } from './unified-threads'
+import { Menu, MenuContent, MenuItem, MenuTrigger } from '../ui/menu'
 
 /** A Workspace's rolled-up live status, for its switcher row. */
 export interface WorkspaceFlags {
@@ -183,8 +185,10 @@ function WorkspaceNav({
 /**
  * One unified Thread row: its label, a live (●) vs `history` badge, a streaming
  * indicator and a needs-attention badge driven by the status registry, and a
- * two-step inline delete (TB6) shown only when `deletable`. Clicking selects it →
- * the outlet routes live `Conversation` vs cold `ColdThread`.
+ * kebab actions menu (base-ui) holding Delete — shown only when `deletable`.
+ * Clicking the row selects it → the outlet routes live `Conversation` vs cold
+ * `ColdThread`. The Menu is keyboard-accessible (base-ui owns focus + roving), and
+ * the delete contract is unchanged: it still calls `onDelete(row.thread)`.
  */
 function NavThread({
   row,
@@ -199,7 +203,6 @@ function NavThread({
   onOpen: () => void
   onDelete: (thread: ThreadMeta) => Promise<void>
 }): JSX.Element {
-  const [confirming, setConfirming] = useState(false)
   return (
     <li className="recents__thread">
       <button
@@ -208,7 +211,11 @@ function NavThread({
       >
         <span className={row.live ? 'dot dot--ok' : 'dot dot--idle'} aria-hidden />
         <span className="recents__thread-label">{threadLabel(row)}</span>
-        {row.streaming && <span className="recents__thread-streaming" title="Streaming">⟳</span>}
+        {row.streaming && (
+          <span className="recents__thread-streaming" title="Streaming" role="img" aria-label="Streaming">
+            <Loader2 size={14} aria-hidden />
+          </span>
+        )}
         {!row.live && <span className="badge badge--history">history</span>}
         {row.needsAttention && (
           <span className="badge badge--attention" title="Awaiting your response">
@@ -216,30 +223,22 @@ function NavThread({
           </span>
         )}
       </button>
-      {!deletable ? null : confirming ? (
-        <span className="recents__thread-confirm">
-          <button
-            className="btn btn--ghost btn--danger"
-            onClick={() => {
-              setConfirming(false)
-              void onDelete(row.thread)
-            }}
+      {deletable && (
+        <Menu>
+          <MenuTrigger
+            className="recents__thread-actions"
+            aria-label="Thread actions"
+            title="Thread actions"
           >
-            Delete
-          </button>
-          <button className="btn btn--ghost" onClick={() => setConfirming(false)}>
-            Cancel
-          </button>
-        </span>
-      ) : (
-        <button
-          className="recents__thread-delete"
-          aria-label="Delete thread"
-          title="Delete thread"
-          onClick={() => setConfirming(true)}
-        >
-          ✕
-        </button>
+            <MoreVertical size={14} aria-hidden />
+          </MenuTrigger>
+          <MenuContent>
+            <MenuItem className="text-bad" onClick={() => void onDelete(row.thread)}>
+              <Trash2 size={14} aria-hidden />
+              Delete
+            </MenuItem>
+          </MenuContent>
+        </Menu>
       )}
     </li>
   )

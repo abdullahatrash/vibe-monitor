@@ -3,8 +3,6 @@ import {
   IPC,
   type AcpEvent,
   type AgentEvictedEvent,
-  type CreateDraftArgs,
-  type CreateDraftResult,
   type DeleteThreadResult,
   type ListMetadataResult,
   type ReadTranscriptResult,
@@ -40,8 +38,6 @@ const api = {
   setActiveAgent: (agentId: string | null): Promise<void> =>
     ipcRenderer.invoke(IPC.setActiveAgent, agentId),
   listMetadata: (): Promise<ListMetadataResult> => ipcRenderer.invoke(IPC.listMetadata),
-  createDraft: (args: CreateDraftArgs): Promise<CreateDraftResult> =>
-    ipcRenderer.invoke(IPC.createDraft, args),
   deleteThread: (threadId: string): Promise<DeleteThreadResult> =>
     ipcRenderer.invoke(IPC.deleteThread, threadId),
   getThreadStatuses: (): Promise<ThreadStatusEvent[]> => ipcRenderer.invoke(IPC.getThreadStatuses),

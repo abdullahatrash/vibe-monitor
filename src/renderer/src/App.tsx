@@ -89,9 +89,6 @@ export function App(): JSX.Element {
   // Persisted Workspaces + Threads (ADR-0005), listed cold on launch from
   // metadata alone — no agent spawned, no transcript loaded.
   const [recents, setRecents] = useState<ListMetadataResult>([])
-  // A draft mint in flight — guards New-thread against a double mint.
-  const [creatingThread, setCreatingThread] = useState(false)
-  const creatingRef = useRef(false)
   // Workspaces with a connect IN FLIGHT, tracked synchronously so a fast double-
   // select can't fire two `startThread`s (the `connections` closure is stale
   // within a render frame, so a state check alone would let both through).
@@ -182,25 +179,19 @@ export function App(): JSX.Element {
   }
 
   /**
-   * New-thread (TB5 draft) from the unified list: mint a durable id (no ACP session
-   * until its first prompt) on the selected Workspace's live agent, host it live +
-   * select it, then refresh so it lands in the persisted list. No residue if
-   * abandoned — it's a metadata-only record via the existing draft path.
+   * New-thread (#58): a renderer-only live draft, matching t3code. Mint a durable
+   * Thread id locally (Chromium `crypto.randomUUID()`), host it LIVE on the selected
+   * Workspace's agent + select it — but persist NOTHING. No `createDraft` IPC, no
+   * metadata record, no JSONL, and nothing to `refreshRecents`. The draft becomes
+   * durable only on its FIRST prompt, when `sendPrompt` carries THIS id to main's
+   * `ensureBoundSession` → `mintAndBind`, which mints `session/new` and persists the
+   * record under this preserved id. So an abandoned draft leaves zero residue and
+   * vanishes on restart; the sidebar only ever lists prompted Threads.
    */
-  async function newThread(workspaceId: string): Promise<void> {
-    if (creatingRef.current) return
-    creatingRef.current = true
-    setCreatingThread(true)
-    try {
-      const result = await window.api.createDraft({ workspaceId })
-      if (!result.ok) return
-      wtDispatch({ type: 'open', workspaceId, threadId: result.thread.id })
-      navDispatch({ type: 'select-thread', workspaceId, threadId: result.thread.id })
-      await refreshRecents()
-    } finally {
-      creatingRef.current = false
-      setCreatingThread(false)
-    }
+  function newThread(workspaceId: string): void {
+    const threadId = crypto.randomUUID()
+    wtDispatch({ type: 'open', workspaceId, threadId })
+    navDispatch({ type: 'select-thread', workspaceId, threadId })
   }
 
   useEffect(() => {
@@ -532,11 +523,10 @@ export function App(): JSX.Element {
         rows={rows}
         protectedThreadId={protectedThreadId}
         canCreateThread={canCreateThread}
-        creatingThread={creatingThread}
         outlet={outlet}
         onSelectWorkspace={selectWorkspace}
         onSelectThread={selectThreadInWorkspace}
-        onNewThread={() => selectedWs && void newThread(selectedWs)}
+        onNewThread={() => selectedWs && newThread(selectedWs)}
         onDeleteThread={deleteThread}
       />
     </div>

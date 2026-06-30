@@ -1,19 +1,22 @@
 import { describe, it, expect, afterAll } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ensureBoundSession, resolveContinueTarget, type SessionBinder } from './thread-binding'
-import { createThreadDraft } from './persistence/drafts'
 import { MetadataStore } from './persistence/metadata-store'
 import { SessionLoadError, WorkspaceAgentError } from './workspace-agent'
 import type { ThreadInfo } from '../shared/ipc'
 
 /**
- * Bind-on-first-prompt (ADR-0005, TB5 #34): a draft (sessionId null) triggers
+ * Bind-on-first-prompt (ADR-0005, TB5 #34, #58): a draft (sessionId null) triggers
  * exactly ONE `session/new` on the Workspace's agent on its first prompt, binds
- * the returned sessionId onto the SAME Thread id, and reuses it thereafter.
- * Tested at the agent seam with an injected fake opener (counting `session/new`
- * calls) over a REAL temp-dir store — never a live `vibe-acp`.
+ * the returned sessionId onto the SAME Thread id, and reuses it thereafter. Since
+ * #58 the draft is renderer-only until that first prompt — its id is minted in the
+ * renderer and NOTHING is persisted until the bind here, so these tests pass a
+ * locally-minted id (never a pre-persisted record) and assert it round-trips as the
+ * id persisted. Tested at the agent seam with an injected fake opener (counting
+ * `session/new` calls) over a REAL temp-dir store — never a live `vibe-acp`.
  */
 
 const dir = mkdtempSync(join(tmpdir(), 'vibe-binding-'))
@@ -77,18 +80,21 @@ function fakeBinder(opts: {
 }
 
 describe('ensureBoundSession', () => {
-  it('mints one session on a draft, binds it by id, and reuses it (no second session/new)', async () => {
+  it('persists a renderer-minted draft id on first prompt (nothing before), binds it, and reuses it', async () => {
     const store = new MetadataStore({ filePath: join(dir, 'bind.json') })
     await store.load()
     const ws = await store.upsertWorkspace({ dir: '/proj/bind' })
-    const draft = await createThreadDraft(store, ws.id)
+    // #58: the draft is renderer-only — its id is minted in the renderer and NO
+    // record exists until the first prompt binds it here.
+    const threadId = randomUUID()
+    expect(store.snapshot().threads).toHaveLength(0)
     const agent = fakeOpener()
 
     // First prompt on the draft: exactly one session/new, bound onto the same id.
     const first = await ensureBoundSession({
       agent,
       store,
-      threadId: draft.id,
+      threadId,
       workspaceId: ws.id,
       sessionId: null,
     })
@@ -96,17 +102,18 @@ describe('ensureBoundSession', () => {
     expect(first.minted).toBe(true)
     expect(first.sessionId).toBe('sess-1')
 
-    // The SAME Thread id now carries the bound sessionId (resume cursor).
-    const bound = store.snapshot().threads.find((t) => t.id === draft.id)
-    expect(bound?.id).toBe(draft.id)
-    expect(bound?.sessionId).toBe('sess-1')
-    expect(store.snapshot().threads.filter((t) => t.id === draft.id)).toHaveLength(1) // no duplicate
+    // The renderer-minted id round-trips: exactly ONE record, persisted under THAT
+    // id, now carrying the bound sessionId (resume cursor) — id preservation (#58).
+    const threads = store.snapshot().threads
+    expect(threads).toHaveLength(1)
+    expect(threads[0]?.id).toBe(threadId)
+    expect(threads[0]?.sessionId).toBe('sess-1')
 
     // A subsequent prompt passes the bound sessionId: NO second session/new.
     const second = await ensureBoundSession({
       agent,
       store,
-      threadId: draft.id,
+      threadId,
       workspaceId: ws.id,
       sessionId: first.sessionId,
     })
@@ -119,19 +126,21 @@ describe('ensureBoundSession', () => {
     const store = new MetadataStore({ filePath: join(dir, 'multi.json') })
     await store.load()
     const ws = await store.upsertWorkspace({ dir: '/proj/multi' })
-    const a = await createThreadDraft(store, ws.id)
-    const b = await createThreadDraft(store, ws.id)
+    // Two renderer-minted draft ids, neither persisted until its first prompt (#58).
+    const aId = randomUUID()
+    const bId = randomUUID()
     const agent = fakeOpener()
 
-    const ra = await ensureBoundSession({ agent, store, threadId: a.id, workspaceId: ws.id, sessionId: null })
-    const rb = await ensureBoundSession({ agent, store, threadId: b.id, workspaceId: ws.id, sessionId: null })
+    const ra = await ensureBoundSession({ agent, store, threadId: aId, workspaceId: ws.id, sessionId: null })
+    const rb = await ensureBoundSession({ agent, store, threadId: bId, workspaceId: ws.id, sessionId: null })
 
     expect(agent.calls).toBe(2) // one session/new per draft
     expect(ra.sessionId).not.toBe(rb.sessionId) // independent sessions on one agent
 
     const threads = store.snapshot().threads
-    expect(threads.find((t) => t.id === a.id)?.sessionId).toBe(ra.sessionId)
-    expect(threads.find((t) => t.id === b.id)?.sessionId).toBe(rb.sessionId)
+    expect(threads).toHaveLength(2) // exactly one record per prompted draft
+    expect(threads.find((t) => t.id === aId)?.sessionId).toBe(ra.sessionId)
+    expect(threads.find((t) => t.id === bId)?.sessionId).toBe(rb.sessionId)
   })
 })
 

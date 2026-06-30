@@ -4,8 +4,6 @@ import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import {
   IPC,
-  type CreateDraftArgs,
-  type CreateDraftResult,
   type DeleteThreadResult,
   type ListMetadataResult,
   type OpenThreadArgs,
@@ -41,7 +39,6 @@ import { WorkspaceAgent, WorkspaceAgentError } from './workspace-agent'
 import { AgentPool } from './agent-pool'
 import { isProtected } from './agent-protection'
 import { ensureBoundSession, resolveContinueTarget } from './thread-binding'
-import { createThreadDraft } from './persistence/drafts'
 import { deleteThread } from './persistence/delete-thread'
 import { permissionRequestIdOf, ThreadStatusTracker, type ThreadStatusChange } from './thread-status'
 
@@ -726,20 +723,6 @@ function registerIpc(): void {
     transcriptThreads.delete(agentId)
     inFlightTurns.delete(agentId)
     emitThreadStatus(threadStatus.evictAgent(agentId))
-  })
-
-  ipcMain.handle(IPC.createDraft, async (_event, args: CreateDraftArgs): Promise<CreateDraftResult> => {
-    // Mint a NEW-Thread draft (ADR-0005, TB5): a durable Thread id with NO ACP
-    // session and NO agent work — `session/new` is deferred to its first prompt
-    // (see `bindThreadSession`), so an abandoned draft creates no session and no
-    // JSONL. It appears in the next `listMetadata` immediately.
-    if (!metadataStore) return { ok: false, error: 'Metadata store is not ready.' }
-    try {
-      const thread = await createThreadDraft(metadataStore, args.workspaceId)
-      return { ok: true, thread }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
   })
 
   ipcMain.handle(IPC.deleteThread, async (_event, threadId: string): Promise<DeleteThreadResult> => {

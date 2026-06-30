@@ -33,7 +33,6 @@ export function Shell({
   rows,
   protectedThreadId,
   canCreateThread,
-  creatingThread,
   outlet,
   onSelectWorkspace,
   onSelectThread,
@@ -54,8 +53,6 @@ export function Shell({
   protectedThreadId: string | null
   /** Whether New-thread is available (the selected Workspace is connected). */
   canCreateThread: boolean
-  /** A draft mint is in flight — disable New-thread to avoid a double mint. */
-  creatingThread: boolean
   /** The fully-computed conversation outlet (connection views / cold replay). */
   outlet: ReactNode
   /** Select a Workspace — App pins it in nav and connect-or-reuses its warm agent. */
@@ -78,7 +75,6 @@ export function Shell({
           rows={rows}
           protectedThreadId={protectedThreadId}
           canCreateThread={canCreateThread}
-          creatingThread={creatingThread}
           onSelectWorkspace={onSelectWorkspace}
           onSelectThread={onSelectThread}
           onNewThread={onNewThread}
@@ -105,7 +101,6 @@ function WorkspaceNav({
   rows,
   protectedThreadId,
   canCreateThread,
-  creatingThread,
   onSelectWorkspace,
   onSelectThread,
   onNewThread,
@@ -117,7 +112,6 @@ function WorkspaceNav({
   rows: UnifiedThreadRow[]
   protectedThreadId: string | null
   canCreateThread: boolean
-  creatingThread: boolean
   onSelectWorkspace: (workspaceId: string) => void
   onSelectThread: (workspaceId: string, threadId: string) => void
   onNewThread: () => void
@@ -174,8 +168,8 @@ function WorkspaceNav({
                 ))}
 
               {isSelected && canCreateThread && (
-                <button className="btn btn--ghost recents__new" onClick={onNewThread} disabled={creatingThread}>
-                  {creatingThread ? 'Creating…' : '+ New thread'}
+                <button className="btn btn--ghost recents__new" onClick={onNewThread}>
+                  + New thread
                 </button>
               )}
             </li>

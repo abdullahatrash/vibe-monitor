@@ -56,8 +56,6 @@ export const IPC = {
   listMetadata: 'metadata:list',
   /** Read a Thread's persisted JSONL transcript for a process-free reopen (TB3). */
   readTranscript: 'transcript:read',
-  /** Mint a NEW-Thread draft (durable id, no ACP session) under a Workspace (TB5). */
-  createDraft: 'thread:create-draft',
   /**
    * Delete a Thread (TB6): remove its metadata record + JSONL transcript, and
    * best-effort close its live ACP session if one is bound. It vanishes from the
@@ -284,21 +282,6 @@ export type SendPromptResult =
   // to the sign-in panel in place and re-auth on the same agent (no restart).
   | { ok: false; kind: 'not-signed-in'; agentId: string; authMethods: AuthMethod[] }
   | { ok: false; kind: 'error'; error: string }
-
-/** Mint a NEW-Thread draft under a Workspace (TB5): no ACP session, no agent work. */
-export interface CreateDraftArgs {
-  /** Our minted Workspace id the draft is created under. */
-  workspaceId: string
-}
-
-/**
- * The `createDraft` reply: the minted draft Thread (`sessionId: null`), or an
- * error if metadata isn't ready. The renderer adds it to the list and selects it;
- * `session/new` is deferred to its first prompt.
- */
-export type CreateDraftResult =
-  | { ok: true; thread: ThreadMeta }
-  | { ok: false; error: string }
 
 /**
  * The `deleteThread` reply (#53). `ok` when the records came down (or there was

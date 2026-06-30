@@ -302,12 +302,12 @@ function BranchMenu({
     setBusyOp(true)
     setOpError(null)
     try {
-      // A remote-only branch's `name` is `<remote>/<branch>`; pass the bare trailing name
-      // so git's DWIM creates a tracking local. A local name (which may itself contain
-      // `/`, e.g. `feat/x`) is passed verbatim — `info.isRemote` decides which.
+      // Pass the branch's FULL name + `track`: a remote-only `<remote>/<branch>` goes
+      // through `git switch --track` (an unambiguous tracking-local create — robust even
+      // with two remotes sharing a trailing name); a local name (which may contain `/`,
+      // e.g. `feat/x`) switches verbatim. `info.isRemote` decides.
       const info = branches?.find((b) => b.name === name)
-      const target = info?.isRemote ? trailingBranchName(name) : name
-      const result = await window.api.gitCheckout({ workspaceDir, name: target })
+      const result = await window.api.gitCheckout({ workspaceDir, name, track: info?.isRemote ?? false })
       // On success the streamed status refresh updates the header to the new branch.
       if (!result.ok) setOpError(result.error)
     } finally {
@@ -390,6 +390,7 @@ function BranchMenu({
         <div className="flex items-center gap-1.5 border-b border-border px-3 py-2">
           <input
             autoFocus
+            aria-label="New branch name"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="New branch name"
@@ -425,12 +426,6 @@ function BranchMenu({
       )}
     </>
   )
-}
-
-/** The branch portion of a `<remote>/<branch>` name (drop the leading remote segment). */
-function trailingBranchName(name: string): string {
-  const slash = name.indexOf('/')
-  return slash >= 0 ? name.slice(slash + 1) : name
 }
 
 /** A glyph's accent: added/untracked read positive, deleted negative, else neutral. */

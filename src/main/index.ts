@@ -941,7 +941,7 @@ function registerIpc(): void {
     // the working tree, so on success re-read status (`gitStatus.refresh`) to update the
     // panel header (branch / ahead-behind) and file list. NOT agent activity, so no
     // `pool.touch` (consistent with git:diff/commit). Never throws.
-    const result = await gitCheckout(args.workspaceDir, args.name)
+    const result = await gitCheckout(args.workspaceDir, args.name, args.track ?? false)
     if (result.ok) gitStatus.refresh(args.workspaceDir)
     else console.error(`[vibe-mistro:git] checkout failed (${args.workspaceDir} -> ${args.name}): ${result.error}`)
     return result

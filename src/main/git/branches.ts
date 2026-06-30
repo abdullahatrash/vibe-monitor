@@ -108,20 +108,32 @@ export async function gitBranches(cwd: string, run: GitRun = defaultGitRun): Pro
 }
 
 /**
- * Impure checkout (#87): `git switch <name>`. The caller passes the SWITCH TARGET — for a
- * local branch that's its name; for a remote-only `origin/foo` the renderer strips the
- * remote prefix and passes the bare `foo`, so git's DWIM creates a tracking local
- * (`git switch foo` <=> `git switch -c foo --track origin/foo`). Main can't strip safely
- * itself — a LOCAL branch name can also contain `/` (e.g. `feat/87-…`) — so the renderer,
- * which knows `isRemote`, decides the target.
+ * Impure checkout (#87): switch to a branch. The renderer (which knows `isRemote`) passes
+ * the branch's full `name` plus `track`: a LOCAL branch (`track:false`) → `git switch
+ * <name>` (the name may contain `/`, e.g. `feat/87-…`, so it's never stripped); a
+ * remote-only branch (`track:true`) → `git switch --track <remote>/<branch>`, which
+ * creates a tracking local UNAMBIGUOUSLY (a bare DWIM `git switch <branch>` would error
+ * when two remotes share the trailing name).
  *
  * A dirty-tree switch git refuses ("Your local changes … would be overwritten") exits
  * non-zero -> `{ok:false, error: <git reason>}`. NO data loss: git protects the tree; we
  * surface the reason and the user resolves it (commit/stash). Never throws.
  */
-export async function gitCheckout(cwd: string, name: string, run: GitRun = defaultGitRun): Promise<GitOpResult> {
+export async function gitCheckout(
+  cwd: string,
+  name: string,
+  track = false,
+  run: GitRun = defaultGitRun,
+): Promise<GitOpResult> {
   try {
-    const res = await run(['-c', 'core.quotePath=false', 'switch', name], cwd)
+    // `track` (a remote-only branch): `git switch --track <remote>/<branch>` creates a
+    // local branch (named after the trailing segment) tracking that EXACT remote ref —
+    // unambiguous even when two remotes share a trailing name, where a bare DWIM
+    // `git switch <branch>` would error. A LOCAL branch (`track:false`) switches by name.
+    const args = track
+      ? ['-c', 'core.quotePath=false', 'switch', '--track', name]
+      : ['-c', 'core.quotePath=false', 'switch', name]
+    const res = await run(args, cwd)
     if (res.code !== 0) return { ok: false, error: failReason(res) }
     return { ok: true }
   } catch (err) {

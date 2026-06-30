@@ -696,12 +696,13 @@ export interface GitBranchesArgs {
 }
 
 /**
- * Args for `gitCheckout` / `gitCreateBranch` (#87). `name` is the SWITCH TARGET for a
- * checkout (a local name, or the bare trailing name of a remote-only branch — the
- * renderer strips the remote prefix so git's DWIM creates a tracking local) or the NEW
- * branch name for a create.
+ * Args for `gitCheckout` / `gitCreateBranch` (#87). For a checkout `name` is the branch's
+ * full name and `track` says whether it's a remote-only branch: `track:true` →
+ * `git switch --track <remote>/<branch>` (an unambiguous tracking-local create), else
+ * `git switch <name>`. For a create, `name` is the NEW branch name (`track` unused).
  */
 export interface GitBranchOpArgs {
   workspaceDir: string
   name: string
+  track?: boolean
 }

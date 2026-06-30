@@ -125,18 +125,20 @@ describe('gitBranches', () => {
 })
 
 describe('gitCheckout', () => {
-  it('runs git switch <name> and returns {ok:true}', async () => {
+  it('runs git switch <name> for a LOCAL branch (track:false), returns {ok:true}', async () => {
     const seen: string[][] = []
-    const result = await gitCheckout('/repo', 'feature', fakeRun(seen))
+    const result = await gitCheckout('/repo', 'feat/87-x', false, fakeRun(seen))
     expect(result).toEqual({ ok: true })
-    expect(seen[0]).toEqual(['-c', 'core.quotePath=false', 'switch', 'feature'])
+    // A local name with a `/` switches verbatim (never stripped).
+    expect(seen[0]).toEqual(['-c', 'core.quotePath=false', 'switch', 'feat/87-x'])
   })
 
-  it('passes the caller’s switch target verbatim (renderer pre-strips a remote prefix)', async () => {
+  it('runs git switch --track <remote>/<branch> for a remote-only branch (track:true)', async () => {
     const seen: string[][] = []
-    // The renderer hands the bare trailing name for a remote-only `origin/foo` -> DWIM.
-    await gitCheckout('/repo', 'foo', fakeRun(seen))
-    expect(seen[0]).toEqual(['-c', 'core.quotePath=false', 'switch', 'foo'])
+    // `--track origin/foo` creates a tracking local UNAMBIGUOUSLY (vs a bare DWIM that
+    // errors when two remotes share the trailing name).
+    await gitCheckout('/repo', 'origin/foo', true, fakeRun(seen))
+    expect(seen[0]).toEqual(['-c', 'core.quotePath=false', 'switch', '--track', 'origin/foo'])
   })
 
   it('a dirty-tree refusal → {ok:false} with git’s reason (NO data loss — git protects)', async () => {
@@ -144,7 +146,7 @@ describe('gitCheckout', () => {
       [],
       [{ stderr: 'error: Your local changes to the following files would be overwritten by checkout:', code: 1 }],
     )
-    expect(await gitCheckout('/repo', 'other', run)).toEqual({
+    expect(await gitCheckout('/repo', 'other', false, run)).toEqual({
       ok: false,
       error: 'error: Your local changes to the following files would be overwritten by checkout:',
     })

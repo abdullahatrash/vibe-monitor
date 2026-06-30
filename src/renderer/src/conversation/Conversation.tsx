@@ -75,8 +75,9 @@ export function Conversation({
   /** The connection's current Reasoning effort + options (#66). */
   reasoningEffort: ThreadReasoningEffort | null
   /** Change an agent control (#66): App reflects it optimistically + reverts on error.
-   *  Carries the Thread's bound `sessionId` (non-null once bound) for the IPC call. */
-  onSetConfig?: (axis: ThreadConfigAxis, value: string, sessionId: string) => void
+   *  Carries the Thread's `sessionId` — non-null once bound (App fires the IPC), or
+   *  null for a pre-prompt draft (#75: App caches the pre-pick, applied on bind). */
+  onSetConfig?: (axis: ThreadConfigAxis, value: string, sessionId: string | null) => void
   /** Mid-session expiry (-32000): route to in-place re-auth with these methods. */
   onAuthExpired: (authMethods: AuthMethod[]) => void
   /** The Thread's session once bound (TB5) — lifts it so a switch-away-and-back
@@ -284,18 +285,16 @@ export function Conversation({
 
       <div className="composer-area">
         {/* Agent controls (#66): Mode / Model / Reasoning effort. Vibe-owned,
-            between-turns only — disabled while a turn streams OR before this Thread
-            has a bound session (a draft binds on its first prompt). */}
+            between-turns only — disabled WHILE a turn streams. A pre-prompt draft
+            (#75) is NOT processing, so its pickers are live: a pick passes the null
+            `boundSessionId` up, and App caches it (no IPC — no session yet) to apply
+            on the first bind. A bound Thread passes its real session for the IPC. */}
         <AgentControls
           modes={modes}
           models={models}
           reasoningEffort={reasoningEffort}
-          disabled={state.isProcessing || boundSessionId === null}
-          onSetConfig={(axis, value) => {
-            // The disabled gate guarantees a bound session here, but guard anyway so
-            // a stray call can never send a config change with a null sessionId.
-            if (boundSessionId) onSetConfig?.(axis, value, boundSessionId)
-          }}
+          disabled={state.isProcessing}
+          onSetConfig={(axis, value) => onSetConfig?.(axis, value, boundSessionId)}
         />
 
         <div className="composer">

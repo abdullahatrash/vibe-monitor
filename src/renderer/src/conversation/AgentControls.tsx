@@ -16,9 +16,10 @@ import { cn } from '../lib/utils'
  * connection (sourced from `session/new`), and a pick fires `onSetConfig` which App
  * reflects OPTIMISTICALLY and reverts on failure — a change emits no notification.
  *
- * `disabled` is the between-turns + bound-session gate (a turn streaming OR no bound
- * session yet) — the controls grey out rather than letting a mid-turn / pre-session
- * change through. The row renders nothing when the agent advertises no axes at all.
+ * `disabled` is the between-turns gate — true only WHILE a turn streams (a pre-prompt
+ * draft is NOT processing, so its pickers are live: #75 lets the user pre-select before
+ * a session exists, and App caches the pick to apply on the first bind). The row
+ * renders nothing when the agent advertises no axes at all.
  */
 export function AgentControls({
   modes,

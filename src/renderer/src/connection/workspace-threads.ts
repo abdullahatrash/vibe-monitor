@@ -239,6 +239,32 @@ export function configFor(
 }
 
 /**
+ * A draft's agent-controls bundle (#75): a New-thread draft has no `config` seeded
+ * (its session binds only on the first prompt), so it can't read `configFor`. Instead
+ * we project the CONNECTION's advertised option lists with each axis's current value
+ * overlaid by the user's cached pre-pick (`selected`) when present, else the
+ * connection's OWN connect-time current — the agent default (`default` / a model id /
+ * `high`). The connection's current is never optimistically mutated (#70 moved that to
+ * `config`), so a no-pick draft shows the TRUE defaults — display == the session the
+ * first prompt will mint. Each axis is null when the agent advertises none. The cached
+ * pick is the SAME `selected` cache `reassertAfterResume` re-asserts once the draft
+ * binds (#72), so the pre-pick applies exactly once on bind — no second apply path.
+ */
+export function draftControls(
+  connectionControls: ThreadAgentControls,
+  selected: Partial<Record<ThreadConfigAxis, string>>,
+): ThreadAgentControls {
+  const { modes, models, reasoningEffort } = connectionControls
+  return {
+    modes: modes ? { ...modes, currentModeId: selected.mode ?? modes.currentModeId } : null,
+    models: models ? { ...models, currentModelId: selected.model ?? models.currentModelId } : null,
+    reasoningEffort: reasoningEffort
+      ? { ...reasoningEffort, current: selected.reasoningEffort ?? reasoningEffort.current }
+      : null,
+  }
+}
+
+/**
  * A Thread's CURRENT value for an agent-control axis (#70), or null when the axis
  * isn't advertised (or no controls are seeded). App reads this BEFORE an optimistic
  * `set-config` so it can revert to the prior value if the IPC change fails (ADR-0007).

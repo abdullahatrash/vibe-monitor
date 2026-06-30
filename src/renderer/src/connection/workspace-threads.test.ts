@@ -3,6 +3,7 @@ import {
   boundConfigValue,
   configFor,
   currentConfigValue,
+  draftControls,
   initialWorkspaceThreads,
   reassertions,
   selectedFor,
@@ -512,5 +513,50 @@ describe('selection cache + re-assert (#72)', () => {
     expect(boundConfigValue(controls('plan', 'devstral-small', 'max'), 'model')).toBe('devstral-small')
     expect(boundConfigValue(controls('plan', 'devstral-small', 'max'), 'reasoningEffort')).toBe('max')
     expect(boundConfigValue({ modes: null, models: null, reasoningEffort: null }, 'mode')).toBeNull()
+  })
+})
+
+describe('draftControls (#75)', () => {
+  it('shows the connection defaults when there is no pre-pick (no lie)', () => {
+    // A fresh draft (empty selected) must display the agent's connect-time current
+    // values, so the default session the first prompt mints matches the display.
+    const out = draftControls(controls('default', 'mistral-medium-3.5', 'high'), {})
+    expect(out.modes?.currentModeId).toBe('default')
+    expect(out.models?.currentModelId).toBe('mistral-medium-3.5')
+    expect(out.reasoningEffort?.current).toBe('high')
+  })
+
+  it('overlays each axis with the cached pre-pick when present', () => {
+    const out = draftControls(controls('default', 'mistral-medium-3.5', 'high'), {
+      mode: 'plan',
+      model: 'devstral-small',
+      reasoningEffort: 'max',
+    })
+    expect(out.modes?.currentModeId).toBe('plan')
+    expect(out.models?.currentModelId).toBe('devstral-small')
+    expect(out.reasoningEffort?.current).toBe('max')
+  })
+
+  it('falls back per axis to the connection current when only some axes are pre-picked', () => {
+    const out = draftControls(controls('default', 'mistral-medium-3.5', 'high'), { mode: 'plan' })
+    expect(out.modes?.currentModeId).toBe('plan') // overlaid
+    expect(out.models?.currentModelId).toBe('mistral-medium-3.5') // connection default
+    expect(out.reasoningEffort?.current).toBe('high') // connection default
+  })
+
+  it('carries the connection option lists through unchanged', () => {
+    const conn = controls('default', 'mistral-medium-3.5', 'high')
+    const out = draftControls(conn, { mode: 'plan' })
+    expect(out.modes?.availableModes).toEqual(conn.modes?.availableModes)
+    expect(out.models?.availableModels).toEqual(conn.models?.availableModels)
+    expect(out.reasoningEffort?.options).toEqual(conn.reasoningEffort?.options)
+  })
+
+  it('keeps an axis null when the agent advertises none (even with a stray pick)', () => {
+    const none: ThreadAgentControls = { modes: null, models: null, reasoningEffort: null }
+    const out = draftControls(none, { mode: 'plan', model: 'x', reasoningEffort: 'max' })
+    expect(out.modes).toBeNull()
+    expect(out.models).toBeNull()
+    expect(out.reasoningEffort).toBeNull()
   })
 })

@@ -51,8 +51,9 @@ export function ConnectedWorkspace({
   seedSessionId: string | null
   /** The active Thread's OWN agent-controls (#70), or null when none are seeded yet. */
   controls: ThreadAgentControls | null
-  /** Change an agent control on the active Thread's bound session (#66/#70, ADR-0007). */
-  onSetConfig: (axis: ThreadConfigAxis, value: string, sessionId: string) => void
+  /** Change an agent control on the active Thread (#66/#70, ADR-0007): a bound session
+   *  fires the IPC; a null session is a draft pre-pick App caches to apply on bind (#75). */
+  onSetConfig: (axis: ThreadConfigAxis, value: string, sessionId: string | null) => void
   /** A draft's first prompt bound its session — lift it (and its controls) to App. */
   onBound: (sessionId: string, controls: ThreadAgentControls | null) => void
   /** Promote the (cold) active Thread to live (Continue) — App hosts + reselects it. */

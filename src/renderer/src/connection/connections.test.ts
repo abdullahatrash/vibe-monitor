@@ -3,6 +3,7 @@ import {
   agentIdOf,
   connectedWorkspaceIds,
   connectionsReducer,
+  currentConfigValue,
   initialConnections,
   selectedConnection,
   shouldConnect,
@@ -29,10 +30,41 @@ function connected(workspaceId: string, agentId: string): ConnectState {
     title: null,
     modes: null,
     models: null,
+    reasoningEffort: null,
     signOutAvailable: true,
     authMethods: AUTH_METHODS,
   }
   return { status: 'connected', thread }
+}
+
+/** A connected state carrying all three agent-control axes (#66), for set-config tests. */
+function connectedWithControls(workspaceId: string, agentId: string): ConnectState {
+  const base = connected(workspaceId, agentId)
+  if (base.status !== 'connected') throw new Error('unreachable')
+  return {
+    status: 'connected',
+    thread: {
+      ...base.thread,
+      modes: {
+        currentModeId: 'default',
+        availableModes: [
+          { id: 'default', name: 'Default' },
+          { id: 'plan', name: 'Plan' },
+        ],
+      },
+      models: {
+        currentModelId: 'mistral-medium-3.5',
+        availableModels: [
+          { modelId: 'mistral-medium-3.5', name: 'mistral-medium-3.5' },
+          { modelId: 'devstral-small', name: 'devstral-small' },
+        ],
+      },
+      reasoningEffort: {
+        current: 'high',
+        options: [{ value: 'low' }, { value: 'high' }, { value: 'max' }],
+      },
+    },
+  }
 }
 
 describe('connectionsReducer', () => {
@@ -81,6 +113,80 @@ describe('connectionsReducer', () => {
     // a connecting/idle Workspace has no agent yet, so an unrelated eviction is inert.
     const same = connectionsReducer(map, { type: 'evict', agentIds: new Set(['a-unknown']) })
     expect(same).toBe(map)
+  })
+})
+
+describe('connectionsReducer set-config (#66 optimistic agent-control change)', () => {
+  it('updates the current value for each axis, leaving the others untouched', () => {
+    const map: ConnectionMap = { w1: connectedWithControls('w1', 'a1') }
+
+    const mode = connectionsReducer(map, { type: 'set-config', workspaceId: 'w1', axis: 'mode', value: 'plan' })
+    const s1 = mode.w1
+    if (s1.status !== 'connected') throw new Error('expected connected')
+    expect(s1.thread.modes?.currentModeId).toBe('plan')
+    expect(s1.thread.models?.currentModelId).toBe('mistral-medium-3.5') // model untouched
+    expect(s1.thread.reasoningEffort?.current).toBe('high') // effort untouched
+
+    const model = connectionsReducer(map, { type: 'set-config', workspaceId: 'w1', axis: 'model', value: 'devstral-small' })
+    const s2 = model.w1
+    if (s2.status !== 'connected') throw new Error('expected connected')
+    expect(s2.thread.models?.currentModelId).toBe('devstral-small')
+
+    const effort = connectionsReducer(map, { type: 'set-config', workspaceId: 'w1', axis: 'reasoningEffort', value: 'max' })
+    const s3 = effort.w1
+    if (s3.status !== 'connected') throw new Error('expected connected')
+    expect(s3.thread.reasoningEffort?.current).toBe('max')
+  })
+
+  it('reverts cleanly by re-dispatching the prior value (ADR-0007 revert)', () => {
+    const map: ConnectionMap = { w1: connectedWithControls('w1', 'a1') }
+    const optimistic = connectionsReducer(map, { type: 'set-config', workspaceId: 'w1', axis: 'mode', value: 'plan' })
+    const reverted = connectionsReducer(optimistic, { type: 'set-config', workspaceId: 'w1', axis: 'mode', value: 'default' })
+    const s = reverted.w1
+    if (s.status !== 'connected') throw new Error('expected connected')
+    expect(s.thread.modes?.currentModeId).toBe('default')
+  })
+
+  it('does not mutate the input state', () => {
+    const before = connectedWithControls('w1', 'a1')
+    const map: ConnectionMap = { w1: before }
+    connectionsReducer(map, { type: 'set-config', workspaceId: 'w1', axis: 'mode', value: 'plan' })
+    if (before.status !== 'connected') throw new Error('expected connected')
+    expect(before.thread.modes?.currentModeId).toBe('default') // original object unchanged
+  })
+
+  it('is a no-op (same ref) when the value is already current', () => {
+    const map: ConnectionMap = { w1: connectedWithControls('w1', 'a1') }
+    const same = connectionsReducer(map, { type: 'set-config', workspaceId: 'w1', axis: 'mode', value: 'default' })
+    expect(same).toBe(map)
+  })
+
+  it('is a no-op (same ref) when the Workspace is not connected or absent', () => {
+    const map: ConnectionMap = {
+      w1: { status: 'connecting', workspaceDir: '/proj/w1' },
+    }
+    expect(connectionsReducer(map, { type: 'set-config', workspaceId: 'w1', axis: 'mode', value: 'plan' })).toBe(map)
+    expect(connectionsReducer(map, { type: 'set-config', workspaceId: 'absent', axis: 'mode', value: 'plan' })).toBe(map)
+  })
+
+  it('is a no-op (same ref) when the axis is not advertised (null modes/models/effort)', () => {
+    const map: ConnectionMap = { w1: connected('w1', 'a1') } // all axes null
+    expect(connectionsReducer(map, { type: 'set-config', workspaceId: 'w1', axis: 'model', value: 'x' })).toBe(map)
+  })
+})
+
+describe('currentConfigValue (#66)', () => {
+  it('reads the current value per axis, null when unadvertised', () => {
+    const withControls = connectedWithControls('w1', 'a1')
+    if (withControls.status !== 'connected') throw new Error('expected connected')
+    expect(currentConfigValue(withControls.thread, 'mode')).toBe('default')
+    expect(currentConfigValue(withControls.thread, 'model')).toBe('mistral-medium-3.5')
+    expect(currentConfigValue(withControls.thread, 'reasoningEffort')).toBe('high')
+
+    const bare = connected('w1', 'a1')
+    if (bare.status !== 'connected') throw new Error('expected connected')
+    expect(currentConfigValue(bare.thread, 'mode')).toBeNull()
+    expect(currentConfigValue(bare.thread, 'reasoningEffort')).toBeNull()
   })
 })
 

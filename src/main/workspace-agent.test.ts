@@ -649,7 +649,15 @@ function makeCapturingFake(): CapturingFake {
 interface SentRpc {
   id?: number
   method?: string
-  params?: { sessionId?: string; prompt?: Array<{ type: string; text: string }> }
+  params?: {
+    sessionId?: string
+    prompt?: Array<{ type: string; text: string }>
+    // Agent-control setters (#66): the per-axis params.
+    modeId?: string
+    modelId?: string
+    configId?: string
+    value?: string
+  }
   result?: { content?: string; outcome?: { outcome?: string; optionId?: string } } | Record<string, never>
   error?: { code?: number; message?: string }
 }
@@ -1179,5 +1187,107 @@ describe('WorkspaceAgent.start() — concurrent + idempotent (TB2 #47)', () => {
     await agent.start()
     expect(spawns).toBe(1)
     expect(sent(fake).filter((m) => m.method === 'initialize')).toHaveLength(1)
+  })
+})
+
+describe('WorkspaceAgent agent controls (#66, acp-capture §10)', () => {
+  it('setMode sends session/set_mode {sessionId, modeId} and resolves on the {} result', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connect(fake)
+
+    const change = agent.setMode(SESSION_ID, 'plan')
+    const req = sent(fake).find((m) => m.method === 'session/set_mode')
+    expect(req?.params).toEqual({ sessionId: SESSION_ID, modeId: 'plan' })
+
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: req?.id, result: {} }) + '\n')
+    await expect(change).resolves.toBeUndefined()
+  })
+
+  it('setModel sends session/set_model {sessionId, modelId} (dedicated method, not set_config_option)', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connect(fake)
+
+    const change = agent.setModel(SESSION_ID, 'devstral-small')
+    const req = sent(fake).find((m) => m.method === 'session/set_model')
+    expect(req?.params).toEqual({ sessionId: SESSION_ID, modelId: 'devstral-small' })
+    // Model has its OWN method — it does NOT flow through set_config_option.
+    expect(sent(fake).some((m) => m.method === 'session/set_config_option')).toBe(false)
+
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: req?.id, result: {} }) + '\n')
+    await expect(change).resolves.toBeUndefined()
+  })
+
+  it('setReasoningEffort sends session/set_config_option with configId:"thinking" (NOT id)', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connect(fake)
+
+    const change = agent.setReasoningEffort(SESSION_ID, 'high')
+    const req = sent(fake).find((m) => m.method === 'session/set_config_option')
+    // The gotcha that cost real guesses: the key is `configId`, NOT `id`.
+    expect(req?.params).toEqual({ sessionId: SESSION_ID, configId: 'thinking', value: 'high' })
+
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: req?.id, result: {} }) + '\n')
+    await expect(change).resolves.toBeUndefined()
+  })
+
+  it('a setter rejects (mapped) when the agent errors, so the caller can revert', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connect(fake)
+
+    const change = agent.setMode(SESSION_ID, 'plan')
+    const req = sent(fake).find((m) => m.method === 'session/set_mode')
+    fake.feed(
+      JSON.stringify({ jsonrpc: '2.0', id: req?.id, error: { code: -32602, message: 'Invalid params' } }) + '\n',
+    )
+    await expect(change).rejects.toThrow(/Invalid params/)
+  })
+
+  it('openThread surfaces the reasoning-effort axis from the thinking configOption', async () => {
+    const fake = makeCapturingFake()
+    const agent = new WorkspaceAgent({ workspaceDir: '/abs/workspace', spawn: () => fake.child })
+    const started = agent.start()
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } }) + '\n')
+    await new Promise((r) => setTimeout(r, 0))
+    fake.feed(
+      JSON.stringify({ jsonrpc: '2.0', id: 2, result: { authenticated: true, authState: 'os_keyring' } }) + '\n',
+    )
+    await started
+
+    const opened = agent.openThread()
+    fake.feed(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 3,
+        result: {
+          sessionId: SESSION_ID,
+          configOptions: [
+            { id: 'mode' },
+            { id: 'model' },
+            {
+              id: 'thinking',
+              currentValue: 'high',
+              options: [{ value: 'off' }, { value: 'low' }, { value: 'high' }, { value: 'max' }],
+            },
+          ],
+        },
+      }) + '\n',
+    )
+    const info = await opened
+    expect(info.reasoningEffort).toEqual({
+      current: 'high',
+      options: [{ value: 'off' }, { value: 'low' }, { value: 'high' }, { value: 'max' }],
+    })
+  })
+
+  it('openThread leaves reasoningEffort null when no thinking configOption is advertised', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connect(fake)
+
+    // Open a second Thread over the same agent whose result omits configOptions.
+    const opened = agent.openThread()
+    const req = sent(fake).filter((m) => m.method === 'session/new').at(-1)
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: req?.id, result: { sessionId: 'second' } }) + '\n')
+    const info = await opened
+    expect(info.reasoningEffort).toBeNull()
   })
 })

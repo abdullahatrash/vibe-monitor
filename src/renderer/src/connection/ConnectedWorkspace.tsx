@@ -1,5 +1,5 @@
 import { type JSX } from 'react'
-import type { AuthMethod, ThreadConnection, ThreadMeta } from '../../../shared/ipc'
+import type { AuthMethod, ThreadConfigAxis, ThreadConnection, ThreadMeta } from '../../../shared/ipc'
 import { ColdThread } from '../conversation/ColdThread'
 import { Conversation } from '../conversation/Conversation'
 
@@ -23,6 +23,7 @@ export function ConnectedWorkspace({
   activeThread,
   isLive,
   seedSessionId,
+  onSetConfig,
   onBound,
   onContinue,
   onCloseCold,
@@ -35,6 +36,8 @@ export function ConnectedWorkspace({
   isLive: boolean
   /** The session to seed a live view with (bound-this-session wins over the cursor). */
   seedSessionId: string | null
+  /** Change an agent control on the active Thread's bound session (#66, ADR-0007). */
+  onSetConfig: (axis: ThreadConfigAxis, value: string, sessionId: string) => void
   /** A draft's first prompt bound its session — lift it to App's live-state. */
   onBound: (sessionId: string) => void
   /** Promote the (cold) active Thread to live (Continue) — App hosts + reselects it. */
@@ -44,6 +47,14 @@ export function ConnectedWorkspace({
   /** Mid-session expiry (-32000): route to in-place re-auth with these methods. */
   onAuthExpired: (authMethods: AuthMethod[]) => void
 }): JSX.Element {
+  // The connection carries exactly ONE Thread's Agent-controls values — the
+  // connect-time `session/new` Thread (`connection.threadId`). Show the picker ONLY
+  // when the active Thread IS that primary one, so a sibling live Thread (New-thread
+  // / Continue) never displays the primary's Mode/Model as if they were its own (a
+  // trust-relevant lie, since Mode gates write-approval). Per-Thread sourcing +
+  // post-`session/load` population (so every live Thread gets its own correct
+  // controls) is the tracked follow-up; until then a non-primary Thread shows none.
+  const showControls = activeThread.id === connection.threadId
   return (
     <div className="workspace">
       {isLive ? (
@@ -56,6 +67,10 @@ export function ConnectedWorkspace({
             sessionId: seedSessionId,
             title: activeThread.title,
           }}
+          modes={showControls ? connection.modes : null}
+          models={showControls ? connection.models : null}
+          reasoningEffort={showControls ? connection.reasoningEffort : null}
+          onSetConfig={onSetConfig}
           onAuthExpired={onAuthExpired}
           onBound={onBound}
         />

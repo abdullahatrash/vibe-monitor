@@ -71,6 +71,15 @@ export const IPC = {
    * change (`thread:status`), so without this a fresh window misses in-flight state.
    */
   getThreadStatuses: 'thread:statuses',
+  /**
+   * Renderer -> main: change one of a Thread's agent controls (#66) — Mode, Model,
+   * or Reasoning effort — on its bound ACP session. Main maps the axis to the
+   * verified setter (`session/set_mode` / `session/set_model` /
+   * `session/set_config_option`, acp-capture §10) and returns ok/err. A change emits
+   * NO notification (the `{}` result is the only signal), so the renderer updates the
+   * displayed value OPTIMISTICALLY and reverts on an `{ok:false}` (ADR-0007).
+   */
+  setThreadConfig: 'thread:set-config',
 } as const
 
 /**
@@ -133,6 +142,18 @@ export interface ThreadModels {
   availableModels: AcpModel[]
 }
 
+/**
+ * The reasoning-effort axis (#66), surfaced from `session/new`'s `thinking`
+ * configOption (acp-capture §10) — a select of `off`/`low`/`medium`/`high`/`max`.
+ * Distinct from Mode/Model: it has no dedicated method, so a change goes through
+ * the generic `session/set_config_option` with `configId: 'thinking'`. Each option
+ * carries a `value`; `name` is the display label when the agent provides one.
+ */
+export interface ThreadReasoningEffort {
+  current: string
+  options: { value: string; name?: string }[]
+}
+
 /** A connected Thread, mapped onto the ACP `sessionId` from `session/new`. */
 export interface ThreadInfo {
   /** The ACP session id this Thread is bound to (debug-visible only). */
@@ -141,6 +162,8 @@ export interface ThreadInfo {
   title: string | null
   modes: ThreadModes | null
   models: ThreadModels | null
+  /** The `thinking` configOption (#66) — null when the agent advertises none. */
+  reasoningEffort: ThreadReasoningEffort | null
 }
 
 export interface StartThreadArgs {
@@ -338,6 +361,32 @@ export interface SignOutArgs {
 export type SignOutResult =
   | { ok: true; authState: AuthState; authMethods: AuthMethod[] }
   | { ok: false; error: string }
+
+/** Which agent control a `setThreadConfig` change targets (#66). */
+export type ThreadConfigAxis = 'mode' | 'model' | 'reasoningEffort'
+
+/**
+ * Change one agent control on a Thread's bound ACP session (#66). `value` is the
+ * new id for the axis — a `modeId` from `availableModes`, a `modelId` from
+ * `availableModels` (NEVER an arbitrary string: `session/set_model` false-accepts
+ * any string, acp-capture §10), or a reasoning-effort `value` from the `thinking`
+ * options.
+ */
+export interface SetThreadConfigArgs {
+  /** Id of the Workspace agent (one `vibe-acp` process) hosting the Thread. */
+  agentId: string
+  /** The Thread's bound ACP session — the change is between-turns, so it's never null. */
+  sessionId: string
+  axis: ThreadConfigAxis
+  value: string
+}
+
+/**
+ * The `setThreadConfig` reply (#66). `ok` once the setter's `{}` result lands; on
+ * `{ok:false}` the renderer reverts the optimistic display to the prior value and
+ * surfaces the error (ADR-0007).
+ */
+export type SetThreadConfigResult = { ok: true } | { ok: false; error: string }
 
 /**
  * Persisted Workspace metadata (ADR-0005): a project dir the user has opened.

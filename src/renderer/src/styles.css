@@ -883,6 +883,12 @@ body {
   border-color: var(--accent);
 }
 
+.composer-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .composer {
   display: flex;
   gap: 8px;

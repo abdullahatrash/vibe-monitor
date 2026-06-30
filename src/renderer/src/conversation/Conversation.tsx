@@ -1,5 +1,12 @@
 import { useEffect, useReducer, useRef, useState, type JSX, type KeyboardEvent } from 'react'
-import type { AuthMethod } from '../../../shared/ipc'
+import type {
+  AuthMethod,
+  ThreadConfigAxis,
+  ThreadModes,
+  ThreadModels,
+  ThreadReasoningEffort,
+} from '../../../shared/ipc'
+import { AgentControls } from './AgentControls'
 import {
   conversationReducer,
   initialConversationState,
@@ -52,10 +59,23 @@ export interface LiveThread {
  */
 export function Conversation({
   thread,
+  modes,
+  models,
+  reasoningEffort,
+  onSetConfig,
   onAuthExpired,
   onBound,
 }: {
   thread: LiveThread
+  /** The connection's current Mode + options (#66) — display-from-session-state. */
+  modes: ThreadModes | null
+  /** The connection's current Model + options (#66). */
+  models: ThreadModels | null
+  /** The connection's current Reasoning effort + options (#66). */
+  reasoningEffort: ThreadReasoningEffort | null
+  /** Change an agent control (#66): App reflects it optimistically + reverts on error.
+   *  Carries the Thread's bound `sessionId` (non-null once bound) for the IPC call. */
+  onSetConfig?: (axis: ThreadConfigAxis, value: string, sessionId: string) => void
   /** Mid-session expiry (-32000): route to in-place re-auth with these methods. */
   onAuthExpired: (authMethods: AuthMethod[]) => void
   /** The Thread's session once bound (TB5) — lifts it so a switch-away-and-back
@@ -256,26 +276,43 @@ export function Conversation({
         </button>
       )}
 
-      <div className="composer">
-        <textarea
-          className="composer__input"
-          placeholder="Ask Vibe… (Enter to send, Shift+Enter for a newline)"
-          value={draft}
-          onChange={(e) => {
-            // Write-through: keep React state and the persisted draft (#60) in lockstep.
-            setDraft(e.target.value)
-            persistDraft(window.localStorage, thread.threadId, e.target.value)
+      <div className="composer-area">
+        {/* Agent controls (#66): Mode / Model / Reasoning effort. Vibe-owned,
+            between-turns only — disabled while a turn streams OR before this Thread
+            has a bound session (a draft binds on its first prompt). */}
+        <AgentControls
+          modes={modes}
+          models={models}
+          reasoningEffort={reasoningEffort}
+          disabled={state.isProcessing || boundSessionId === null}
+          onSetConfig={(axis, value) => {
+            // The disabled gate guarantees a bound session here, but guard anyway so
+            // a stray call can never send a config change with a null sessionId.
+            if (boundSessionId) onSetConfig?.(axis, value, boundSessionId)
           }}
-          onKeyDown={onKeyDown}
-          rows={2}
         />
-        <button
-          className="btn"
-          onClick={() => void send()}
-          disabled={state.isProcessing || draft.trim().length === 0}
-        >
-          {state.isProcessing ? 'Sending…' : 'Send'}
-        </button>
+
+        <div className="composer">
+          <textarea
+            className="composer__input"
+            placeholder="Ask Vibe… (Enter to send, Shift+Enter for a newline)"
+            value={draft}
+            onChange={(e) => {
+              // Write-through: keep React state and the persisted draft (#60) in lockstep.
+              setDraft(e.target.value)
+              persistDraft(window.localStorage, thread.threadId, e.target.value)
+            }}
+            onKeyDown={onKeyDown}
+            rows={2}
+          />
+          <button
+            className="btn"
+            onClick={() => void send()}
+            disabled={state.isProcessing || draft.trim().length === 0}
+          >
+            {state.isProcessing ? 'Sending…' : 'Send'}
+          </button>
+        </div>
       </div>
     </div>
   )

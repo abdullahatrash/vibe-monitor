@@ -10,6 +10,8 @@ import {
   type OpenThreadArgs,
   type SendPromptArgs,
   type SendPromptResult,
+  type SetThreadConfigArgs,
+  type SetThreadConfigResult,
   type SignInArgs,
   type SignInResult,
   type SignOutArgs,
@@ -41,6 +43,8 @@ const api = {
   deleteThread: (threadId: string): Promise<DeleteThreadResult> =>
     ipcRenderer.invoke(IPC.deleteThread, threadId),
   getThreadStatuses: (): Promise<ThreadStatusEvent[]> => ipcRenderer.invoke(IPC.getThreadStatuses),
+  setThreadConfig: (args: SetThreadConfigArgs): Promise<SetThreadConfigResult> =>
+    ipcRenderer.invoke(IPC.setThreadConfig, args),
   readTranscript: (threadId: string): Promise<ReadTranscriptResult> =>
     ipcRenderer.invoke(IPC.readTranscript, threadId),
   onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {

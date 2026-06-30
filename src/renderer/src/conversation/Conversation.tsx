@@ -16,6 +16,7 @@ import {
 } from './reducer'
 import { eventBelongsToThread } from './event-routing'
 import { replayTranscript } from './replay'
+import { ChatMarkdown } from './ChatMarkdown'
 
 /** Process-local counter for unique echoed-prompt ids. */
 let promptSeq = 0
@@ -326,7 +327,7 @@ function AssistantRow({ item }: { item: AssistantItem }): JSX.Element {
   return (
     <div className="msg msg--assistant">
       <div className="msg__role">Vibe</div>
-      <div className="msg__body">{item.text}</div>
+      <ChatMarkdown className="msg__body" text={item.text} />
     </div>
   )
 }
@@ -335,7 +336,7 @@ function ReasoningRow({ item }: { item: ReasoningItem }): JSX.Element {
   return (
     <details className="reasoning" open>
       <summary className="reasoning__summary">Reasoning</summary>
-      <div className="reasoning__body">{item.text}</div>
+      <ChatMarkdown className="reasoning__body" text={item.text} />
     </details>
   )
 }

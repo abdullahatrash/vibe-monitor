@@ -18,8 +18,17 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@base-ui/react": "^1.4.1",
+    "@tailwindcss/vite": "^4",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.564",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10",
+    "remark-breaks": "^4",
+    "remark-gfm": "^4",
+    "tailwind-merge": "^3",
+    "tailwindcss": "^4"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

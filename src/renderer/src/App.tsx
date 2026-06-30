@@ -28,6 +28,7 @@ import {
   boundConfigValue,
   configFor,
   currentConfigValue,
+  draftControls,
   initialWorkspaceThreads,
   reassertions,
   selectedFor,
@@ -264,6 +265,25 @@ export function App(): JSX.Element {
         if (prev !== null) wtDispatch({ type: 'set-config', workspaceId, threadId, axis, value: prev })
       })
     }
+  }
+
+  /**
+   * Pre-select an agent control on a New-thread DRAFT (#75), before its first prompt
+   * binds a session. A draft has no live session, so there's NO IPC — we only cache
+   * the pick into the in-memory `selected` map (keyed by `threadId`). The display
+   * updates because the draft's picker reads `draftControls(connection, selected)`, and
+   * because this writes the SAME cache `changeThreadConfig` writes on a bound Thread,
+   * the EXISTING `reassertAfterResume` (#72) applies the pre-pick to the session the
+   * instant the first prompt mints it — no second apply path, and no residue (the cache
+   * evaporates with the draft / on restart, ADR-0007).
+   */
+  function preselectDraftConfig(
+    workspaceId: string,
+    threadId: string,
+    axis: ThreadConfigAxis,
+    value: string,
+  ): void {
+    wtDispatch({ type: 'cache-selection', workspaceId, threadId, axis, value })
   }
 
   /**
@@ -536,10 +556,19 @@ export function App(): JSX.Element {
           activeThread={activeThread}
           isLive={isLive}
           seedSessionId={seed}
-          controls={configFor(workspaceThreads, conn.workspaceId, activeThread.id)}
-          onSetConfig={(axis, value, sessionId) =>
-            changeThreadConfig(conn.workspaceId, conn.agentId, activeThread.id, axis, value, sessionId)
+          controls={
+            // A bound Thread sources its OWN live config (#70); a draft (no config
+            // seeded) shows the connection's option lists + defaults, overlaid with any
+            // cached pre-pick (#75).
+            configFor(workspaceThreads, conn.workspaceId, activeThread.id) ??
+            draftControls(connectionControlsOf(conn), selectedFor(workspaceThreads, conn.workspaceId, activeThread.id))
           }
+          onSetConfig={(axis, value, sessionId) => {
+            // A real session => the bound IPC path (#70); a null session => a draft
+            // pre-pick that only caches (#75), applied to the session on first bind.
+            if (sessionId) changeThreadConfig(conn.workspaceId, conn.agentId, activeThread.id, axis, value, sessionId)
+            else preselectDraftConfig(conn.workspaceId, activeThread.id, axis, value)
+          }}
           onBound={(sessionId, controls) => {
             // Seed the displayed config from the bound session's reported values, then
             // re-assert the user's cached selection over them (#72) — a resume reports
@@ -671,6 +700,16 @@ function synthConnectionMeta(conn: ThreadConnection): ThreadMeta {
     createdAt: 0,
     lastActiveAt: 0,
   }
+}
+
+/**
+ * Project a connection's advertised agent-controls (#75): the connect-time option
+ * lists + DEFAULT current values, never optimistically mutated (a pick lands in
+ * `workspace-threads.config`, not here — #70). Used to seed a draft's picker so it
+ * shows the agent defaults a default-mint would produce.
+ */
+function connectionControlsOf(conn: ThreadConnection): ThreadAgentControls {
+  return { modes: conn.modes, models: conn.models, reasoningEffort: conn.reasoningEffort }
 }
 
 /**

@@ -340,11 +340,19 @@ describe('WorkspaceAgent — sign in (browser-auth-delegated)', () => {
       JSON.stringify({
         jsonrpc: '2.0',
         id: completeReq?.id,
-        error: { code: -32602, message: 'Invalid request' },
+        // Vibe's real reason for a lapsed poll window (browser_sign_in.py: TIMED_OUT),
+        // surfaced as InvalidRequestError(-32602).
+        error: { code: -32602, message: 'Browser sign-in timed out.' },
       }) + '\n',
     )
 
-    await expect(signingIn).rejects.toBeInstanceOf(WorkspaceAgentError)
+    const err = await signingIn.catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(WorkspaceAgentError)
+    // Vibe's specific reason AND the JSON-RPC code are preserved (not collapsed into
+    // a generic "Sign-in failed") — the whole point of #76 part A.
+    expect((err as WorkspaceAgentError).message).toMatch(/Browser sign-in timed out\./)
+    expect((err as WorkspaceAgentError).message).toContain('(code -32602)')
+    expect((err as WorkspaceAgentError).code).toBe(-32602)
     // The failure leaves auth state untouched (still signed-out) — never wedged.
     expect(agent.authState).toBe('not-signed-in')
   })
@@ -601,6 +609,10 @@ describe('WorkspaceAgent — sign out (_auth/signOut)', () => {
     const err = await settled
     expect(err).toBeInstanceOf(WorkspaceAgentError)
     expect((err as WorkspaceAgentError).message).toMatch(/sign-out failed/i)
+    // Preserves the keyring reason + code (#76 part A), not a bare "Sign-out failed".
+    expect((err as WorkspaceAgentError).message).toContain('keyring error')
+    expect((err as WorkspaceAgentError).message).toContain('(code -32603)')
+    expect((err as WorkspaceAgentError).code).toBe(-32603)
     // Failed sign-out leaves the session signed-in — never wedged.
     expect(agent.authState).toBe('signed-in')
   })

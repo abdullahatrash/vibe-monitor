@@ -709,7 +709,12 @@ function registerIpc(): void {
       const authState = await agent.signIn(args.methodId)
       return { ok: true, authState }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      const error = err instanceof Error ? err.message : String(err)
+      // Diagnostic breadcrumb to main-process stderr (NOT the renderer transcript):
+      // the formatted message already carries Vibe's reason + the JSON-RPC code, so
+      // an intermittent failure (e.g. a timed-out delegated `complete`) is traceable.
+      console.error(`[vibe-mistro:auth] sign-in failed (agent ${args.agentId}): ${error}`)
+      return { ok: false, error }
     } finally {
       endAuth(args.agentId)
     }
@@ -725,7 +730,9 @@ function registerIpc(): void {
       const authState = await agent.signOut()
       return { ok: true, authState, authMethods: agent.authMethods }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      const error = err instanceof Error ? err.message : String(err)
+      console.error(`[vibe-mistro:auth] sign-out failed (agent ${args.agentId}): ${error}`)
+      return { ok: false, error }
     }
   })
 

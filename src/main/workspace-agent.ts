@@ -42,11 +42,24 @@ export class WorkspaceAgentError extends Error {
    * sign-in panel and keep the agent alive instead of treating it as generic.
    */
   readonly authState: AuthState | null
-  constructor(message: string, hint: string | null = null, authState: AuthState | null = null) {
+  /**
+   * The originating JSON-RPC error `code` when this wraps an ACP request failure
+   * (e.g. `-32602` for a timed-out/denied/expired delegated `complete`). Preserved
+   * so the specific reason reaches the renderer and the diagnostic log instead of
+   * collapsing into a generic message. `null` when the failure carried no code.
+   */
+  readonly code: number | null
+  constructor(
+    message: string,
+    hint: string | null = null,
+    authState: AuthState | null = null,
+    code: number | null = null,
+  ) {
     super(message)
     this.name = 'WorkspaceAgentError'
     this.hint = hint
     this.authState = authState
+    this.code = code
   }
 }
 
@@ -400,18 +413,23 @@ export class WorkspaceAgent extends EventEmitter {
     }
   }
 
-  /** Map a sign-out failure to a clear message (not a bare RPC string). */
+  /** Map a sign-out failure to a clear message (Vibe's reason + the RPC code). */
   private toSignOutError(err: unknown): WorkspaceAgentError {
     if (err instanceof WorkspaceAgentError) return err
-    const detail = (err as { message?: string })?.message ?? (err instanceof Error ? err.message : String(err))
-    return new WorkspaceAgentError(`Sign-out failed: ${detail}`, AUTH_HINT)
+    const { code, detail } = rpcErrorParts(err)
+    return new WorkspaceAgentError(formatAuthFailure('Sign-out', detail, code), AUTH_HINT, null, code)
   }
 
-  /** Map a sign-in failure to a clear message (not a bare RPC string). */
+  /**
+   * Map a sign-in failure to a clear message. Preserves Vibe's specific reason
+   * (e.g. "Browser sign-in timed out." / "denied" / "expired" from a delegated
+   * `complete`) and the JSON-RPC `code`, so the renderer surfaces the actual cause
+   * instead of a generic "Sign-in failed" — and so the main-process log records it.
+   */
   private toSignInError(err: unknown): WorkspaceAgentError {
     if (err instanceof WorkspaceAgentError) return err
-    const detail = (err as { message?: string })?.message ?? (err instanceof Error ? err.message : String(err))
-    return new WorkspaceAgentError(`Sign-in failed: ${detail}`, AUTH_HINT)
+    const { code, detail } = rpcErrorParts(err)
+    return new WorkspaceAgentError(formatAuthFailure('Sign-in', detail, code), AUTH_HINT, null, code)
   }
 
   /**
@@ -738,6 +756,28 @@ export class WorkspaceAgent extends EventEmitter {
     }
     return new WorkspaceAgentError(message)
   }
+}
+
+/**
+ * Pull a JSON-RPC error's `{code, message}` off an ACP request rejection.
+ * `AcpClient` rejects a failed request with the wire `error` object
+ * (`{code, message, data}`); a process-exit/stop rejection is a plain `Error`
+ * (no `code`). Falls back to a non-empty detail string so the surfaced message
+ * is never blank.
+ */
+function rpcErrorParts(err: unknown): { code: number | null; detail: string } {
+  const rawCode = (err as { code?: unknown } | null)?.code
+  const code = typeof rawCode === 'number' ? rawCode : null
+  const rawMessage = (err as { message?: unknown } | null)?.message
+  const detail =
+    (typeof rawMessage === 'string' ? rawMessage : err instanceof Error ? err.message : String(err)) ||
+    'unknown error'
+  return { code, detail }
+}
+
+/** Format an auth failure as the reason plus the JSON-RPC code (when present). */
+function formatAuthFailure(action: string, detail: string, code: number | null): string {
+  return code !== null ? `${action} failed: ${detail} (code ${code})` : `${action} failed: ${detail}`
 }
 
 interface DelegatedMeta {

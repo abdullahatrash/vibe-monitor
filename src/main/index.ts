@@ -13,6 +13,10 @@ import {
   type GitDiffArgs,
   type GitDiffResult,
   type GitOpResult,
+  type GhCreatePrArgs,
+  type GhCreateResult,
+  type GhCurrentPrArgs,
+  type GhPrResult,
   type GitStatusEvent,
   type GitStatusSubscriptionArgs,
   type ListMetadataResult,
@@ -60,6 +64,7 @@ import { gitFetch, readGitStatus } from './git/status'
 import { readGitDiff } from './git/diff'
 import { gitCommit } from './git/commit'
 import { gitBranches, gitCheckout, gitCreateBranch } from './git/branches'
+import { ghCreatePr, ghCurrentPr } from './git/github'
 import { GitStatusManager } from './git/status-stream'
 import { chokidarWatchFactory, realClock } from './git/runtime'
 
@@ -954,6 +959,24 @@ function registerIpc(): void {
     const result = await gitCreateBranch(args.workspaceDir, args.name)
     if (result.ok) gitStatus.refresh(args.workspaceDir)
     else console.error(`[vibe-mistro:git] create-branch failed (${args.workspaceDir} -> ${args.name}): ${result.error}`)
+    return result
+  })
+
+  ipcMain.handle(IPC.ghCurrentPr, (_event, args: GhCurrentPrArgs): Promise<GhPrResult> => {
+    // Read the current branch's GitHub PR via `gh` (#88, slice 4). cwd is the Workspace
+    // dir (where #84's status ran). A NETWORK call, but read-only, so — like git:diff — it
+    // does NOT `pool.touch` (surfacing a PR must not keep a warm agent alive past its idle
+    // window, TB5 #50). `ghCurrentPr` swallows every gh failure into a result (never throws).
+    return ghCurrentPr(args.workspaceDir)
+  })
+
+  ipcMain.handle(IPC.ghCreatePr, async (_event, args: GhCreatePrArgs): Promise<GhCreateResult> => {
+    // Create a PR for the current branch via `gh pr create` (#88). cwd is the Workspace
+    // dir. NOT agent activity, so no `pool.touch`. `ghCreatePr` swallows every gh failure
+    // into `{ok:false, error}` (never throws); no status refresh needed (a PR creation
+    // doesn't change the working tree — the renderer swaps in the new chip from the URL).
+    const result = await ghCreatePr(args.workspaceDir, { title: args.title, body: args.body })
+    if (!result.ok) console.error(`[vibe-mistro:gh] create-pr failed (${args.workspaceDir}): ${result.error}`)
     return result
   })
 }

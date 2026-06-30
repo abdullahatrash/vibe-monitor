@@ -12,6 +12,10 @@ import {
   type GitDiffArgs,
   type GitDiffResult,
   type GitOpResult,
+  type GhCreatePrArgs,
+  type GhCreateResult,
+  type GhCurrentPrArgs,
+  type GhPrResult,
   type GitStatusEvent,
   type GitStatusSubscriptionArgs,
   type ListMetadataResult,
@@ -73,6 +77,10 @@ const api = {
     ipcRenderer.invoke(IPC.gitCheckout, args),
   gitCreateBranch: (args: GitBranchOpArgs): Promise<GitOpResult> =>
     ipcRenderer.invoke(IPC.gitCreateBranch, args),
+  ghCurrentPr: (args: GhCurrentPrArgs): Promise<GhPrResult> =>
+    ipcRenderer.invoke(IPC.ghCurrentPr, args),
+  ghCreatePr: (args: GhCreatePrArgs): Promise<GhCreateResult> =>
+    ipcRenderer.invoke(IPC.ghCreatePr, args),
   onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {
     const handler = (_e: unknown, payload: AcpEvent): void => listener(payload)
     ipcRenderer.on(IPC.acpEvent, handler)

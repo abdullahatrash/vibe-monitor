@@ -146,6 +146,23 @@ export const IPC = {
    * shows the new branch. A name collision returns `{ok:false, error}` (never throws).
    */
   gitCreateBranch: 'git:create-branch',
+  /**
+   * Renderer -> main: read the CURRENT branch's GitHub PR via the `gh` CLI (#88, slice 4,
+   * ADR-0008). Invoke, `{ workspaceDir }` -> `GhPrResult` — `{ok:true, pr}` (the PR or
+   * null when the branch has none / the repo isn't on GitHub), or `{ok:false, error}` for
+   * gh-missing / not-authed / an unexpected gh failure. A NETWORK call (gh hits the GitHub
+   * API), so the renderer fetches on branch-change + manual refresh, NOT on every status
+   * tick. Read-only, so — like the other git ops — it does NOT touch the warm-agent pool.
+   */
+  ghCurrentPr: 'gh:current-pr',
+  /**
+   * Renderer -> main: CREATE a PR for the current branch via `gh pr create` (#88). Invoke,
+   * `{ workspaceDir, title, body }` -> `GhCreateResult` (`{ok:true, url}` — the new PR's
+   * URL — or `{ok:false, error}`). gh inherits the user's `gh auth`; we pass no `--base`
+   * (gh defaults to the repo's default branch) and do NOT push (the renderer gates the
+   * affordance on the branch having an upstream). NOT agent activity, so no `pool.touch`.
+   */
+  ghCreatePr: 'gh:create-pr',
 } as const
 
 /**
@@ -705,4 +722,45 @@ export interface GitBranchOpArgs {
   workspaceDir: string
   name: string
   track?: boolean
+}
+
+/**
+ * A GitHub pull request, as `gh pr view --json number,title,url,state` reports it (#88).
+ * `state` is gh's uppercase status — `OPEN` / `CLOSED` / `MERGED` (kept verbatim; the
+ * renderer tints the chip on it). `url` is the PR's web URL (opened externally via the
+ * renderer's `target="_blank"` anchor -> main's `setWindowOpenHandler` -> `shell.openExternal`).
+ */
+export interface GhPr {
+  number: number
+  title: string
+  url: string
+  state: string
+}
+
+/**
+ * The `ghCurrentPr` reply (#88). `{ok:true, pr}` where `pr` is the current branch's PR or
+ * `null` (no PR for the branch, or the repo isn't on GitHub — both a normal "no PR
+ * surface", NOT an error). `{ok:false, error}` is reserved for gh-missing / not-authed /
+ * an unexpected gh failure — surfaced as a subtle hint in the panel, never a crash.
+ */
+export type GhPrResult = { ok: true; pr: GhPr | null } | { ok: false; error: string }
+
+/**
+ * The `ghCreatePr` reply (#88). `{ok:true, url}` carries the new PR's URL (gh prints it on
+ * success — the renderer shows the chip + opens it externally). `{ok:false, error}` carries
+ * a friendly reason: gh-missing, the `gh auth login` hint, "push your branch first", or
+ * gh's verbatim stderr — surfaced inline + recoverable.
+ */
+export type GhCreateResult = { ok: true; url: string } | { ok: false; error: string }
+
+/** Args for `ghCurrentPr` (#88): read one Workspace's current-branch PR. */
+export interface GhCurrentPrArgs {
+  workspaceDir: string
+}
+
+/** Args for `ghCreatePr` (#88): create a PR for one Workspace's current branch. */
+export interface GhCreatePrArgs {
+  workspaceDir: string
+  title: string
+  body: string
 }

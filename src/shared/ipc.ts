@@ -113,6 +113,16 @@ export const IPC = {
    * touch the warm-agent pool. A git failure (or no diff) returns the empty result.
    */
   gitDiff: 'git:diff',
+  /**
+   * Renderer -> main: COMMIT working-tree changes from the Changes panel (#86,
+   * ADR-0008) — the first git WRITE. Invoke, `{ workspaceDir, message, paths }` ->
+   * `GitCommitResult`. `paths` is the commit-time file selection (empty = commit all);
+   * main stages exactly that selection then commits (no stage/unstage UI). On success
+   * main re-reads status (`gitStatus.refresh`) so the committed files drop off the
+   * panel — a `.git`-only change the fs watcher won't see, like #84's turn-end refresh.
+   * NOT agent activity, so it does NOT touch the warm-agent pool (like `git:diff`).
+   */
+  gitCommit: 'git:commit',
 } as const
 
 /**
@@ -605,3 +615,23 @@ export interface GitDiffResult {
   diffHash: string
   truncated: boolean
 }
+
+/**
+ * Args for `gitCommit` (#86): commit working-tree changes. `message` is the commit
+ * message (the panel disables Commit on an empty/whitespace one). `paths` is the
+ * commit-time selection of `GitFile.path`s — a NON-empty subset stages exactly those
+ * (a mixed `reset` + `add -- <paths>`), an EMPTY array commits ALL changes (`add -A`).
+ */
+export interface GitCommitArgs {
+  workspaceDir: string
+  message: string
+  paths: string[]
+}
+
+/**
+ * The `gitCommit` reply (#86). `{ok:true}` on a clean commit (main then refreshes the
+ * Changes panel so the committed files drop off). `{ok:false, error}` carries git's
+ * ACTUAL reason — "nothing to commit", a failed pre-commit hook, an index lock — not a
+ * collapsed "commit failed" (#78 style). The renderer shows `error` inline + recoverable.
+ */
+export type GitCommitResult = { ok: true } | { ok: false; error: string }

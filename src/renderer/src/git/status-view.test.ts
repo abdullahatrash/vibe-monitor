@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildChangesView, fileGlyph } from './status-view'
+import { buildChangesView, fileGlyph, reconcileUnchecked } from './status-view'
 import type { GitFile, GitStatus } from '../../../shared/ipc'
 
 function file(partial: Partial<GitFile> & { path: string }): GitFile {
@@ -55,5 +55,30 @@ describe('buildChangesView', () => {
     const view = buildChangesView({ ...status, branch: null, files: [] })
     expect(view.branch).toBe('HEAD')
     expect(view.detached).toBe(true)
+  })
+})
+
+describe('reconcileUnchecked', () => {
+  it('drops a deselected path that has vanished from the changed set', () => {
+    const next = reconcileUnchecked(new Set(['a.txt', 'gone.txt']), ['a.txt', 'b.txt'])
+    expect([...next]).toEqual(['a.txt'])
+  })
+
+  it('keeps a NEW file selected by default (it is absent from the set)', () => {
+    // `new.txt` appears in the changed set but not in `unchecked` → stays selected.
+    const next = reconcileUnchecked(new Set(['a.txt']), ['a.txt', 'new.txt'])
+    expect([...next]).toEqual(['a.txt'])
+  })
+
+  it('returns the SAME set ref when nothing changed (no needless re-render)', () => {
+    const unchecked = new Set(['a.txt'])
+    expect(reconcileUnchecked(unchecked, ['a.txt', 'b.txt'])).toBe(unchecked)
+  })
+
+  it('returns a NEW set when an entry was dropped (ref changes)', () => {
+    const unchecked = new Set(['gone.txt'])
+    const next = reconcileUnchecked(unchecked, ['a.txt'])
+    expect(next).not.toBe(unchecked)
+    expect(next.size).toBe(0)
   })
 })

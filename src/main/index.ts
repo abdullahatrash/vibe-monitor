@@ -5,6 +5,8 @@ import { basename, join } from 'node:path'
 import {
   IPC,
   type DeleteThreadResult,
+  type GitCommitArgs,
+  type GitCommitResult,
   type GitDiffArgs,
   type GitDiffResult,
   type GitStatusEvent,
@@ -52,6 +54,7 @@ import { deleteThread } from './persistence/delete-thread'
 import { permissionRequestIdOf, ThreadStatusTracker, type ThreadStatusChange } from './thread-status'
 import { gitFetch, readGitStatus } from './git/status'
 import { readGitDiff } from './git/diff'
+import { gitCommit } from './git/commit'
 import { GitStatusManager } from './git/status-stream'
 import { chokidarWatchFactory, realClock } from './git/runtime'
 
@@ -901,6 +904,24 @@ function registerIpc(): void {
     // agent alive past its idle window (TB5 #50). Swallows git failure into the empty
     // result inside `readGitDiff` (never throws).
     return readGitDiff(args.workspaceDir, args.path, args.untracked, args.ignoreWhitespace ?? false)
+  })
+
+  ipcMain.handle(IPC.gitCommit, async (_event, args: GitCommitArgs): Promise<GitCommitResult> => {
+    // Commit working-tree changes from the Changes panel (#86, the first git WRITE).
+    // cwd is the Workspace dir (where #84's status ran, so `paths` key the same). NOT
+    // agent activity, so — like `git:diff` — it does NOT `pool.touch` (a commit must not
+    // keep a warm agent alive past its idle window, TB5 #50). `gitCommit` swallows every
+    // git failure into `{ok:false, error}` (never throws).
+    const result = await gitCommit(args.workspaceDir, args.message, args.paths)
+    if (result.ok) {
+      // Re-read status so the committed files drop off the panel: a commit touches only
+      // `.git/`, which the working-tree fs watcher ignores (exactly like #84's turn-end
+      // refresh for the agent's own commits). No-op unless the panel is subscribed.
+      gitStatus.refresh(args.workspaceDir)
+    } else {
+      console.error(`[vibe-mistro:git] commit failed (${args.workspaceDir}): ${result.error}`)
+    }
+    return result
   })
 }
 

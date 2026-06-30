@@ -2,7 +2,7 @@ import { useEffect, useState, type JSX } from 'react'
 import { ChevronDown, ChevronRight, GitBranch, RefreshCw } from 'lucide-react'
 import type { GitStatus } from '../../../shared/ipc'
 import { cn } from '../lib/utils'
-import { buildChangesView, type GitFileView } from './status-view'
+import { buildChangesView, reconcileUnchecked, type GitFileView } from './status-view'
 import { DiffWorkerProvider } from './DiffWorkerProvider'
 import { DiffView } from './DiffView'
 
@@ -31,13 +31,29 @@ import { DiffView } from './DiffView'
 export function ChangesPanel({
   workspaceDir,
   isActive,
+  busy,
 }: {
   workspaceDir: string
   isActive: boolean
+  /**
+   * Whether this Workspace has a streaming turn (#86 concurrency guard). The agent can
+   * run `git commit` itself as a tool-call mid-turn, so the v1 guard simply DISABLES the
+   * commit affordance while a turn is in flight — there is no concurrent user+agent
+   * commit (no locks/queues). Status re-reads after the turn (#84 turn-end refresh), so
+   * the panel reflects whatever the agent committed before the user can commit again.
+   */
+  busy: boolean
 }): JSX.Element | null {
   const [status, setStatus] = useState<GitStatus | null>(null)
   const [collapsed, setCollapsed] = useState(false)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  // Commit-time file selection (#86), tracked as the paths the user DESELECTED — default
+  // empty = all selected, so a new file is selected by default. `message` is the commit
+  // message; `committing` blocks a double-submit; `commitError` surfaces git's reason.
+  const [unchecked, setUnchecked] = useState<Set<string>>(() => new Set())
+  const [message, setMessage] = useState('')
+  const [committing, setCommitting] = useState(false)
+  const [commitError, setCommitError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!isActive) return
@@ -51,6 +67,14 @@ export function ChangesPanel({
     }
   }, [workspaceDir, isActive])
 
+  // Reconcile the deselection set on every status snapshot: drop a path that's vanished
+  // (committed / reverted), keep new files selected by default. `reconcileUnchecked`
+  // returns the same ref when nothing changed, so an unrelated tick is a no-op setState.
+  useEffect(() => {
+    const paths = status?.isRepo ? status.files.map((f) => f.path) : []
+    setUnchecked((prev) => reconcileUnchecked(prev, paths))
+  }, [status])
+
   // Manual refresh: a subscribe/unsubscribe pair re-emits a fresh snapshot without
   // changing the net ref-count (the panel keeps its own hold across this).
   function refresh(): void {
@@ -63,6 +87,33 @@ export function ChangesPanel({
   if (!status || !status.isRepo) return null
 
   const view = buildChangesView(status)
+
+  // The selected files = everything not explicitly deselected (#86). These are the exact
+  // paths handed to `gitCommit`; main stages precisely this selection then commits.
+  const selectedPaths = view.files.filter((f) => !unchecked.has(f.path)).map((f) => f.path)
+  const canCommit = message.trim().length > 0 && selectedPaths.length > 0 && !busy && !committing
+
+  async function commit(): Promise<void> {
+    if (!canCommit) return
+    setCommitting(true)
+    setCommitError(null)
+    try {
+      const result = await window.api.gitCommit({ workspaceDir, message: message.trim(), paths: selectedPaths })
+      if (result.ok) {
+        // The committed files drop off via the status refresh main triggers; clear the
+        // message so the next commit starts fresh. The deselection set reconciles itself
+        // as the now-committed paths vanish from the next snapshot.
+        setMessage('')
+      } else {
+        // Recoverable: surface git's actual reason inline; the user can edit + retry.
+        setCommitError(result.error)
+      }
+    } finally {
+      // Always re-enable the button — even if the IPC unexpectedly rejects, it can't
+      // stick on "Committing…".
+      setCommitting(false)
+    }
+  }
 
   // DIFF mode, gated on `isActive` so a backgrounded (mounted-hidden) Workspace left
   // in DIFF doesn't keep the `@pierre/diffs` worker pool alive while off-screen — and
@@ -138,11 +189,60 @@ export function ChangesPanel({
           {view.files.length === 0 ? (
             <p className="px-3 py-3 text-xs text-muted">No changes — working tree clean.</p>
           ) : (
-            <ul className="flex flex-col py-1">
-              {view.files.map((file) => (
-                <FileRow key={file.path} file={file} onSelect={() => setSelectedPath(file.path)} />
-              ))}
-            </ul>
+            <>
+              <ul className="flex flex-col py-1">
+                {view.files.map((file) => (
+                  <FileRow
+                    key={file.path}
+                    file={file}
+                    checked={!unchecked.has(file.path)}
+                    onToggle={() =>
+                      setUnchecked((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(file.path)) next.delete(file.path)
+                        else next.add(file.path)
+                        return next
+                      })
+                    }
+                    onSelect={() => setSelectedPath(file.path)}
+                  />
+                ))}
+              </ul>
+
+              {/* Commit area (#86): message + "Commit N". Disabled on an empty message,
+                  no selection, or `busy` (the v1 concurrency guard — no concurrent
+                  user+agent commit). git's reason surfaces inline + recoverable. */}
+              <div className="flex flex-col gap-2 border-t border-border px-3 py-2">
+                <textarea
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  placeholder="Commit message"
+                  rows={2}
+                  className="w-full resize-y border border-border bg-panel px-2 py-1 text-xs text-text placeholder:text-muted focus:border-accent focus:outline-none"
+                  // Ctrl/Cmd+Enter commits, matching the prompt composer's submit chord.
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault()
+                      void commit()
+                    }
+                  }}
+                />
+                {commitError && (
+                  <p className="text-[11px] text-bad" role="alert">
+                    {commitError}
+                  </p>
+                )}
+                {busy && <p className="text-[11px] text-muted">Agent is working…</p>}
+                <button
+                  type="button"
+                  onClick={() => void commit()}
+                  disabled={!canCommit}
+                  className="bg-accent px-2 py-1 text-xs font-medium text-on-accent hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {committing ? 'Committing…' : `Commit ${selectedPaths.length}`}
+                </button>
+              </div>
+            </>
           )}
         </>
       )}
@@ -157,15 +257,37 @@ function glyphClass(glyph: string): string {
   return 'text-accent-text'
 }
 
-/** One changed-file row. Clicking opens the file's working-tree diff (#85, DIFF mode). */
-function FileRow({ file, onSelect }: { file: GitFileView; onSelect: () => void }): JSX.Element {
+/**
+ * One changed-file row. A leading checkbox toggles the file's commit selection (#86)
+ * WITHOUT opening the diff (it's a separate control, not nested in the row button);
+ * clicking the rest of the row opens the file's working-tree diff (#85, DIFF mode).
+ */
+function FileRow({
+  file,
+  checked,
+  onToggle,
+  onSelect,
+}: {
+  file: GitFileView
+  checked: boolean
+  onToggle: () => void
+  onSelect: () => void
+}): JSX.Element {
   return (
-    <li>
+    <li className="flex items-center hover:bg-accent/10">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onToggle}
+        aria-label={`Include ${file.path} in commit`}
+        title="Include in commit"
+        className="ml-3 shrink-0 accent-accent"
+      />
       <button
         type="button"
         onClick={onSelect}
         title={file.path}
-        className="flex w-full items-center gap-2 px-3 py-1 text-left text-xs hover:bg-accent/10"
+        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left text-xs"
       >
         <span
           className={cn('w-3 shrink-0 text-center font-semibold tabular-nums', glyphClass(file.glyph))}

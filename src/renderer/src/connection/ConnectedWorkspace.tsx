@@ -36,6 +36,7 @@ export function ConnectedWorkspace({
   activeThread,
   isLive,
   isActive,
+  busy,
   seedSessionId,
   controls,
   onSetConfig,
@@ -55,6 +56,13 @@ export function ConnectedWorkspace({
    * — not mere mount — to keep streaming active-Workspace-only (one watcher + fetch).
    */
   isActive: boolean
+  /**
+   * Whether this Workspace has a streaming turn (#86). Threaded to the Changes panel:
+   * the agent can `git commit` itself mid-turn, so the v1 concurrency guard disables the
+   * user's commit affordance while `busy` (no concurrent user+agent commit; status
+   * re-reads at turn end). No locks/queues — just a disabled button + a hint.
+   */
+  busy: boolean
   /** The session to seed a live view with (bound-this-session wins over the cursor). */
   seedSessionId: string | null
   /** The active Thread's OWN agent-controls (#70), or null when none are seeded yet. */
@@ -97,7 +105,7 @@ export function ConnectedWorkspace({
       </div>
       {/* Streamed git status (#84) — observational only; renders nothing for a non-repo
           Workspace and subscribes only while this is the active Workspace. */}
-      <ChangesPanel workspaceDir={connection.workspaceDir} isActive={isActive} />
+      <ChangesPanel workspaceDir={connection.workspaceDir} isActive={isActive} busy={busy} />
     </div>
   )
 }

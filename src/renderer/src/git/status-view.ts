@@ -45,6 +45,27 @@ export function fileGlyph(file: GitFile): { glyph: string; label: string } {
 /** Sort rank by glyph so like-changes group together; ties break on path. */
 const GLYPH_RANK: Record<string, number> = { M: 0, A: 1, D: 2, R: 3, C: 4, U: 5 }
 
+/**
+ * Reconcile the commit selection's `unchecked` set against the CURRENT changed paths
+ * (#86). Selection is tracked as the set of paths the user EXPLICITLY deselected
+ * (default empty = all selected), so a freshly-appearing file is selected by default
+ * (it's absent from the set) with no work here. The only reconcile needed is to DROP a
+ * path that has vanished from the changed set (reverted / committed / renamed away), so
+ * a stale entry can't suppress a later same-named file or skew the selected count.
+ * Returns the SAME set ref when nothing changed, so a status tick that doesn't touch
+ * the selection won't force a re-render (referential-stability for the caller's setState).
+ */
+export function reconcileUnchecked(unchecked: ReadonlySet<string>, paths: readonly string[]): Set<string> {
+  const present = new Set(paths)
+  let changed = false
+  const next = new Set<string>()
+  for (const path of unchecked) {
+    if (present.has(path)) next.add(path)
+    else changed = true
+  }
+  return changed ? next : (unchecked as Set<string>)
+}
+
 /** Build the render-ready view from a repo `GitStatus` (assumes `isRepo:true`). */
 export function buildChangesView(status: GitStatus): ChangesView {
   const files: GitFileView[] = status.files

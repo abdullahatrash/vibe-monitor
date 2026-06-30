@@ -524,8 +524,10 @@ export function App(): JSX.Element {
     }
   }
 
-  /** The connected view for a Workspace (SignedInBar + the controlled outlet). */
-  function renderConnected(conn: ThreadConnection, isActive: boolean): ReactNode {
+  /** The connected view for a Workspace (SignedInBar + the controlled outlet). `busy`
+   *  is the Workspace's rolled-up streaming flag (#86) — threaded to the Changes panel
+   *  so the commit affordance is disabled while a turn is in flight (the v1 guard). */
+  function renderConnected(conn: ThreadConnection, isActive: boolean, busy: boolean): ReactNode {
     const wts = workspaceThreadStateFor(workspaceThreads, conn.workspaceId)
     const cold = threadsForWorkspace(recents, conn.workspaceId)
     const activeId = wts?.active ?? conn.threadId
@@ -556,6 +558,7 @@ export function App(): JSX.Element {
           activeThread={activeThread}
           isLive={isLive}
           isActive={isActive}
+          busy={busy}
           seedSessionId={seed}
           controls={
             // A bound Thread sources its OWN live config (#70); a draft (no config
@@ -611,7 +614,7 @@ export function App(): JSX.Element {
         if (conn.status !== 'connected') return null
         return (
           <div key={wid} className="shell__connection" hidden={wid !== selectedWs}>
-            {renderConnected(conn.thread, wid === selectedWs)}
+            {renderConnected(conn.thread, wid === selectedWs, wsFlags[wid]?.streaming ?? false)}
           </div>
         )
       })}

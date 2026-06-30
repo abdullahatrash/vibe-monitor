@@ -1,5 +1,5 @@
 import { type JSX } from 'react'
-import type { AuthMethod, ThreadConnection, ThreadMeta } from '../../../shared/ipc'
+import type { AuthMethod, ThreadConfigAxis, ThreadConnection, ThreadMeta } from '../../../shared/ipc'
 import { ColdThread } from '../conversation/ColdThread'
 import { Conversation } from '../conversation/Conversation'
 
@@ -23,6 +23,7 @@ export function ConnectedWorkspace({
   activeThread,
   isLive,
   seedSessionId,
+  onSetConfig,
   onBound,
   onContinue,
   onCloseCold,
@@ -35,6 +36,8 @@ export function ConnectedWorkspace({
   isLive: boolean
   /** The session to seed a live view with (bound-this-session wins over the cursor). */
   seedSessionId: string | null
+  /** Change an agent control on the active Thread's bound session (#66, ADR-0007). */
+  onSetConfig: (axis: ThreadConfigAxis, value: string, sessionId: string) => void
   /** A draft's first prompt bound its session — lift it to App's live-state. */
   onBound: (sessionId: string) => void
   /** Promote the (cold) active Thread to live (Continue) — App hosts + reselects it. */
@@ -56,6 +59,10 @@ export function ConnectedWorkspace({
             sessionId: seedSessionId,
             title: activeThread.title,
           }}
+          modes={connection.modes}
+          models={connection.models}
+          reasoningEffort={connection.reasoningEffort}
+          onSetConfig={onSetConfig}
           onAuthExpired={onAuthExpired}
           onBound={onBound}
         />

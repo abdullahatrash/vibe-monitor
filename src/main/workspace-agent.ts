@@ -11,6 +11,7 @@ import type {
   ThreadInfo,
   ThreadModes,
   ThreadModels,
+  ThreadReasoningEffort,
 } from '../shared/ipc'
 
 /**
@@ -75,7 +76,12 @@ interface SessionNewResult {
   title?: string | null
   modes?: ThreadModes
   models?: ThreadModels
+  /** The agent-control selects, including the `thinking` reasoning-effort axis (#66). */
+  configOptions?: unknown
 }
+
+/** The reasoning-effort configId — the only `configOption` we surface (#66, §10). */
+const REASONING_EFFORT_CONFIG_ID = 'thinking'
 
 export interface WorkspaceAgentOptions {
   /** Absolute path to the Workspace directory. */
@@ -432,6 +438,7 @@ export class WorkspaceAgent extends EventEmitter {
       title: result.title ?? null,
       modes: result.modes ?? null,
       models: result.models ?? null,
+      reasoningEffort: extractReasoningEffort(result.configOptions),
     }
     this.threads.set(thread.sessionId, thread)
     return thread
@@ -473,6 +480,7 @@ export class WorkspaceAgent extends EventEmitter {
         title: result.title ?? null,
         modes: result.modes ?? null,
         models: result.models ?? null,
+        reasoningEffort: extractReasoningEffort(result.configOptions),
       }
       this.threads.set(sessionId, thread)
       return thread
@@ -503,6 +511,55 @@ export class WorkspaceAgent extends EventEmitter {
       return await this.client.request<PromptResult>('session/prompt', {
         sessionId,
         prompt: [{ type: 'text', text }],
+      })
+    } catch (err) {
+      throw this.mapErrorAndCacheAuth(err)
+    }
+  }
+
+  /**
+   * Change a Thread's Mode (`session/set_mode`, acp-capture §10). A successful
+   * change returns `{}` and emits NO notification — the caller reflects it
+   * optimistically (ADR-0007). Rejects (mapped + auth-cached) on failure so the
+   * IPC handler can surface the error and the renderer can revert.
+   */
+  async setMode(sessionId: string, modeId: string): Promise<void> {
+    if (!this.initialized) throw new WorkspaceAgentError('Agent is not initialized; call start() first.')
+    try {
+      await this.client.request('session/set_mode', { sessionId, modeId })
+    } catch (err) {
+      throw this.mapErrorAndCacheAuth(err)
+    }
+  }
+
+  /**
+   * Change a Thread's Model (`session/set_model`, acp-capture §10). The agent
+   * FALSE-ACCEPTS any string as `modelId` (returns `{}` without validating against
+   * `availableModels`), so the renderer must only ever pass an id from
+   * `models.availableModels` — a `{}` is not proof the value was valid.
+   */
+  async setModel(sessionId: string, modelId: string): Promise<void> {
+    if (!this.initialized) throw new WorkspaceAgentError('Agent is not initialized; call start() first.')
+    try {
+      await this.client.request('session/set_model', { sessionId, modelId })
+    } catch (err) {
+      throw this.mapErrorAndCacheAuth(err)
+    }
+  }
+
+  /**
+   * Change a Thread's reasoning effort via the GENERIC config setter
+   * (`session/set_config_option`, acp-capture §10). The param key is `configId`
+   * (NOT `id` — `{id, value}` returns -32602), pinned to `thinking`; `value` is one
+   * of the `thinking` option values (`off`/`low`/`medium`/`high`/`max`).
+   */
+  async setReasoningEffort(sessionId: string, value: string): Promise<void> {
+    if (!this.initialized) throw new WorkspaceAgentError('Agent is not initialized; call start() first.')
+    try {
+      await this.client.request('session/set_config_option', {
+        sessionId,
+        configId: REASONING_EFFORT_CONFIG_ID,
+        value,
       })
     } catch (err) {
       throw this.mapErrorAndCacheAuth(err)
@@ -721,6 +778,32 @@ function extractSessionCloseCapability(init: InitializeResult): boolean {
  */
 function extractLoadSessionCapability(init: InitializeResult): boolean {
   return (init.agentCapabilities as { loadSession?: unknown } | null)?.loadSession === true
+}
+
+/**
+ * Surface the reasoning-effort axis from `session/new`/`session/load`'s
+ * `configOptions` (#66, acp-capture §10): find the `thinking` select and map its
+ * `currentValue` + `options[{value, name?}]` to a `ThreadReasoningEffort`. Defaults
+ * to null on any absent/malformed shape (no array, no `thinking`, non-string
+ * `currentValue`) — so the picker simply omits the control rather than rendering a
+ * broken one. Mode/Model come back as their own dedicated fields, not here.
+ */
+function extractReasoningEffort(configOptions: unknown): ThreadReasoningEffort | null {
+  if (!Array.isArray(configOptions)) return null
+  const thinking = configOptions.find(
+    (o): o is { id: string; currentValue?: unknown; options?: unknown } =>
+      !!o && typeof o === 'object' && (o as { id?: unknown }).id === REASONING_EFFORT_CONFIG_ID,
+  )
+  if (!thinking || typeof thinking.currentValue !== 'string') return null
+  const options = Array.isArray(thinking.options)
+    ? thinking.options
+        .filter(
+          (opt): opt is { value: string; name?: unknown } =>
+            !!opt && typeof opt === 'object' && typeof (opt as { value?: unknown }).value === 'string',
+        )
+        .map((opt) => ({ value: opt.value, name: typeof opt.name === 'string' ? opt.name : undefined }))
+    : []
+  return { current: thinking.currentValue, options }
 }
 
 /** Pull the well-formed `authMethods` out of an `initialize` result. */

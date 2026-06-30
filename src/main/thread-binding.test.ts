@@ -42,7 +42,7 @@ function fakeOpener(prefix = 'sess'): SessionBinder & { calls: number } {
       n++
       const sessionId = `${prefix}-${n}`
       hosted.add(sessionId)
-      return { sessionId, title: null, modes: null, models: null }
+      return { sessionId, title: null, modes: null, models: null, reasoningEffort: null }
     },
   }
 }
@@ -69,12 +69,12 @@ function fakeBinder(opts: {
       const outcome = opts.loadOutcome ?? 'resume'
       if (outcome !== 'resume') throw outcome
       // Resume keeps the SAME id (the session/load result carries none, §9).
-      return { sessionId, title: null, modes: null, models: null }
+      return { sessionId, title: null, modes: null, models: null, reasoningEffort: null }
     },
     async openThread(): Promise<ThreadInfo> {
       this.newCalls++
       n++
-      return { sessionId: `fresh-${n}`, title: 'Fresh', modes: null, models: null }
+      return { sessionId: `fresh-${n}`, title: 'Fresh', modes: null, models: null, reasoningEffort: null }
     },
   }
 }

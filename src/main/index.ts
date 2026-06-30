@@ -11,6 +11,8 @@ import {
   type RespondPermissionArgs,
   type SendPromptArgs,
   type SendPromptResult,
+  type SetThreadConfigArgs,
+  type SetThreadConfigResult,
   type SignInArgs,
   type SignInResult,
   type SignOutArgs,
@@ -395,6 +397,7 @@ function continueConnection(
     title: target.title,
     modes: null,
     models: null,
+    reasoningEffort: null,
     threadId: target.threadId,
     workspaceId: target.workspaceId,
     signOutAvailable: agent.signOutAvailable,
@@ -757,6 +760,28 @@ function registerIpc(): void {
     })
     return { ok: true }
   })
+
+  ipcMain.handle(
+    IPC.setThreadConfig,
+    async (_event, args: SetThreadConfigArgs): Promise<SetThreadConfigResult> => {
+      // Change one agent control (#66) on a Thread's bound session: resolve the
+      // agent, map the axis to its verified setter (acp-capture §10), and return
+      // ok/err. The renderer already reflected the change optimistically, so an
+      // `{ok:false}` here is its cue to revert. Touch the agent — a config change is
+      // activity, like a prompt/permission answer (TB5 #50).
+      const agent = pool.get(args.agentId)
+      if (!agent) return { ok: false, error: `No active agent for id ${args.agentId}.` }
+      pool.touch(args.agentId)
+      try {
+        if (args.axis === 'mode') await agent.setMode(args.sessionId, args.value)
+        else if (args.axis === 'model') await agent.setModel(args.sessionId, args.value)
+        else await agent.setReasoningEffort(args.sessionId, args.value)
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
 
   ipcMain.handle(IPC.getThreadStatuses, (): ThreadStatusEvent[] => {
     // One-shot re-seed for a renderer that mounts MID-turn (#53): main pushes

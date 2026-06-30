@@ -3,6 +3,7 @@ import type {
   AuthMethod,
   ListMetadataResult,
   StartThreadResult,
+  ThreadConfigAxis,
   ThreadConnection,
   ThreadMeta,
   VibeDetectResult,
@@ -18,6 +19,7 @@ import {
   agentIdOf,
   connectedWorkspaceIds,
   connectionsReducer,
+  currentConfigValue,
   initialConnections,
   selectedConnection,
   shouldConnect,
@@ -179,6 +181,31 @@ export function App(): JSX.Element {
     if (workspaceThreadStateFor(workspaceThreads, workspaceId)) {
       wtDispatch({ type: 'select', workspaceId, threadId })
     }
+  }
+
+  /**
+   * Change an agent control (#66, ADR-0007): reflect the pick OPTIMISTICALLY on the
+   * connection (a change emits no notification, so the `{}` result is the only
+   * signal), fire the IPC, and on an `{ok:false}` REVERT to the value shown before —
+   * leaving the control displaying the agent's real state — and surface the error.
+   * Reads the prior value from the connection up front so the revert is exact.
+   */
+  function changeThreadConfig(
+    workspaceId: string,
+    agentId: string,
+    axis: ThreadConfigAxis,
+    value: string,
+    sessionId: string,
+  ): void {
+    const conn = connections[workspaceId]
+    const prev = conn?.status === 'connected' ? currentConfigValue(conn.thread, axis) : null
+    if (prev === value) return // already current — no optimistic churn, no IPC round-trip
+    connDispatch({ type: 'set-config', workspaceId, axis, value })
+    void window.api.setThreadConfig({ agentId, sessionId, axis, value }).then((res) => {
+      if (res.ok) return
+      console.error(`Failed to set ${axis} to "${value}": ${res.error}`)
+      if (prev !== null) connDispatch({ type: 'set-config', workspaceId, axis, value: prev })
+    })
   }
 
   /**
@@ -451,6 +478,9 @@ export function App(): JSX.Element {
           activeThread={activeThread}
           isLive={isLive}
           seedSessionId={seed}
+          onSetConfig={(axis, value, sessionId) =>
+            changeThreadConfig(conn.workspaceId, conn.agentId, axis, value, sessionId)
+          }
           onBound={(sessionId) =>
             wtDispatch({ type: 'bind', workspaceId: conn.workspaceId, threadId: activeThread.id, sessionId })
           }

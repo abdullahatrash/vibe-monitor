@@ -1,3 +1,4 @@
+import type { ThreadConfigAxis, ThreadConnection } from '../../../shared/ipc'
 import type { ConnectState } from './routing'
 
 /**
@@ -15,6 +16,10 @@ export type ConnectionAction =
   | { type: 'set'; workspaceId: string; state: ConnectState }
   | { type: 'clear'; workspaceId: string }
   | { type: 'evict'; agentIds: ReadonlySet<string> }
+  // Optimistically reflect an agent-control change (#66, ADR-0007): a change emits
+  // no notification, so the renderer updates the displayed current value the instant
+  // the user picks, then reverts (re-dispatching the prior value) on an IPC failure.
+  | { type: 'set-config'; workspaceId: string; axis: ThreadConfigAxis; value: string }
 
 export const initialConnections: ConnectionMap = {}
 
@@ -42,6 +47,54 @@ export function connectionsReducer(state: ConnectionMap, action: ConnectionActio
       for (const id of doomed) delete next[id]
       return next
     }
+    case 'set-config': {
+      // Only a connected Workspace carries the live current values; a transient
+      // (connecting / not-signed-in / error / absent) one has no controls to update,
+      // so the action is inert (same ref). `applyConfig` also returns the SAME thread
+      // ref when the axis has no options or the value is unchanged — so a redundant
+      // pick (or a revert to the value already shown) drives no re-render.
+      const current = state[action.workspaceId]
+      if (!current || current.status !== 'connected') return state
+      const nextThread = applyConfig(current.thread, action.axis, action.value)
+      if (nextThread === current.thread) return state
+      return { ...state, [action.workspaceId]: { status: 'connected', thread: nextThread } }
+    }
+  }
+}
+
+/**
+ * Return a connection's CURRENT value for an agent-control axis (#66), or null when
+ * the axis isn't advertised. App reads this BEFORE an optimistic `set-config` so it
+ * can revert to the prior value if the IPC change fails (ADR-0007).
+ */
+export function currentConfigValue(thread: ThreadConnection, axis: ThreadConfigAxis): string | null {
+  switch (axis) {
+    case 'mode':
+      return thread.modes?.currentModeId ?? null
+    case 'model':
+      return thread.models?.currentModelId ?? null
+    case 'reasoningEffort':
+      return thread.reasoningEffort?.current ?? null
+  }
+}
+
+/**
+ * Apply an agent-control change to a connection's current value (#66), returning a
+ * NEW `ThreadConnection` with only the targeted nested current updated — or the SAME
+ * ref when the axis isn't advertised (null) or the value is already current, so a
+ * no-op pick can't churn the reducer.
+ */
+function applyConfig(thread: ThreadConnection, axis: ThreadConfigAxis, value: string): ThreadConnection {
+  switch (axis) {
+    case 'mode':
+      if (!thread.modes || thread.modes.currentModeId === value) return thread
+      return { ...thread, modes: { ...thread.modes, currentModeId: value } }
+    case 'model':
+      if (!thread.models || thread.models.currentModelId === value) return thread
+      return { ...thread, models: { ...thread.models, currentModelId: value } }
+    case 'reasoningEffort':
+      if (!thread.reasoningEffort || thread.reasoningEffort.current === value) return thread
+      return { ...thread, reasoningEffort: { ...thread.reasoningEffort, current: value } }
   }
 }
 

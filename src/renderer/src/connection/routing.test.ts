@@ -20,6 +20,7 @@ const THREAD: ThreadConnection = {
   title: null,
   modes: null,
   models: null,
+  reasoningEffort: null,
   signOutAvailable: true,
   authMethods: AUTH_METHODS,
 }

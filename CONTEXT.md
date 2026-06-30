@@ -24,3 +24,26 @@ An agent-initiated request (ACP `request_permission`) to perform a sensitive act
 agent blocks until the user picks a Permission option (allow once / reject once / …). Held in a
 pending queue and answered by request id.
 _Avoid_: approval, confirmation, prompt (reserve "prompt" for the user's message to the agent).
+
+## Agent controls
+
+The three per-Thread knobs the agent runs under, surfaced from `session/new` and changed mid-Thread.
+Sticky per-Thread (set once, holds until changed), not per-turn.
+
+**Mode**:
+The agent's collaboration/approval posture for a Thread (`default` = writes gated behind a Permission
+request; `chat` = read-only; `plan`; `auto-approve` = no prompts). Governs whether Permission requests
+fire.
+_Avoid_: collaboration mode, interaction mode, access mode. (Auth "modes" are a separate, unrelated axis.)
+
+**Model**:
+Which underlying LLM serves a Thread (e.g. `mistral-medium-3.5`, `devstral-small`, `local`).
+_Avoid_: engine, provider.
+
+**Reasoning effort**:
+How much the Model deliberates before answering (`off` / `low` / `medium` / `high` / `max`).
+_Avoid_: thinking (the ACP wire term), effort (reserve to avoid clashing with reasoning-stream content).
+
+**Agent controls**:
+The umbrella for Mode + Model + Reasoning effort together — the composer surface that sets them.
+_Avoid_: config options, settings.

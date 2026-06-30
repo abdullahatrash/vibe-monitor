@@ -307,3 +307,67 @@ describe('AgentPool — warm-count cap (TB5 #50)', () => {
     expect(pool.agents()).toHaveLength(3)
   })
 })
+
+/**
+ * Graceful teardown injection (TB5 #50, acceptance #3): the pool routes ALL exits
+ * (explicit dispose, idle-evict, cap-trim) through the injected `disposeAgent` so
+ * production can best-effort `session/close` THEN terminate — while the fake-agent
+ * tests above keep using the default `stop()` disposer unchanged.
+ */
+describe('AgentPool — injected disposeAgent (graceful teardown)', () => {
+  /** A pool whose teardown is recorded (not a raw stop) — the production wiring shape. */
+  function makeGracefulPool(now?: () => number): {
+    pool: AgentPool<FakeAgent>
+    disposed: FakeAgent[]
+  } {
+    const factory = fakeFactory()
+    let n = 0
+    const disposed: FakeAgent[] = []
+    const pool = new AgentPool<FakeAgent>({
+      createAgent: factory.create,
+      mintId: () => `a${++n}`,
+      now,
+      disposeAgent: (agent) => disposed.push(agent),
+    })
+    return { pool, disposed }
+  }
+
+  it('routes an explicit dispose through disposeAgent (not a direct stop), maps updated first', () => {
+    const { pool, disposed } = makeGracefulPool()
+    const { agentId, agent } = pool.acquire('/proj/a')
+
+    pool.dispose(agentId)
+
+    expect(disposed).toEqual([agent]) // the injected disposer ran for this agent
+    expect(agent.stops).toBe(0) // the pool did NOT bypass it with a raw stop()
+    // Maps are already consistent (updated before the async teardown) — re-warmable.
+    expect(pool.get(agentId)).toBeNull()
+    expect(pool.getByWorkspace('/proj/a')).toBeNull()
+  })
+
+  it('routes an idle eviction through disposeAgent for the evicted id', () => {
+    const clock = fakeClock(0)
+    const { pool, disposed } = makeGracefulPool(clock.now)
+    const a = pool.acquire('/proj/a')
+
+    clock.set(20_000)
+    const evicted = pool.evictIdle({ idleMs: 5_000, isProtected: UNPROTECTED })
+
+    expect(evicted).toEqual([a.agentId])
+    expect(disposed).toEqual([a.agent]) // graceful teardown, not stop()
+    expect(a.agent.stops).toBe(0)
+  })
+
+  it('routes a cap-trim through disposeAgent for the LRU id', () => {
+    const clock = fakeClock(0)
+    const { pool, disposed } = makeGracefulPool(clock.now)
+    const a = pool.acquire('/proj/a')
+    clock.set(1_000)
+    pool.acquire('/proj/b')
+
+    const evicted = pool.enforceCap({ maxWarm: 1, isProtected: UNPROTECTED })
+
+    expect(evicted).toEqual([a.agentId])
+    expect(disposed).toEqual([a.agent])
+  })
+})

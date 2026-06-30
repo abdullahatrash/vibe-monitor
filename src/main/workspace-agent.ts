@@ -583,6 +583,25 @@ export class WorkspaceAgent extends EventEmitter {
     this.initialized = false
   }
 
+  /**
+   * Graceful teardown for eviction (TB5 #50): best-effort `session/close` EVERY
+   * hosted session (where the capability is advertised — `closeSession` already
+   * gates that and swallows failures), THEN terminate via `stop()`. Mirrors the
+   * TB6 delete close-then-drop order. The close fan-out is wrapped so a hung/erroring
+   * close can never skip the `stop()` — terminate ALWAYS runs in the `finally`, so
+   * disposal never wedges and never rejects. Snapshots the session ids up front
+   * because `closeSession` mutates the `threads` map as it goes.
+   */
+  async disposeGracefully(): Promise<void> {
+    try {
+      for (const sessionId of [...this.threads.keys()]) {
+        await this.closeSession(sessionId)
+      }
+    } finally {
+      this.stop()
+    }
+  }
+
   private detachStartGuards(
     onError: (err: Error) => void,
     onExit: (info: { code: number | null; signal: NodeJS.Signals | null }) => void,

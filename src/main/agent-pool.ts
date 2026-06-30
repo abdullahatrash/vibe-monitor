@@ -71,6 +71,16 @@ export interface AgentPoolOptions<A extends PoolAgent> {
    * it). Tests inject a fake clock so eviction is exercised with NO real timers.
    */
   now?: () => number
+  /**
+   * How to tear an agent down when it leaves the pool (TB5 #50). Defaults to a
+   * plain `agent.stop()` (the minimal `PoolAgent` surface, so the fake-agent tests
+   * need nothing more). Production injects `(a) => void a.disposeGracefully()` so
+   * eviction best-effort closes hosted sessions THEN terminates — asynchronously,
+   * AFTER the pool's maps are already updated below, so consistency + re-warm are
+   * unaffected. The pool never awaits this (fire-and-forget): lifecycle bookkeeping
+   * stays synchronous while the child's clean shutdown finishes in the background.
+   */
+  disposeAgent?: (agent: A) => void
 }
 
 /** Inputs to the pure idle-evict policy (TB5 #50). */
@@ -97,6 +107,7 @@ export class AgentPool<A extends PoolAgent = WorkspaceAgent> {
   private readonly createAgent: (workspaceDir: string) => A
   private readonly mintId: () => string
   private readonly now: () => number
+  private readonly disposeAgent: (agent: A) => void
   /** Warm agents keyed by the minted `agentId` (the renderer's handle). */
   private readonly byId = new Map<string, PoolEntry<A>>()
   /** Reverse index: Workspace dir -> `agentId`, for reuse + dir-scoped lookup. */
@@ -106,6 +117,7 @@ export class AgentPool<A extends PoolAgent = WorkspaceAgent> {
     this.createAgent = options.createAgent
     this.mintId = options.mintId ?? randomUUID
     this.now = options.now ?? Date.now
+    this.disposeAgent = options.disposeAgent ?? ((agent) => agent.stop())
   }
 
   /**
@@ -215,9 +227,13 @@ export class AgentPool<A extends PoolAgent = WorkspaceAgent> {
   dispose(agentId: string): void {
     const entry = this.byId.get(agentId)
     if (!entry) return
-    entry.agent.stop()
+    // Update the maps FIRST (synchronously) so the pool is consistent the instant
+    // dispose returns — `get`/`getByWorkspace` already miss this id, and a re-warm
+    // `acquire` spawns a fresh agent — THEN tear the old agent down (which may be
+    // async + best-effort `session/close` via the injected disposer, TB5 #50).
     this.byId.delete(agentId)
     this.byWorkspace.delete(entry.workspaceDir)
+    this.disposeAgent(entry.agent)
   }
 
   /** Stop + drop every warm agent (app quit). */

@@ -808,6 +808,52 @@ describe('WorkspaceAgent.closeSession() (TB6 #35)', () => {
   })
 })
 
+// --- TB5: graceful disposal on eviction (#50) -------------------------------
+
+describe('WorkspaceAgent.disposeGracefully() (TB5 #50)', () => {
+  it('best-effort closes EACH hosted session (where advertised) THEN terminates', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectWithCaps(fake, true) // hosts SESSION_ID, close advertised
+
+    const disposing = agent.disposeGracefully()
+    await new Promise((r) => setTimeout(r, 0))
+    const closeReq = sent(fake).find((m) => m.method === 'session/close')
+    expect(closeReq?.params?.sessionId).toBe(SESSION_ID) // close attempted first
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: closeReq?.id, result: {} }) + '\n')
+
+    await expect(disposing).resolves.toBeUndefined()
+    // THEN terminated: the session is no longer hosted and the agent is stopped
+    // (an uninitialized agent rejects further work).
+    expect(agent.hasSession(SESSION_ID)).toBe(false)
+    await expect(agent.prompt(SESSION_ID, 'x')).rejects.toThrow(/not initialized/i)
+  })
+
+  it('terminates WITHOUT sending session/close when the capability is not advertised', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectWithCaps(fake, false) // hosts SESSION_ID, NO close capability
+
+    await expect(agent.disposeGracefully()).resolves.toBeUndefined()
+
+    expect(sent(fake).some((m) => m.method === 'session/close')).toBe(false)
+    expect(agent.hasSession(SESSION_ID)).toBe(false) // still terminated
+  })
+
+  it('never rejects, and still terminates, when a session/close errors', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectWithCaps(fake, true)
+
+    const disposing = agent.disposeGracefully()
+    await new Promise((r) => setTimeout(r, 0))
+    const closeReq = sent(fake).find((m) => m.method === 'session/close')
+    fake.feed(
+      JSON.stringify({ jsonrpc: '2.0', id: closeReq?.id, error: { code: -32603, message: 'boom' } }) + '\n',
+    )
+
+    await expect(disposing).resolves.toBeUndefined() // swallowed — terminate runs in finally
+    expect(agent.hasSession(SESSION_ID)).toBe(false)
+  })
+})
+
 // --- TB3: fs/write serving + permission responder ---------------------------
 
 /** Drive a ready agent over the capturing fake, with an injected writer. */

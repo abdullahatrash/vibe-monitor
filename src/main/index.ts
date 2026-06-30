@@ -37,6 +37,7 @@ import {
 } from './persistence/transcript'
 import { WorkspaceAgent, WorkspaceAgentError } from './workspace-agent'
 import { AgentPool } from './agent-pool'
+import { isProtected } from './agent-protection'
 import { ensureBoundSession, resolveContinueTarget } from './thread-binding'
 import { createThreadDraft } from './persistence/drafts'
 import { deleteThread } from './persistence/delete-thread'
@@ -56,6 +57,11 @@ const pool = new AgentPool({
       // Delegated sign-in (#12): open the returned signInUrl in the system browser.
       openUrl: (url) => void shell.openExternal(url),
     }),
+  // Graceful teardown on dispose/evict/stopAgent (TB5 #50, acceptance #3): best-
+  // effort `session/close` each hosted session THEN terminate. Fire-and-forget —
+  // the pool updates its maps synchronously and the child shuts down in the
+  // background, so the renderer re-warms transparently without awaiting close.
+  disposeAgent: (agent) => void agent.disposeGracefully(),
 })
 
 /**
@@ -70,7 +76,7 @@ const pool = new AgentPool({
  *    also bounds the live `acp:event` listener fan-out (the #53 prerequisite).
  *  - `SWEEP_INTERVAL_MS` (1 min): coarse enough to be near-free, fine enough that
  *    eviction lands within a minute of crossing the idle line.
- * Protection (the selected + any mid-turn agent) overrides BOTH bounds (#50).
+ * Protection (the selected, mid-turn, or mid-sign-in agent) overrides BOTH (#50).
  */
 const IDLE_EVICT_MS = 15 * 60 * 1000
 const MAX_WARM_AGENTS = 4
@@ -81,6 +87,12 @@ const SWEEP_INTERVAL_MS = 60 * 1000
  * renderer via `setActiveAgent`. Protected from eviction so the Workspace the user
  * is looking at is never trimmed by the idle/cap policy. Null when the selection
  * has no warm agent (idle/connecting/error) — nothing to protect.
+ *
+ * Single-window assumption: this is an app-GLOBAL protecting the one window's
+ * on-screen agent (the pool itself is process-global today — see
+ * `window-all-closed`). If a multi-window slice ever lands, protection must become
+ * per-window (a set/map of active agents, one per window) or one window's eviction
+ * sweep could evict another window's on-screen agent.
  */
 let activeAgentId: string | null = null
 
@@ -103,13 +115,32 @@ function endTurn(agentId: string): void {
 }
 
 /**
+ * Agents with a sign-in flow IN PROGRESS (TB5 #50). A backgrounded delegated
+ * browser OAuth can pend longer than `IDLE_EVICT_MS` while the user is on another
+ * Workspace (so the agent is neither `activeAgentId` nor mid-turn) — without this
+ * the sweep would evict it mid-`signIn`, rejecting the call with "AcpClient
+ * stopped". Mirrors the turn protection: `beginAuth` at the top of the sign-in
+ * handler, `endAuth` in its `finally`. A one-shot `touch` wouldn't suffice — the
+ * flow can outlast the idle window — so we protect for its whole duration.
+ */
+const signingInAgents = new Set<string>()
+
+function beginAuth(agentId: string): void {
+  signingInAgents.add(agentId)
+}
+
+function endAuth(agentId: string): void {
+  signingInAgents.delete(agentId)
+}
+
+/**
  * The eviction-protection predicate (TB5 #50) handed to the pool's pure policies:
- * NEVER evict the on-screen Workspace's agent, nor one with a prompt turn in
- * flight. This is the load-bearing guarantee — proof that idle/cap can't dispose
- * the selected or streaming Workspace lives entirely here.
+ * NEVER evict the on-screen Workspace's agent, one mid-turn, or one mid-sign-in. A
+ * thin wrapper over the PURE `isProtected` (agent-protection.ts) — the load-bearing
+ * safety logic is unit-tested there; this just feeds it the live main-process state.
  */
 function isAgentProtected(agentId: string): boolean {
-  return agentId === activeAgentId || (inFlightTurns.get(agentId) ?? 0) > 0
+  return isProtected(agentId, { activeAgentId, inFlightTurns, signingInAgents })
 }
 
 /** The periodic idle-evict sweep timer (cleared on quit). */
@@ -598,11 +629,19 @@ function registerIpc(): void {
     // state (ADR-0001). Credentials never touch us — Vibe owns the keyring (ADR-0003).
     const agent = pool.get(args.agentId)
     if (!agent) return { ok: false, error: `No active agent for id ${args.agentId}.` }
+    // Protect the agent for the WHOLE sign-in (TB5 #50): a delegated browser OAuth
+    // can pend past IDLE_EVICT_MS while the user is on another Workspace, so without
+    // this the sweep would evict it mid-flight and reject the call. `endAuth` always
+    // runs in `finally`, so the flag can't leak even on failure/early-exit.
+    pool.touch(args.agentId)
+    beginAuth(args.agentId)
     try {
       const authState = await agent.signIn(args.methodId)
       return { ok: true, authState }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    } finally {
+      endAuth(args.agentId)
     }
   })
 
@@ -611,6 +650,7 @@ function registerIpc(): void {
     // stays alive so the user can sign a different account back in (ADR-0003).
     const agent = pool.get(args.agentId)
     if (!agent) return { ok: false, error: `No active agent for id ${args.agentId}.` }
+    pool.touch(args.agentId) // sign-out is quick activity; a touch suffices (TB5 #50)
     try {
       const authState = await agent.signOut()
       return { ok: true, authState, authMethods: agent.authMethods }
@@ -702,14 +742,18 @@ app.whenReady().then(async () => {
   registerIpc()
   createWindow()
 
-  // The periodic idle-evict sweep (TB5 #50): release any agent untouched past
-  // IDLE_EVICT_MS, except the protected (on-screen / mid-turn) ones, and notify
-  // the renderer to re-warm them lazily on next select. Started once here; the
-  // interval is `unref`'d so it never keeps the process alive on its own, and is
-  // cleared on quit. Resilient across the macOS window-close/reopen cycle — after
-  // `disposeAll` the pool is empty, so the sweep simply no-ops until re-warmed.
+  // The periodic sweep (TB5 #50): release any agent untouched past IDLE_EVICT_MS,
+  // THEN re-run the cap, both skipping the protected (on-screen / mid-turn /
+  // mid-sign-in) agents, and notify the renderer to re-warm any evicted ones lazily
+  // on next select. Running `enforceCap` here too lets a temporarily over-cap state
+  // — one that persisted because every over-cap candidate was protected at acquire
+  // time — self-heal on a later sweep once a candidate becomes unprotected. Started
+  // once here; the interval is `unref`'d so it never keeps the process alive on its
+  // own, and is cleared on quit. Resilient across the macOS window-close/reopen
+  // cycle — after `disposeAll` the pool is empty, so the sweep no-ops until re-warmed.
   sweepTimer = setInterval(() => {
     notifyAgentsEvicted(pool.evictIdle({ idleMs: IDLE_EVICT_MS, isProtected: isAgentProtected }))
+    notifyAgentsEvicted(pool.enforceCap({ maxWarm: MAX_WARM_AGENTS, isProtected: isAgentProtected }))
   }, SWEEP_INTERVAL_MS)
   sweepTimer.unref?.()
 

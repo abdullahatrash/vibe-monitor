@@ -4,6 +4,8 @@ import {
   type AcpEvent,
   type AgentEvictedEvent,
   type DeleteThreadResult,
+  type GitDiffArgs,
+  type GitDiffResult,
   type GitStatusEvent,
   type GitStatusSubscriptionArgs,
   type ListMetadataResult,
@@ -57,6 +59,7 @@ const api = {
     ipcRenderer.invoke(IPC.gitSubscribeStatus, args),
   gitUnsubscribeStatus: (args: GitStatusSubscriptionArgs): Promise<void> =>
     ipcRenderer.invoke(IPC.gitUnsubscribeStatus, args),
+  gitDiff: (args: GitDiffArgs): Promise<GitDiffResult> => ipcRenderer.invoke(IPC.gitDiff, args),
   onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {
     const handler = (_e: unknown, payload: AcpEvent): void => listener(payload)
     ipcRenderer.on(IPC.acpEvent, handler)

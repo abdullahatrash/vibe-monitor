@@ -5,6 +5,8 @@ import { basename, join } from 'node:path'
 import {
   IPC,
   type DeleteThreadResult,
+  type GitDiffArgs,
+  type GitDiffResult,
   type GitStatusEvent,
   type GitStatusSubscriptionArgs,
   type ListMetadataResult,
@@ -49,6 +51,7 @@ import { controlsOf, ensureBoundSession, resolveContinueTarget } from './thread-
 import { deleteThread } from './persistence/delete-thread'
 import { permissionRequestIdOf, ThreadStatusTracker, type ThreadStatusChange } from './thread-status'
 import { gitFetch, readGitStatus } from './git/status'
+import { readGitDiff } from './git/diff'
 import { GitStatusManager } from './git/status-stream'
 import { chokidarWatchFactory, realClock } from './git/runtime'
 
@@ -889,6 +892,15 @@ function registerIpc(): void {
     // Panel unmount / Workspace switch-away (#84): the last unsubscribe tears the
     // watcher + fetch timer down (active-Workspace-only streaming, ADR-0008).
     gitStatus.unsubscribe(args.workspaceDir)
+  })
+
+  ipcMain.handle(IPC.gitDiff, (_event, args: GitDiffArgs): Promise<GitDiffResult> => {
+    // Read one changed path's working-tree diff for the viewer (#85). Resolve cwd from
+    // the Workspace dir (where #84's status ran, so the path keys match). This is NOT
+    // agent activity, so it does NOT `pool.touch` — opening a diff must not keep a warm
+    // agent alive past its idle window (TB5 #50). Swallows git failure into the empty
+    // result inside `readGitDiff` (never throws).
+    return readGitDiff(args.workspaceDir, args.path, args.untracked, args.ignoreWhitespace ?? false)
   })
 }
 

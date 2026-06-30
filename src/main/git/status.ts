@@ -22,7 +22,7 @@ import type { GitFile, GitStatus } from '../../shared/ipc'
  */
 export type GitRun = (args: string[], cwd: string) => Promise<{ stdout: string; code: number }>
 
-const defaultRun: GitRun = (args, cwd) =>
+export const defaultGitRun: GitRun = (args, cwd) =>
   new Promise((resolve) => {
     execFile(
       'git',
@@ -191,7 +191,7 @@ function splitLeading(line: string, n: number): { fields: string[]; rest: string
  * empty `isRepo:false` status. All git errors are swallowed into that fallback — this
  * NEVER throws, so a watcher tick or background fetch can't crash the status manager.
  */
-export async function readGitStatus(cwd: string, run: GitRun = defaultRun): Promise<GitStatus> {
+export async function readGitStatus(cwd: string, run: GitRun = defaultGitRun): Promise<GitStatus> {
   try {
     const inside = await run(['rev-parse', '--is-inside-work-tree'], cwd)
     if (inside.code !== 0 || inside.stdout.trim() !== 'true') return notARepo()
@@ -216,7 +216,7 @@ export async function readGitStatus(cwd: string, run: GitRun = defaultRun): Prom
  * swallow-all: an offline / no-upstream / auth-failed fetch just resolves (the caller
  * re-reads status either way, so ahead/behind simply stays as it was). Never throws.
  */
-export async function gitFetch(cwd: string, run: GitRun = defaultRun): Promise<void> {
+export async function gitFetch(cwd: string, run: GitRun = defaultGitRun): Promise<void> {
   try {
     await run(['fetch', '--quiet'], cwd)
   } catch {

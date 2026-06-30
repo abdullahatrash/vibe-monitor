@@ -68,7 +68,11 @@ export async function readGitDiff(
       if (res.code !== 0 && res.code !== 1) return finalizeDiff('')
       return finalizeDiff(res.stdout)
     }
-    const res = await run(['-c', 'core.quotePath=false', 'diff', '--no-color', ...ws, '--', path], cwd)
+    // `HEAD` (not the bare worktree-vs-index `git diff`) so a fully-STAGED file still
+    // shows its diff: the Changes panel lists a file's churn as staged+unstaged (vs
+    // HEAD), so the viewer must match — a bare `git diff` is empty for an `M.`/`A.`
+    // file and would dead-click. (A zero-commit repo has no HEAD → empty; rare edge.)
+    const res = await run(['-c', 'core.quotePath=false', 'diff', '--no-color', ...ws, 'HEAD', '--', path], cwd)
     if (res.code !== 0) return finalizeDiff('')
     return finalizeDiff(res.stdout)
   } catch {

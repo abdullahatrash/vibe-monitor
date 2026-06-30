@@ -87,9 +87,11 @@ describe('readGitDiff', () => {
     const res = await readGitDiff('/repo', 'tracked.txt', false, false, fakeRun({ stdout: trackedPatch, code: 0 }, seen))
     expect(res.patch).toBe(trackedPatch)
     expect(res.diffHash).toBe(createHash('sha256').update(trackedPatch).digest('hex'))
-    // tracked form: `diff --no-color -- <path>`, no `--no-index`, no `-w`.
+    // tracked form: `diff --no-color HEAD -- <path>`, no `--no-index`, no `-w`.
+    // `HEAD` so a fully-staged file still diffs (vs the bare worktree-vs-index form).
     const args = seen[0]
     expect(args).toContain('--no-color')
+    expect(args).toContain('HEAD')
     expect(args).not.toContain('--no-index')
     expect(args).not.toContain('-w')
     expect(args.slice(0, 2)).toEqual(['-c', 'core.quotePath=false'])

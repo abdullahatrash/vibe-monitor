@@ -64,17 +64,25 @@ export function ChangesPanel({
 
   const view = buildChangesView(status)
 
-  // DIFF mode: only while the selected file is STILL in the changed set — a streamed
-  // status update that drops it (revert / commit) falls the panel back to the list,
-  // and re-derives `selected` from the live view so its untracked/glyph stay current.
-  const selected = selectedPath ? view.files.find((f) => f.path === selectedPath) : undefined
+  // DIFF mode, gated on `isActive` so a backgrounded (mounted-hidden) Workspace left
+  // in DIFF doesn't keep the `@pierre/diffs` worker pool alive while off-screen — and
+  // only while the selected file is STILL in the changed set, so a streamed status
+  // update that drops it (revert / commit) falls the panel back to the list. `selected`
+  // is re-derived from the LIVE view each render, so its `untracked` + churn stay
+  // current — and feeding the churn to `DiffView` re-fetches the open diff on an edit.
+  const selected = isActive && selectedPath ? view.files.find((f) => f.path === selectedPath) : undefined
   if (selected) {
     return (
       <aside className="flex min-h-0 flex-1 shrink-0 flex-col self-stretch border-l border-border bg-panel text-text">
         <DiffWorkerProvider>
           <DiffView
             workspaceDir={workspaceDir}
-            file={{ path: selected.path, untracked: selected.untracked, glyphLabel: selected.glyphLabel }}
+            file={{
+              path: selected.path,
+              untracked: selected.untracked,
+              insertions: selected.insertions,
+              deletions: selected.deletions,
+            }}
             onBack={() => setSelectedPath(null)}
           />
         </DiffWorkerProvider>

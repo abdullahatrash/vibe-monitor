@@ -27,7 +27,7 @@ export function DiffView({
   onBack,
 }: {
   workspaceDir: string
-  file: { path: string; untracked: boolean; glyphLabel: string }
+  file: { path: string; untracked: boolean; insertions: number; deletions: number }
   onBack: () => void
 }): JSX.Element {
   const [diffStyle, setDiffStyle] = useState<'unified' | 'split'>('unified')
@@ -37,6 +37,12 @@ export function DiffView({
 
   useEffect(() => {
     let cancelled = false
+    // CLEAR the prior patch up front so a re-fetch (whitespace toggle, or the file
+    // changing on disk) shows the Loading state instead of the stale diff under the
+    // already-updated header. The churn (`insertions`/`deletions`) is in the deps so
+    // an open diff RE-FETCHES when the agent (or the user) edits the file — the
+    // streamed status update bumps the churn → fresh diff, no manual refresh needed.
+    setResult(null)
     setLoading(true)
     void window.api
       .gitDiff({ workspaceDir, path: file.path, untracked: file.untracked, ignoreWhitespace })
@@ -48,7 +54,7 @@ export function DiffView({
     return () => {
       cancelled = true
     }
-  }, [workspaceDir, file.path, file.untracked, ignoreWhitespace])
+  }, [workspaceDir, file.path, file.untracked, ignoreWhitespace, file.insertions, file.deletions])
 
   const patch = result?.patch ?? ''
   const diffHash = result?.diffHash ?? ''

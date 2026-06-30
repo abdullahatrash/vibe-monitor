@@ -200,7 +200,10 @@ export async function readGitStatus(cwd: string, run: GitRun = defaultGitRun): P
     // would render `src/héllo.txt` as the literal `"src/h\303\251llo.txt"` in the
     // panel). Applied to BOTH status and the numstats so their path keys still match.
     const [porcelain, numstat, cachedNumstat] = await Promise.all([
-      run(['-c', 'core.quotePath=false', 'status', '--porcelain=2', '--branch'], cwd),
+      // `--untracked-files=all` expands an untracked DIRECTORY into its individual
+      // files (the default `normal` mode collapses it to one `? dir/` entry, which
+      // the diff viewer can't `--no-index` against — it'd dead-click on `dir/`).
+      run(['-c', 'core.quotePath=false', 'status', '--porcelain=2', '--branch', '--untracked-files=all'], cwd),
       run(['-c', 'core.quotePath=false', 'diff', '--numstat'], cwd),
       run(['-c', 'core.quotePath=false', 'diff', '--cached', '--numstat'], cwd),
     ])

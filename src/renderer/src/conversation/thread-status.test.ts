@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveThreadStatus, setThreadStatus, type ThreadStatusMap } from './thread-status'
+import { clearThreadStatus, deriveThreadStatus, setThreadStatus, type ThreadStatusMap } from './thread-status'
 import type { ConversationItem, PermissionItem } from './reducer'
 
 /**
@@ -70,5 +70,22 @@ describe('setThreadStatus (render-loop guard)', () => {
     expect(next).not.toBe(map)
     expect(next.t1).toEqual({ streaming: false, needsAttention: true })
     expect(next.t2).toBe(map.t2) // sibling reference preserved
+  })
+})
+
+describe('clearThreadStatus (drop a deleted Thread)', () => {
+  it('removes a Thread entry so it does not linger after delete', () => {
+    const map: ThreadStatusMap = {
+      t1: { streaming: true, needsAttention: false },
+      t2: { streaming: false, needsAttention: true },
+    }
+    const next = clearThreadStatus(map, 't1')
+    expect('t1' in next).toBe(false)
+    expect(next.t2).toBe(map.t2) // sibling reference preserved
+  })
+
+  it('returns the SAME map reference when the Thread is absent', () => {
+    const map: ThreadStatusMap = { t1: { streaming: false, needsAttention: false } }
+    expect(clearThreadStatus(map, 'gone')).toBe(map)
   })
 })

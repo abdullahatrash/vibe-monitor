@@ -30,7 +30,12 @@ import {
 import { ConnectedWorkspace } from './connection/ConnectedWorkspace'
 import { routeThreadSelection, seedSessionId } from './connection/thread-selection'
 import { ColdThread } from './conversation/ColdThread'
-import { setThreadStatus, type ThreadStatus, type ThreadStatusMap } from './conversation/thread-status'
+import {
+  clearThreadStatus,
+  setThreadStatus,
+  type ThreadStatus,
+  type ThreadStatusMap,
+} from './conversation/thread-status'
 import { Shell, type WorkspaceFlags } from './shell/Shell'
 import { findSelectedThread, initialNavState, navReducer } from './shell/nav-reducer'
 import { deriveUnifiedThreads, workspaceFlags, type UnifiedThreadRow } from './shell/unified-threads'
@@ -108,22 +113,29 @@ export function App(): JSX.Element {
   /**
    * Delete a Thread from the unified list (TB6 + #48 safe-delete). Main removes its
    * metadata + JSONL and best-effort closes any live session. The sidebar only
-   * offers delete for a NON-streaming, NON-primary Thread (see `protectedThreadId`),
-   * so we never tear a Thread out from under the agent mid-stream. When the deleted
-   * Thread WAS hosted live we drop it from the Workspace's live-state and, if it was
-   * the one on screen, fall back to the connection's (always-live) primary Thread —
-   * so the outlet never points at a torn-down session. Then re-fetch.
+   * offers delete for a row `isThreadDeletable` proves safe (a cold row, or the
+   * active+idle non-primary live row), so we never tear a Thread out from under the
+   * agent mid-stream.
+   *
+   * Reselection is gated on SELECTION, not liveness: `active`/`nav.selectedThreadId`
+   * can legitimately point at a COLD (history) row, and dropping it from `recents`
+   * would leave the outlet/sidebar pinned to a now-gone Thread. So whenever the
+   * deleted Thread is the active/selected one of a CONNECTED Workspace, reselect the
+   * connection's (always-live) primary Thread. The `wt remove` (drop from live-state)
+   * runs ONLY when it was live; its stale status entry is cleared either way.
    */
   async function deleteThread(thread: ThreadMeta): Promise<void> {
     await window.api.deleteThread(thread.id)
     const wts = workspaceThreadStateFor(workspaceThreads, thread.workspaceId)
     if (wts?.live.has(thread.id)) {
       wtDispatch({ type: 'remove', workspaceId: thread.workspaceId, threadId: thread.id })
-      const conn = connections[thread.workspaceId]
-      if (conn?.status === 'connected' && wts.active === thread.id) {
-        selectThreadInWorkspace(thread.workspaceId, conn.thread.threadId)
-      }
     }
+    const conn = connections[thread.workspaceId]
+    const wasSelected = wts?.active === thread.id || nav.selectedThreadId === thread.id
+    if (conn?.status === 'connected' && wasSelected) {
+      selectThreadInWorkspace(thread.workspaceId, conn.thread.threadId)
+    }
+    setStatuses((prev) => clearThreadStatus(prev, thread.id))
     await refreshRecents()
   }
 
@@ -316,6 +328,10 @@ export function App(): JSX.Element {
   // cold/idle one lists its persisted Threads (clicking replays them, no agent).
   let rows: UnifiedThreadRow[] = []
   let protectedThreadId: string | null = null
+  // The active (mounted, observable) Thread of the selected Workspace — a live row
+  // is only deletable when it's this one and idle (we can't observe a non-active
+  // sibling's turn; #53). Null when the selected Workspace has no live connection.
+  let selectedActiveId: string | null = null
   let canCreateThread = false
   if (selectedWs) {
     const cold = threadsForWorkspace(recents, selectedWs)
@@ -329,6 +345,7 @@ export function App(): JSX.Element {
         statuses,
       })
       protectedThreadId = conn.threadId
+      selectedActiveId = wts?.active ?? conn.threadId
       canCreateThread = true
     } else {
       rows = deriveUnifiedThreads({ cold, live: [], liveThreadIds: NO_LIVE, statuses })
@@ -387,6 +404,11 @@ export function App(): JSX.Element {
   // and a switch-back is instant; the selected Workspace's transient state
   // (connecting / sign-in / error) or its cold Thread renders inline. Routed off the
   // nav selection, so cold clicks always route right.
+  //
+  // LIMITATION (follow-up #53): only the ACTIVE Thread per Workspace is mounted, so a
+  // non-active live sibling's turn is unobservable — its streaming/needs-attention
+  // indicators don't update and it stays non-deletable while in the background. We
+  // ship active-only indicators now; mounting all live siblings is deferred to #53.
   const outlet = (
     <>
       {connectedIds.map((wid) => {
@@ -425,6 +447,7 @@ export function App(): JSX.Element {
         workspaceFlags={wsFlags}
         rows={rows}
         protectedThreadId={protectedThreadId}
+        activeThreadId={selectedActiveId}
         canCreateThread={canCreateThread}
         creatingThread={creatingThread}
         outlet={outlet}

@@ -1,7 +1,7 @@
 import { useState, type JSX, type ReactNode } from 'react'
 import type { ListMetadataResult, ThreadMeta } from '../../../shared/ipc'
 import type { NavState } from './nav-reducer'
-import type { UnifiedThreadRow } from './unified-threads'
+import { isThreadDeletable, type UnifiedThreadRow } from './unified-threads'
 
 /** A Workspace's rolled-up live status, for its switcher row. */
 export interface WorkspaceFlags {
@@ -32,6 +32,7 @@ export function Shell({
   workspaceFlags,
   rows,
   protectedThreadId,
+  activeThreadId,
   canCreateThread,
   creatingThread,
   outlet,
@@ -52,6 +53,9 @@ export function Shell({
   rows: UnifiedThreadRow[]
   /** The connection's primary Thread (never deletable mid-connection), or null. */
   protectedThreadId: string | null
+  /** The selected Workspace's active (mounted) Thread — a live row is deletable only
+   *  when it IS this one (we can't observe a non-active sibling's turn; #53). */
+  activeThreadId: string | null
   /** Whether New-thread is available (the selected Workspace is connected). */
   canCreateThread: boolean
   /** A draft mint is in flight — disable New-thread to avoid a double mint. */
@@ -77,6 +81,7 @@ export function Shell({
           workspaceFlags={workspaceFlags}
           rows={rows}
           protectedThreadId={protectedThreadId}
+          activeThreadId={activeThreadId}
           canCreateThread={canCreateThread}
           creatingThread={creatingThread}
           onSelectWorkspace={onSelectWorkspace}
@@ -104,6 +109,7 @@ function WorkspaceNav({
   workspaceFlags,
   rows,
   protectedThreadId,
+  activeThreadId,
   canCreateThread,
   creatingThread,
   onSelectWorkspace,
@@ -116,6 +122,7 @@ function WorkspaceNav({
   workspaceFlags: Readonly<Record<string, WorkspaceFlags>>
   rows: UnifiedThreadRow[]
   protectedThreadId: string | null
+  activeThreadId: string | null
   canCreateThread: boolean
   creatingThread: boolean
   onSelectWorkspace: (workspaceId: string) => void
@@ -159,10 +166,11 @@ function WorkspaceNav({
                         key={row.thread.id}
                         row={row}
                         selected={row.thread.id === nav.selectedThreadId}
-                        // Safe delete (TB6 / #48): never delete the connection's
-                        // primary Thread (the agent is actively hosting it) or one
-                        // mid-stream — both are the TB1 delete-while-hosted hazard.
-                        deletable={!row.streaming && row.thread.id !== protectedThreadId}
+                        // Safe delete (TB6 / #48), decided by the pure gate: a cold row
+                        // always; the primary never; a live row only when it's the
+                        // active, idle row (a non-active live sibling's turn is
+                        // unobservable, so it stays non-deletable — the TB1 hazard).
+                        deletable={isThreadDeletable(row, activeThreadId, protectedThreadId)}
                         onOpen={() => onSelectThread(w.id, row.thread.id)}
                         onDelete={onDeleteThread}
                       />

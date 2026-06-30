@@ -50,3 +50,15 @@ export function setThreadStatus(
   }
   return { ...map, [threadId]: status }
 }
+
+/**
+ * Drop a Thread's entry from the registry (pure) — used on delete so a removed
+ * Thread doesn't linger as a stale `{false, false}` for the rest of the session.
+ * Returns the SAME map reference when the Thread isn't present (no re-render).
+ */
+export function clearThreadStatus(map: ThreadStatusMap, threadId: string): ThreadStatusMap {
+  if (!(threadId in map)) return map
+  const next = { ...map }
+  delete next[threadId]
+  return next
+}

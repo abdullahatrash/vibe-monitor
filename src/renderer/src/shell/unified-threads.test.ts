@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveUnifiedThreads, workspaceFlags } from './unified-threads'
+import { deriveUnifiedThreads, isThreadDeletable, workspaceFlags, type UnifiedThreadRow } from './unified-threads'
 import type { ThreadStatusMap } from '../conversation/thread-status'
 import type { ThreadMeta } from '../../../shared/ipc'
 
@@ -108,5 +108,40 @@ describe('workspaceFlags (background Workspace roll-up)', () => {
   it('ignores statuses of Threads not in this Workspace live set', () => {
     const statuses: ThreadStatusMap = { other: { streaming: true, needsAttention: true } }
     expect(workspaceFlags(new Set(['a']), statuses)).toEqual({ streaming: false, needsAttention: false })
+  })
+})
+
+describe('isThreadDeletable (safe-delete gate)', () => {
+  function row(id: string, opts: Partial<UnifiedThreadRow> = {}): UnifiedThreadRow {
+    return { thread: thread(id), live: false, streaming: false, needsAttention: false, ...opts }
+  }
+
+  it('allows deleting a cold row (no live session to tear out from under)', () => {
+    expect(isThreadDeletable(row('c'), 'active', 'primary')).toBe(true)
+    // Even if it happens to be the active selection (a cold row being replayed).
+    expect(isThreadDeletable(row('c'), 'c', 'primary')).toBe(true)
+  })
+
+  it('never allows deleting the connection primary Thread mid-connection', () => {
+    expect(isThreadDeletable(row('primary', { live: true }), 'primary', 'primary')).toBe(false)
+  })
+
+  it('allows deleting the active, idle, non-primary live row', () => {
+    expect(isThreadDeletable(row('a', { live: true }), 'a', 'primary')).toBe(true)
+  })
+
+  it('forbids deleting the active live row while it is streaming', () => {
+    expect(isThreadDeletable(row('a', { live: true, streaming: true }), 'a', 'primary')).toBe(false)
+  })
+
+  it('forbids deleting a NON-active live row (its turn is unobservable; #53)', () => {
+    // A backgrounded live sibling reports streaming:false because it is unmounted —
+    // we cannot prove it idle, so it must not be deletable (the TB1 hazard).
+    expect(isThreadDeletable(row('b', { live: true, streaming: false }), 'a', 'primary')).toBe(false)
+  })
+
+  it('treats every live row as non-active when there is no active/primary (defensive)', () => {
+    expect(isThreadDeletable(row('a', { live: true }), null, null)).toBe(false)
+    expect(isThreadDeletable(row('c'), null, null)).toBe(true) // cold still deletable
   })
 })

@@ -62,6 +62,32 @@ export function deriveUnifiedThreads(args: {
 }
 
 /**
+ * Whether a unified row may be deleted (pure — the safe-delete gate, TB6 / #48).
+ *
+ * The hazard: only the ACTIVE Thread is mounted, so a non-active LIVE Thread's
+ * `Conversation` is unmounted and reports `streaming: false` — we CANNOT observe
+ * whether its turn is still running on the agent (the non-active-sibling indicator
+ * gap, follow-up #53). Deleting it would best-effort close a possibly-mid-turn
+ * session (the TB1 hazard), so a live Thread is deletable ONLY when it's the active
+ * (mounted, observable) row AND idle AND not the primary:
+ * - a cold row is always deletable (no live session to tear out from under);
+ * - the connection's primary Thread is never deletable mid-connection;
+ * - a live non-primary row is deletable only when it's the active, non-streaming row.
+ *
+ * `activeId`/`primaryThreadId` are null for a Workspace with no live connection
+ * (all rows are cold then).
+ */
+export function isThreadDeletable(
+  row: UnifiedThreadRow,
+  activeId: string | null,
+  primaryThreadId: string | null,
+): boolean {
+  if (!row.live) return true
+  if (row.thread.id === primaryThreadId) return false
+  return row.thread.id === activeId && !row.streaming
+}
+
+/**
  * A Workspace-level roll-up of its live Threads' status (pure), for the Workspace
  * switcher row: `streaming` if ANY of its live Threads has a turn in flight,
  * `needsAttention` if ANY is blocked on a permission. This is what flags a

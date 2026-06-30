@@ -17,6 +17,7 @@ import {
 import { eventBelongsToThread } from './event-routing'
 import { replayTranscript } from './replay'
 import { ChatMarkdown } from './ChatMarkdown'
+import { getDraft, setDraft as persistDraft, clearDraft } from './composer-draft-store'
 
 /** Process-local counter for unique echoed-prompt ids. */
 let promptSeq = 0
@@ -62,7 +63,13 @@ export function Conversation({
   onBound?: (sessionId: string) => void
 }): JSX.Element {
   const [state, dispatch] = useReducer(conversationReducer, initialConversationState)
-  const [draft, setDraft] = useState('')
+  // The composer's unsent text, persisted per-Thread to localStorage (#60) so it
+  // survives any unmount (cold↔live, agent eviction/re-warm, app restart, switching
+  // to a cold Thread). This view is keyed by `thread.threadId` in the outlet, so it
+  // REMOUNTS on a Thread switch — the lazy initializer seeds THAT Thread's stored
+  // draft fresh, with no stale carry-over (no re-seed effect needed). Reading here
+  // must not write, so we only persist on change/send below.
+  const [draft, setDraft] = useState(() => getDraft(window.localStorage, thread.threadId))
   // The session this Thread is bound to — null until a draft's first prompt binds
   // it (via main's `thread:bound`). Seeded from the record; mirrored into a ref so
   // the event subscription reads the LATEST value without re-subscribing (a stale
@@ -139,6 +146,8 @@ export function Conversation({
     const text = draft.trim()
     if (!text || state.isProcessing) return
     setDraft('')
+    // The text is now in the transcript — drop the persisted draft (#60).
+    clearDraft(window.localStorage, thread.threadId)
     dispatch({ type: 'send-prompt', id: `user:${promptSeq++}`, text })
     try {
       const result = await window.api.sendPrompt({
@@ -252,7 +261,11 @@ export function Conversation({
           className="composer__input"
           placeholder="Ask Vibe… (Enter to send, Shift+Enter for a newline)"
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            // Write-through: keep React state and the persisted draft (#60) in lockstep.
+            setDraft(e.target.value)
+            persistDraft(window.localStorage, thread.threadId, e.target.value)
+          }}
           onKeyDown={onKeyDown}
           rows={2}
         />

@@ -36,6 +36,7 @@ import {
   setThreadStatus,
   type ThreadStatusMap,
 } from './conversation/thread-status'
+import { clearDraft } from './conversation/composer-draft-store'
 import { Shell, type WorkspaceFlags } from './shell/Shell'
 import { firstRunState, type FirstRunState } from './shell/first-run'
 import { findSelectedThread, initialNavState, navReducer } from './shell/nav-reducer'
@@ -141,6 +142,8 @@ export function App(): JSX.Element {
       selectThreadInWorkspace(thread.workspaceId, conn.thread.threadId)
     }
     setStatuses((prev) => clearThreadStatus(prev, thread.id))
+    // Drop the deleted Thread's persisted composer draft (#60) — no orphaned text.
+    clearDraft(window.localStorage, thread.id)
     await refreshRecents()
   }
 

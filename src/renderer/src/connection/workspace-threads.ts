@@ -22,6 +22,14 @@ import type { ThreadAgentControls, ThreadConfigAxis } from '../../../shared/ipc'
  *   `connect` (the primary) and `bind` (drafts/continued), and updated
  *   OPTIMISTICALLY per Thread on a `set-config` (a change emits no notification,
  *   ADR-0007). So EVERY live Thread shows + changes its own Mode/Model/effort.
+ * - `selected`: the user's last EXPLICIT pick per Thread per axis (#72), recorded
+ *   only on a CONFIRMED change (IPC `{ok:true}`) — the in-memory cache that lets a
+ *   resumed Thread come back to the user's choice. Vibe resets Mode to `default` on
+ *   `session/load` (acp-capture §10), so a Thread whose session is lost (idle-evicted
+ *   + re-warmed per TB5, or a cold continue) and resumed would silently revert. We
+ *   re-assert `selected` after the resume's `bind`. CRITICAL: unlike `config`, this
+ *   SURVIVES a `connect`-reset, so a re-warm keeps the cache (ADR-0007 keeps it OUT of
+ *   the durable store, so a cold app-restart reopen has none — accepted/out of scope).
  *
  * A pure reducer + derivation (no React, no IPC), like the nav/connection reducers.
  */
@@ -30,6 +38,7 @@ export interface WorkspaceThreadState {
   bound: Readonly<Record<string, string>>
   active: string
   config: Readonly<Record<string, ThreadAgentControls>>
+  selected: Readonly<Record<string, Partial<Record<ThreadConfigAxis, string>>>>
 }
 
 export type WorkspaceThreadsState = Readonly<Record<string, WorkspaceThreadState>>
@@ -68,6 +77,11 @@ export type WorkspaceThreadsAction =
   // current value the instant the user picks, then reverts (re-dispatching the prior
   // value) on an IPC failure. Keyed by `threadId` so a sibling Thread is untouched.
   | { type: 'set-config'; workspaceId: string; threadId: string; axis: ThreadConfigAxis; value: string }
+  // Record the user's last EXPLICIT pick for a Thread's axis (#72), dispatched ONLY
+  // after the change's IPC confirms (`{ok:true}`) — never on the optimistic display
+  // update or a revert. This is the cache re-asserted after a resume; it survives a
+  // `connect`-reset (a re-warm keeps it), so it lives apart from `config`.
+  | { type: 'cache-selection'; workspaceId: string; threadId: string; axis: ThreadConfigAxis; value: string }
 
 export const initialWorkspaceThreads: WorkspaceThreadsState = {}
 
@@ -76,7 +90,13 @@ export function workspaceThreadsReducer(
   action: WorkspaceThreadsAction,
 ): WorkspaceThreadsState {
   switch (action.type) {
-    case 'connect':
+    case 'connect': {
+      // A reconnect (new agent) deliberately drops the prior session's live/bound/
+      // active/config — those died with the old process. But the per-Thread selection
+      // cache (#72) PERSISTS: a re-warm after eviction (TB5) must keep the user's last
+      // pick so it can be re-asserted once the resumed session reports its (default)
+      // values. `connect` is the only action that would otherwise wipe `selected`.
+      const cur = state[action.workspaceId]
       return {
         ...state,
         [action.workspaceId]: {
@@ -84,8 +104,10 @@ export function workspaceThreadsReducer(
           bound: action.sessionId ? { [action.threadId]: action.sessionId } : {},
           active: action.threadId,
           config: action.controls ? { [action.threadId]: action.controls } : {},
+          selected: cur?.selected ?? {},
         },
       }
+    }
     case 'open': {
       const cur = state[action.workspaceId]
       if (!cur) return state
@@ -126,9 +148,11 @@ export function workspaceThreadsReducer(
       delete bound[action.threadId]
       const config = { ...cur.config }
       delete config[action.threadId]
+      const selected = { ...cur.selected }
+      delete selected[action.threadId] // drop its cached picks too (#72)
       // `active` is left to the caller: deleting the active Thread is paired with a
       // `select` back to the connection's primary Thread (which is never deletable).
-      return { ...state, [action.workspaceId]: { ...cur, live, bound, config } }
+      return { ...state, [action.workspaceId]: { ...cur, live, bound, config, selected } }
     }
     case 'set-config': {
       // Optimistic per-Thread update (#70, ADR-0007). Same-ref-on-noop discipline:
@@ -143,6 +167,23 @@ export function workspaceThreadsReducer(
       return {
         ...state,
         [action.workspaceId]: { ...cur, config: { ...cur.config, [action.threadId]: next } },
+      }
+    }
+    case 'cache-selection': {
+      // Record a CONFIRMED pick (#72). Same-ref discipline: no Workspace, or the same
+      // value already cached for this axis, returns the SAME ref so a redundant cache
+      // can't churn the reducer. Unlike `set-config` this records even axes with no
+      // seeded `config` — the cache is keyed only by the pick the IPC confirmed.
+      const cur = state[action.workspaceId]
+      if (!cur) return state
+      const prev = cur.selected[action.threadId]
+      if (prev?.[action.axis] === action.value) return state
+      return {
+        ...state,
+        [action.workspaceId]: {
+          ...cur,
+          selected: { ...cur.selected, [action.threadId]: { ...prev, [action.axis]: action.value } },
+        },
       }
     }
   }
@@ -210,6 +251,16 @@ export function currentConfigValue(
 ): string | null {
   const controls = state[workspaceId]?.config[threadId]
   if (!controls) return null
+  return boundConfigValue(controls, axis)
+}
+
+/**
+ * A controls bundle's CURRENT value for an axis (#72) — the standalone read used both
+ * by `currentConfigValue` (over the store) and by `reassertions`/the App re-assert
+ * (over a freshly-`bound` payload, before it lands in the store). Null when the axis
+ * isn't advertised.
+ */
+export function boundConfigValue(controls: ThreadAgentControls, axis: ThreadConfigAxis): string | null {
   switch (axis) {
     case 'mode':
       return controls.modes?.currentModeId ?? null
@@ -218,4 +269,40 @@ export function currentConfigValue(
     case 'reasoningEffort':
       return controls.reasoningEffort?.current ?? null
   }
+}
+
+/**
+ * A Thread's cached EXPLICIT selections (#72), or an empty object when none — the
+ * user's last confirmed pick per axis, surviving a `connect`-reset (re-warm). App
+ * reads this after a resume's `bind` to decide what to re-assert.
+ */
+export function selectedFor(
+  state: WorkspaceThreadsState,
+  workspaceId: string | null,
+  threadId: string,
+): Partial<Record<ThreadConfigAxis, string>> {
+  if (!workspaceId) return {}
+  return state[workspaceId]?.selected[threadId] ?? {}
+}
+
+/**
+ * The re-assertions a just-resumed Thread needs (#72): for each axis the user has a
+ * cached `selected` for, emit `{axis, value}` when it DIFFERS from the resumed
+ * session's reported current (`bound`). A resume resets Mode to `default` (acp-capture
+ * §10), so the user's prior non-default pick differs and is re-asserted; an axis with
+ * no selection, or one whose resumed value already matches, yields nothing — so a
+ * fresh mint (no cache) and a faithful resume both no-op. Pure (no React, no IPC).
+ */
+export function reassertions(
+  selected: Partial<Record<ThreadConfigAxis, string>>,
+  bound: ThreadAgentControls,
+): Array<{ axis: ThreadConfigAxis; value: string }> {
+  const axes: ThreadConfigAxis[] = ['mode', 'model', 'reasoningEffort']
+  const out: Array<{ axis: ThreadConfigAxis; value: string }> = []
+  for (const axis of axes) {
+    const want = selected[axis]
+    if (want === undefined) continue
+    if (boundConfigValue(bound, axis) !== want) out.push({ axis, value: want })
+  }
+  return out
 }

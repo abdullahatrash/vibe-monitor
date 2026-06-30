@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
+  boundConfigValue,
   configFor,
   currentConfigValue,
   initialWorkspaceThreads,
+  reassertions,
+  selectedFor,
   workspaceThreadsReducer,
   workspaceThreadStateFor,
   type WorkspaceThreadsState,
@@ -362,7 +365,7 @@ describe('per-Thread agent-controls config (#70)', () => {
 
 describe('workspaceThreadStateFor', () => {
   const state: WorkspaceThreadsState = {
-    w1: { live: new Set(['t1']), bound: {}, active: 't1', config: {} },
+    w1: { live: new Set(['t1']), bound: {}, active: 't1', config: {}, selected: {} },
   }
   it('returns a Workspace live-state', () => {
     expect(workspaceThreadStateFor(state, 'w1')?.active).toBe('t1')
@@ -414,5 +417,100 @@ describe('currentConfigValue (#70)', () => {
       controls: { modes: null, models: null, reasoningEffort: null },
     })
     expect(currentConfigValue(bare, 'w1', 't-open', 'mode')).toBeNull()
+  })
+})
+
+describe('selection cache + re-assert (#72)', () => {
+  function connected(controls: ThreadAgentControls | null = null): WorkspaceThreadsState {
+    return workspaceThreadsReducer(initialWorkspaceThreads, {
+      type: 'connect',
+      workspaceId: 'w1',
+      threadId: 't-open',
+      sessionId: 's1',
+      controls,
+    })
+  }
+
+  it('cache-selection records, then overwrites, an axis pick (a confirmed change)', () => {
+    let s = connected()
+    s = workspaceThreadsReducer(s, { type: 'cache-selection', workspaceId: 'w1', threadId: 't-open', axis: 'mode', value: 'plan' })
+    expect(s.w1.selected['t-open']).toEqual({ mode: 'plan' })
+    s = workspaceThreadsReducer(s, { type: 'cache-selection', workspaceId: 'w1', threadId: 't-open', axis: 'model', value: 'devstral-small' })
+    expect(s.w1.selected['t-open']).toEqual({ mode: 'plan', model: 'devstral-small' })
+    s = workspaceThreadsReducer(s, { type: 'cache-selection', workspaceId: 'w1', threadId: 't-open', axis: 'mode', value: 'default' })
+    expect(s.w1.selected['t-open']).toEqual({ mode: 'default', model: 'devstral-small' })
+  })
+
+  it('cache-selection is a no-op (same ref) for an unchanged value or an absent Workspace', () => {
+    let s = connected()
+    s = workspaceThreadsReducer(s, { type: 'cache-selection', workspaceId: 'w1', threadId: 't-open', axis: 'mode', value: 'plan' })
+    expect(workspaceThreadsReducer(s, { type: 'cache-selection', workspaceId: 'w1', threadId: 't-open', axis: 'mode', value: 'plan' })).toBe(s)
+    expect(workspaceThreadsReducer(s, { type: 'cache-selection', workspaceId: 'absent', threadId: 't-open', axis: 'mode', value: 'x' })).toBe(s)
+  })
+
+  it('connect PRESERVES the selection cache while resetting live/bound/active/config (re-warm)', () => {
+    let s = connected(controls('default'))
+    s = workspaceThreadsReducer(s, { type: 'cache-selection', workspaceId: 'w1', threadId: 't-open', axis: 'mode', value: 'plan' })
+    // A re-warm after eviction: new agent, fresh primary Thread + session + config.
+    s = workspaceThreadsReducer(s, { type: 'connect', workspaceId: 'w1', threadId: 't-new', sessionId: 's2', controls: controls('default') })
+    expect([...s.w1.live]).toEqual(['t-new']) // live reset
+    expect(s.w1.bound).toEqual({ 't-new': 's2' }) // bound reset
+    expect(s.w1.config['t-open']).toBeUndefined() // config reset
+    expect(s.w1.selected['t-open']).toEqual({ mode: 'plan' }) // cache SURVIVES
+  })
+
+  it('remove drops a Thread selection cache entry too', () => {
+    let s = connected()
+    s = workspaceThreadsReducer(s, { type: 'open', workspaceId: 'w1', threadId: 'draft' })
+    s = workspaceThreadsReducer(s, { type: 'cache-selection', workspaceId: 'w1', threadId: 'draft', axis: 'mode', value: 'plan' })
+    s = workspaceThreadsReducer(s, { type: 'remove', workspaceId: 'w1', threadId: 'draft' })
+    expect(s.w1.selected['draft']).toBeUndefined()
+  })
+
+  it('selectedFor returns a Thread cache, or {} for none / absent Workspace / null workspaceId', () => {
+    let s = connected()
+    s = workspaceThreadsReducer(s, { type: 'cache-selection', workspaceId: 'w1', threadId: 't-open', axis: 'mode', value: 'plan' })
+    expect(selectedFor(s, 'w1', 't-open')).toEqual({ mode: 'plan' })
+    expect(selectedFor(s, 'w1', 'no-cache')).toEqual({})
+    expect(selectedFor(s, 'absent', 't-open')).toEqual({})
+    expect(selectedFor(s, null, 't-open')).toEqual({})
+  })
+
+  describe('reassertions', () => {
+    it('no cached selection → no re-assertions', () => {
+      expect(reassertions({}, controls('plan', 'devstral-small', 'max'))).toEqual([])
+    })
+
+    it('selection equal to the resumed value → no re-assertion', () => {
+      expect(reassertions({ mode: 'default' }, controls('default'))).toEqual([])
+    })
+
+    it('selection differing from the resumed value → re-asserted (the session/load reset case)', () => {
+      // Resume reports Mode=default; the user had picked plan.
+      expect(reassertions({ mode: 'plan' }, controls('default'))).toEqual([{ axis: 'mode', value: 'plan' }])
+    })
+
+    it('emits across multiple axes, skipping the ones that already match', () => {
+      const out = reassertions(
+        { mode: 'plan', model: 'mistral-medium-3.5', reasoningEffort: 'max' },
+        controls('default', 'mistral-medium-3.5', 'high'),
+      )
+      expect(out).toEqual([
+        { axis: 'mode', value: 'plan' }, // differs → re-assert
+        { axis: 'reasoningEffort', value: 'max' }, // differs → re-assert; model matched → skipped
+      ])
+    })
+
+    it('a cached axis the resumed session no longer advertises is re-asserted (differs from absent)', () => {
+      const bound: ThreadAgentControls = { modes: null, models: null, reasoningEffort: null }
+      expect(reassertions({ mode: 'plan' }, bound)).toEqual([{ axis: 'mode', value: 'plan' }])
+    })
+  })
+
+  it('boundConfigValue reads a controls payload per axis (null when unadvertised)', () => {
+    expect(boundConfigValue(controls('plan', 'devstral-small', 'max'), 'mode')).toBe('plan')
+    expect(boundConfigValue(controls('plan', 'devstral-small', 'max'), 'model')).toBe('devstral-small')
+    expect(boundConfigValue(controls('plan', 'devstral-small', 'max'), 'reasoningEffort')).toBe('max')
+    expect(boundConfigValue({ modes: null, models: null, reasoningEffort: null }, 'mode')).toBeNull()
   })
 })

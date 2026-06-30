@@ -3,6 +3,7 @@ import type {
   AuthMethod,
   ListMetadataResult,
   StartThreadResult,
+  ThreadAgentControls,
   ThreadConfigAxis,
   ThreadConnection,
   ThreadMeta,
@@ -24,9 +25,12 @@ import {
   shouldConnect,
 } from './connection/connections'
 import {
+  boundConfigValue,
   configFor,
   currentConfigValue,
   initialWorkspaceThreads,
+  reassertions,
+  selectedFor,
   workspaceThreadsReducer,
   workspaceThreadStateFor,
   type WorkspaceThreadState,
@@ -102,6 +106,11 @@ export function App(): JSX.Element {
   // user has since switched away). Mirrors the latest rendered nav selection.
   const selectionRef = useRef<string | null>(nav.selectedWorkspaceId)
   selectionRef.current = nav.selectedWorkspaceId
+  // Latest workspace-threads, mirrored into a ref so the async `onBound` re-assert
+  // (#72) reads the CURRENT selection cache — its render-time closure is stale by the
+  // time a resume's `thread:bound` fires (mirrors `selectionRef` above).
+  const workspaceThreadsRef = useRef(workspaceThreads)
+  workspaceThreadsRef.current = workspaceThreads
 
   async function runDetect(): Promise<void> {
     setLoading(true)
@@ -163,9 +172,9 @@ export function App(): JSX.Element {
     if (state.status !== 'connected') return
     // Seed the connect-time (primary) Thread's controls per-Thread (#70) from the
     // connection's `session/new` values — every sibling Thread later seeds its own on
-    // `bind`. NOTE (deferred follow-up): caching a non-default selection across a
-    // session loss + re-asserting it after `session/load` (ADR-0007) is a separate
-    // slice; today a reopened/continued Thread shows its resumed (default) config.
+    // `bind`. A non-default selection lost to a session reset (re-warm / cold continue)
+    // is now re-asserted after the resume's `bind` via `reassertAfterResume` (#72), from
+    // the per-Thread `selected` cache that survives this `connect`-reset.
     wtDispatch({
       type: 'connect',
       workspaceId,
@@ -215,10 +224,46 @@ export function App(): JSX.Element {
     if (prev === value) return // already current — no optimistic churn, no IPC round-trip
     wtDispatch({ type: 'set-config', workspaceId, threadId, axis, value })
     void window.api.setThreadConfig({ agentId, sessionId, axis, value }).then((res) => {
-      if (res.ok) return
+      if (res.ok) {
+        // Remember the CONFIRMED pick (#72) so a later resume (re-warm / cold continue)
+        // re-asserts it — Vibe resets Mode to `default` on `session/load`. Cached only
+        // here, never on the optimistic update or the revert below.
+        wtDispatch({ type: 'cache-selection', workspaceId, threadId, axis, value })
+        return
+      }
       console.error(`Failed to set ${axis} to "${value}": ${res.error}`)
       if (prev !== null) wtDispatch({ type: 'set-config', workspaceId, threadId, axis, value: prev })
     })
+  }
+
+  /**
+   * Re-assert a Thread's cached selection after a resume (#72). Vibe resets Mode to
+   * `default` on `session/load`, so a Thread whose session was lost (idle-evicted +
+   * re-warmed per TB5, or a cold continue) and resumed reports its DEFAULT controls on
+   * `thread:bound`. For each axis whose cached `selected` differs from the resumed
+   * value, optimistically reflect it on the displayed config AND fire the IPC to put
+   * the live session back to the user's choice — reverting (to the resumed value) +
+   * logging on failure, mirroring `changeThreadConfig`. Reads the cache from the ref so
+   * an async resume sees the latest, not its stale render-time closure. No-ops for a
+   * fresh mint (no cache) and when the resumed value already matches.
+   */
+  function reassertAfterResume(
+    workspaceId: string,
+    agentId: string,
+    threadId: string,
+    sessionId: string,
+    controls: ThreadAgentControls,
+  ): void {
+    const selected = selectedFor(workspaceThreadsRef.current, workspaceId, threadId)
+    for (const { axis, value } of reassertions(selected, controls)) {
+      const prev = boundConfigValue(controls, axis) // the resumed value to revert to
+      wtDispatch({ type: 'set-config', workspaceId, threadId, axis, value })
+      void window.api.setThreadConfig({ agentId, sessionId, axis, value }).then((res) => {
+        if (res.ok) return
+        console.error(`Failed to re-assert ${axis} to "${value}": ${res.error}`)
+        if (prev !== null) wtDispatch({ type: 'set-config', workspaceId, threadId, axis, value: prev })
+      })
+    }
   }
 
   /**
@@ -495,9 +540,13 @@ export function App(): JSX.Element {
           onSetConfig={(axis, value, sessionId) =>
             changeThreadConfig(conn.workspaceId, conn.agentId, activeThread.id, axis, value, sessionId)
           }
-          onBound={(sessionId, controls) =>
+          onBound={(sessionId, controls) => {
+            // Seed the displayed config from the bound session's reported values, then
+            // re-assert the user's cached selection over them (#72) — a resume reports
+            // defaults, so this restores a prior non-default Mode/Model/effort.
             wtDispatch({ type: 'bind', workspaceId: conn.workspaceId, threadId: activeThread.id, sessionId, controls })
-          }
+            if (controls) reassertAfterResume(conn.workspaceId, conn.agentId, activeThread.id, sessionId, controls)
+          }}
           onContinue={() => {
             wtDispatch({ type: 'open', workspaceId: conn.workspaceId, threadId: activeThread.id })
             navDispatch({ type: 'select-thread', workspaceId: conn.workspaceId, threadId: activeThread.id })

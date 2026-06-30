@@ -488,11 +488,10 @@ async function runPromptTurn(
     // mint, a re-bind, OR a successful resume — so the Thread's picker sources its
     // OWN Mode/Model/effort from THIS session (the #66 single-Thread limitation this
     // removes). A plain reuse of an already-hosted session brings null controls and
-    // no re-emit (the renderer keeps what it holds). NOTE (deferred follow-up): we
-    // hand the renderer the session's REPORTED controls only; caching a user's prior
-    // non-default selection and re-asserting it after a `session/load` resume
-    // (ADR-0007) is a separate slice — today a reopened Thread shows its resumed
-    // (default) config, not the choice it last carried.
+    // no re-emit (the renderer keeps what it holds). We hand the renderer the
+    // session's REPORTED controls only; the renderer caches the user's prior
+    // non-default selection and RE-ASSERTS it after a `session/load` resume (#72,
+    // ADR-0007) — main stays oblivious to that within-session, renderer-only cache.
     if (bound.controls && !sender.isDestroyed()) {
       sender.send(IPC.threadBound, { threadId: args.threadId, sessionId, rebound, controls: bound.controls })
     }

@@ -287,11 +287,13 @@ export function selectedFor(
 
 /**
  * The re-assertions a just-resumed Thread needs (#72): for each axis the user has a
- * cached `selected` for, emit `{axis, value}` when it DIFFERS from the resumed
- * session's reported current (`bound`). A resume resets Mode to `default` (acp-capture
- * §10), so the user's prior non-default pick differs and is re-asserted; an axis with
- * no selection, or one whose resumed value already matches, yields nothing — so a
- * fresh mint (no cache) and a faithful resume both no-op. Pure (no React, no IPC).
+ * cached `selected` for AND that the resumed session still ADVERTISES, emit
+ * `{axis, value}` when it DIFFERS from the session's reported current (`bound`). A
+ * resume resets Mode to `default` (acp-capture §10), so the user's prior non-default
+ * pick differs and is re-asserted; an axis with no selection, one whose resumed value
+ * already matches, or one the resumed session no longer advertises (`boundConfigValue`
+ * null — there's no setter target) yields nothing. So a fresh mint (no cache) and a
+ * faithful resume both no-op, and we never fire a doomed setter. Pure (no React, no IPC).
  */
 export function reassertions(
   selected: Partial<Record<ThreadConfigAxis, string>>,
@@ -302,7 +304,10 @@ export function reassertions(
   for (const axis of axes) {
     const want = selected[axis]
     if (want === undefined) continue
-    if (boundConfigValue(bound, axis) !== want) out.push({ axis, value: want })
+    const have = boundConfigValue(bound, axis)
+    // Skip an unadvertised axis (have === null): the session has no setter target, so
+    // re-asserting would fire a request that just errors.
+    if (have !== null && have !== want) out.push({ axis, value: want })
   }
   return out
 }

@@ -501,9 +501,9 @@ describe('selection cache + re-assert (#72)', () => {
       ])
     })
 
-    it('a cached axis the resumed session no longer advertises is re-asserted (differs from absent)', () => {
+    it('a cached axis the resumed session no longer advertises is NOT re-asserted (no setter target)', () => {
       const bound: ThreadAgentControls = { modes: null, models: null, reasoningEffort: null }
-      expect(reassertions({ mode: 'plan' }, bound)).toEqual([{ axis: 'mode', value: 'plan' }])
+      expect(reassertions({ mode: 'plan' }, bound)).toEqual([])
     })
   })
 

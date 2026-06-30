@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState, type JSX, type ReactNode } from 'react'
+import { useEffect, useReducer, useRef, useState, type JSX, type ReactNode } from 'react'
 import type {
   AuthMethod,
   ListMetadataResult,
@@ -34,7 +34,6 @@ import { ColdThread } from './conversation/ColdThread'
 import {
   clearThreadStatus,
   setThreadStatus,
-  type ThreadStatus,
   type ThreadStatusMap,
 } from './conversation/thread-status'
 import { Shell, type WorkspaceFlags } from './shell/Shell'
@@ -80,9 +79,12 @@ export function App(): JSX.Element {
   // and the active (kept-mounted) Thread — lifted OUT of ConnectedWorkspace so the
   // sidebar + nav reducer are the single source of truth for selection/live-state.
   const [workspaceThreads, wtDispatch] = useReducer(workspaceThreadsReducer, initialWorkspaceThreads)
-  // Per-Thread live status (TB3 #48), reported UP from each live Conversation:
-  // streaming (turn in flight) + needsAttention (pending permission). Keyed by
-  // threadId; the fold returns the same ref when unchanged so reports never loop.
+  // Per-Thread live status (TB3 #48, #53): streaming (turn in flight) +
+  // needsAttention (pending permission), keyed by threadId. The SINGLE source is
+  // now main's `thread:status` push (#53) — main owns the authoritative turn +
+  // permission lifecycle, so this covers NON-active live Threads the renderer never
+  // mounts, not just the active one. The fold returns the same ref when unchanged
+  // so a redundant push can't loop.
   const [statuses, setStatuses] = useState<ThreadStatusMap>({})
   // Persisted Workspaces + Threads (ADR-0005), listed cold on launch from
   // metadata alone — no agent spawned, no transcript loaded.
@@ -100,11 +102,6 @@ export function App(): JSX.Element {
   const selectionRef = useRef<string | null>(nav.selectedWorkspaceId)
   selectionRef.current = nav.selectedWorkspaceId
 
-  /** Fold a live Conversation's reported status into the registry (stable identity). */
-  const reportStatus = useCallback((s: { threadId: string } & ThreadStatus): void => {
-    setStatuses((prev) => setThreadStatus(prev, s.threadId, { streaming: s.streaming, needsAttention: s.needsAttention }))
-  }, [])
-
   async function runDetect(): Promise<void> {
     setLoading(true)
     const result = await window.api.detectVibe()
@@ -119,9 +116,9 @@ export function App(): JSX.Element {
   /**
    * Delete a Thread from the unified list (TB6 + #48 safe-delete). Main removes its
    * metadata + JSONL and best-effort closes any live session. The sidebar only
-   * offers delete for a row `isThreadDeletable` proves safe (a cold row, or the
-   * active+idle non-primary live row), so we never tear a Thread out from under the
-   * agent mid-stream.
+   * offers delete for a row `isThreadDeletable` proves safe (a cold row, or any
+   * idle non-primary live row — its real per-Thread streaming is now observable for
+   * ALL live Threads via main's push, #53), so we never tear a Thread out mid-stream.
    *
    * Reselection is gated on SELECTION, not liveness: `active`/`nav.selectedThreadId`
    * can legitimately point at a COLD (history) row, and dropping it from `recents`
@@ -129,9 +126,14 @@ export function App(): JSX.Element {
    * deleted Thread is the active/selected one of a CONNECTED Workspace, reselect the
    * connection's (always-live) primary Thread. The `wt remove` (drop from live-state)
    * runs ONLY when it was live; its stale status entry is cleared either way.
+   *
+   * Main re-validates streaming authoritatively and can REFUSE a delete that raced a
+   * just-started turn (`{ok:false, reason:'streaming'}`, #53); we bail and leave the
+   * row in place so the UI never drops a Thread main still hosts mid-stream.
    */
   async function deleteThread(thread: ThreadMeta): Promise<void> {
-    await window.api.deleteThread(thread.id)
+    const result = await window.api.deleteThread(thread.id)
+    if (!result.ok) return
     const wts = workspaceThreadStateFor(workspaceThreads, thread.workspaceId)
     if (wts?.live.has(thread.id)) {
       wtDispatch({ type: 'remove', workspaceId: thread.workspaceId, threadId: thread.id })
@@ -217,6 +219,38 @@ export function App(): JSX.Element {
     return window.api.onAgentEvicted((e) => {
       connDispatch({ type: 'evict', agentIds: new Set(e.agentIds) })
     })
+  }, [])
+
+  // Per-Thread status push (#53): main is the single source of truth for the
+  // sidebar's streaming / needs-attention indicators — it tracks each Thread's
+  // turn + permission lifecycle and pushes a change whenever a flag flips, for ALL
+  // live Threads (active or not, since main doesn't depend on a mounted view).
+  // Fold each update into the registry; the same-ref guard means a redundant push
+  // can't trigger a render, so there's no status->render->report loop.
+  //
+  // Subscribe FIRST, then pull the current statuses once (a renderer that mounts /
+  // dev-reloads mid-turn would otherwise miss an in-flight turn until the next
+  // flip). The pull only ADDS a Thread the live channel hasn't already spoken for
+  // (`threadId in prev`), so a stale snapshot can't revert a turn-end the push
+  // already delivered during the round trip.
+  useEffect(() => {
+    const off = window.api.onThreadStatus((e) => {
+      setStatuses((prev) =>
+        setThreadStatus(prev, e.threadId, { streaming: e.streaming, needsAttention: e.needsAttention }),
+      )
+    })
+    void window.api.getThreadStatuses().then((list) => {
+      setStatuses((prev) =>
+        list.reduce(
+          (map, e) =>
+            e.threadId in map
+              ? map
+              : setThreadStatus(map, e.threadId, { streaming: e.streaming, needsAttention: e.needsAttention }),
+          prev,
+        ),
+      )
+    })
+    return off
   }, [])
 
   /**
@@ -372,10 +406,6 @@ export function App(): JSX.Element {
   // cold/idle one lists its persisted Threads (clicking replays them, no agent).
   let rows: UnifiedThreadRow[] = []
   let protectedThreadId: string | null = null
-  // The active (mounted, observable) Thread of the selected Workspace — a live row
-  // is only deletable when it's this one and idle (we can't observe a non-active
-  // sibling's turn; #53). Null when the selected Workspace has no live connection.
-  let selectedActiveId: string | null = null
   let canCreateThread = false
   if (selectedWs) {
     const cold = threadsForWorkspace(recents, selectedWs)
@@ -389,7 +419,6 @@ export function App(): JSX.Element {
         statuses,
       })
       protectedThreadId = conn.threadId
-      selectedActiveId = wts?.active ?? conn.threadId
       canCreateThread = true
     } else {
       rows = deriveUnifiedThreads({ cold, live: [], liveThreadIds: NO_LIVE, statuses })
@@ -437,22 +466,20 @@ export function App(): JSX.Element {
           }}
           onCloseCold={() => selectThreadInWorkspace(conn.workspaceId, conn.threadId)}
           onAuthExpired={(authMethods) => toSignInPanel(conn.workspaceId, conn.agentId, conn.workspaceDir, authMethods)}
-          onStatusChange={reportStatus}
         />
       </>
     )
   }
 
   // The outlet: every connected Workspace stays MOUNTED (hidden unless selected) so
-  // its active Thread's turn keeps streaming and reports status (the sidebar badge),
-  // and a switch-back is instant; the selected Workspace's transient state
-  // (connecting / sign-in / error) or its cold Thread renders inline. Routed off the
-  // nav selection, so cold clicks always route right.
+  // its active Thread's turn keeps streaming and a switch-back is instant; the
+  // selected Workspace's transient state (connecting / sign-in / error) or its cold
+  // Thread renders inline. Routed off the nav selection, so cold clicks route right.
   //
-  // LIMITATION (follow-up #53): only the ACTIVE Thread per Workspace is mounted, so a
-  // non-active live sibling's turn is unobservable — its streaming/needs-attention
-  // indicators don't update and it stays non-deletable while in the background. We
-  // ship active-only indicators now; mounting all live siblings is deferred to #53.
+  // Only the ACTIVE Thread per Workspace is mounted, but its sidebar indicators no
+  // longer depend on that: main pushes per-Thread `streaming`/`needsAttention` for
+  // ALL live Threads (#53), so a NON-active live sibling's in-flight turn or blocked
+  // permission surfaces in the sidebar (and its delete gate) without a mounted view.
   const outlet = (
     <>
       {connectedIds.map((wid) => {
@@ -504,7 +531,6 @@ export function App(): JSX.Element {
         workspaceFlags={wsFlags}
         rows={rows}
         protectedThreadId={protectedThreadId}
-        activeThreadId={selectedActiveId}
         canCreateThread={canCreateThread}
         creatingThread={creatingThread}
         outlet={outlet}

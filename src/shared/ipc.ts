@@ -44,6 +44,14 @@ export const IPC = {
    * is bound before its own events arrive — it never infers its session from one.
    */
   threadBound: 'thread:bound',
+  /**
+   * Main -> renderer: a Thread's live status (`streaming` / `needsAttention`)
+   * changed (#53). Main owns the authoritative turn + permission lifecycle, so it
+   * pushes the two sidebar flags PER Thread — covering NON-active live Threads the
+   * renderer doesn't mount. The single source of truth for the sidebar indicators;
+   * the renderer folds these into its status registry (same-ref fold, no loop).
+   */
+  threadStatus: 'thread:status',
   /** List persisted Workspaces + their Threads for the cold launch list (ADR-0005). */
   listMetadata: 'metadata:list',
   /** Read a Thread's persisted JSONL transcript for a process-free reopen (TB3). */
@@ -54,8 +62,17 @@ export const IPC = {
    * Delete a Thread (TB6): remove its metadata record + JSONL transcript, and
    * best-effort close its live ACP session if one is bound. It vanishes from the
    * next `listMetadata`. Best-effort — Vibe-side cleanup never blocks ours (ADR-0005).
+   * Re-validates per-Thread streaming in main first (#53), so a click-race can't
+   * tear down a mid-turn session — replies `{ok:false, reason:'streaming'}` then.
    */
   deleteThread: 'thread:delete',
+  /**
+   * Renderer -> main: the current NON-default per-Thread statuses (#53), pulled
+   * once on mount so a renderer that loads (or dev-reloads) MID-turn re-seeds its
+   * status registry instead of waiting for the next flip. Main only pushes on a
+   * change (`thread:status`), so without this a fresh window misses in-flight state.
+   */
+  getThreadStatuses: 'thread:statuses',
 } as const
 
 /**
@@ -212,6 +229,22 @@ export interface ThreadBoundEvent {
   rebound?: boolean
 }
 
+/**
+ * Main -> renderer per-Thread status update (#53): the `streaming` (a `sendPrompt`
+ * turn in flight) and `needsAttention` (a forwarded `session/request_permission`
+ * unanswered) flags for one Thread, keyed by our durable `threadId`. Main tracks
+ * these authoritatively (it sees every turn-start/-end and permission-request/
+ * -answer) and pushes a change whenever a flag flips — so the unified sidebar shows
+ * the indicators for ALL live Threads, active or not. The renderer folds it into
+ * its status registry; a terminal transition (turn end, answer, evict) pushes the
+ * flag back to false, so nothing lingers stale.
+ */
+export interface ThreadStatusEvent {
+  threadId: string
+  streaming: boolean
+  needsAttention: boolean
+}
+
 /** Token usage for a completed turn (`session/prompt` response). */
 export interface PromptUsage {
   inputTokens?: number
@@ -266,6 +299,15 @@ export interface CreateDraftArgs {
 export type CreateDraftResult =
   | { ok: true; thread: ThreadMeta }
   | { ok: false; error: string }
+
+/**
+ * The `deleteThread` reply (#53). `ok` when the records came down (or there was
+ * nothing to delete). `{ok:false, reason:'streaming'}` when main's authoritative
+ * per-Thread status shows a turn in flight — a defense-in-depth refusal against the
+ * click-race where the renderer's (async, possibly-stale) delete gate let a delete
+ * through just as a turn began; the renderer leaves the row in place.
+ */
+export type DeleteThreadResult = { ok: true } | { ok: false; reason: 'streaming' }
 
 /** Reply to an agent `session/request_permission` with the user's choice. */
 export interface RespondPermissionArgs {

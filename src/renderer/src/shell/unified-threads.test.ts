@@ -117,31 +117,32 @@ describe('isThreadDeletable (safe-delete gate)', () => {
   }
 
   it('allows deleting a cold row (no live session to tear out from under)', () => {
-    expect(isThreadDeletable(row('c'), 'active', 'primary')).toBe(true)
-    // Even if it happens to be the active selection (a cold row being replayed).
-    expect(isThreadDeletable(row('c'), 'c', 'primary')).toBe(true)
+    expect(isThreadDeletable(row('c'), 'primary')).toBe(true)
   })
 
   it('never allows deleting the connection primary Thread mid-connection', () => {
-    expect(isThreadDeletable(row('primary', { live: true }), 'primary', 'primary')).toBe(false)
+    expect(isThreadDeletable(row('primary', { live: true }), 'primary')).toBe(false)
+    // Even while idle — the primary is the connection's always-live Thread.
+    expect(isThreadDeletable(row('primary', { live: true, streaming: false }), 'primary')).toBe(false)
   })
 
-  it('allows deleting the active, idle, non-primary live row', () => {
-    expect(isThreadDeletable(row('a', { live: true }), 'a', 'primary')).toBe(true)
+  it('allows deleting an idle non-primary live row (#53: streaming is now observable)', () => {
+    expect(isThreadDeletable(row('a', { live: true, streaming: false }), 'primary')).toBe(true)
   })
 
-  it('forbids deleting the active live row while it is streaming', () => {
-    expect(isThreadDeletable(row('a', { live: true, streaming: true }), 'a', 'primary')).toBe(false)
+  it('forbids deleting a live row while it is streaming', () => {
+    expect(isThreadDeletable(row('a', { live: true, streaming: true }), 'primary')).toBe(false)
   })
 
-  it('forbids deleting a NON-active live row (its turn is unobservable; #53)', () => {
-    // A backgrounded live sibling reports streaming:false because it is unmounted —
-    // we cannot prove it idle, so it must not be deletable (the TB1 hazard).
-    expect(isThreadDeletable(row('b', { live: true, streaming: false }), 'a', 'primary')).toBe(false)
+  it('allows deleting an idle NON-active live sibling (#53 relaxation)', () => {
+    // A backgrounded live sibling now carries its REAL per-Thread streaming via
+    // main's push, so an idle one is deletable without being the active/mounted row.
+    expect(isThreadDeletable(row('b', { live: true, streaming: false }), 'primary')).toBe(true)
+    // ...but a streaming non-active sibling is still protected.
+    expect(isThreadDeletable(row('b', { live: true, streaming: true }), 'primary')).toBe(false)
   })
 
-  it('treats every live row as non-active when there is no active/primary (defensive)', () => {
-    expect(isThreadDeletable(row('a', { live: true }), null, null)).toBe(false)
-    expect(isThreadDeletable(row('c'), null, null)).toBe(true) // cold still deletable
+  it('keeps cold rows deletable when there is no live connection', () => {
+    expect(isThreadDeletable(row('c'), null)).toBe(true)
   })
 })

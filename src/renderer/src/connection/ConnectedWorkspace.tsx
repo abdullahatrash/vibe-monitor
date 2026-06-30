@@ -2,7 +2,6 @@ import { type JSX } from 'react'
 import type { AuthMethod, ThreadConnection, ThreadMeta } from '../../../shared/ipc'
 import { ColdThread } from '../conversation/ColdThread'
 import { Conversation } from '../conversation/Conversation'
-import type { ThreadStatus } from '../conversation/thread-status'
 
 /**
  * A connected Workspace's conversation OUTLET (ADR-0006, TB3 #48). It no longer
@@ -14,9 +13,10 @@ import type { ThreadStatus } from '../conversation/thread-status'
  * Thread isn't hosted on this session's agent, read-only from JSONL (`ColdThread`)
  * with a Continue affordance that promotes it live.
  *
- * It stays MOUNTED (hidden) for a background Workspace so its turn keeps streaming
- * and its status keeps reporting (`onStatusChange`) — which is what lets the sidebar
- * flag a background Workspace blocked on an unanswerable permission prompt.
+ * It stays MOUNTED (hidden) for a background Workspace so its turn keeps streaming.
+ * The sidebar's per-Thread streaming / needs-attention indicators no longer depend
+ * on this view reporting up: main pushes per-Thread status for ALL live Threads
+ * (#53), so a background Workspace's blocked permission surfaces without it.
  */
 export function ConnectedWorkspace({
   connection,
@@ -27,7 +27,6 @@ export function ConnectedWorkspace({
   onContinue,
   onCloseCold,
   onAuthExpired,
-  onStatusChange,
 }: {
   connection: ThreadConnection
   /** The Thread App chose to show (its remembered active Thread for this Workspace). */
@@ -44,8 +43,6 @@ export function ConnectedWorkspace({
   onCloseCold: () => void
   /** Mid-session expiry (-32000): route to in-place re-auth with these methods. */
   onAuthExpired: (authMethods: AuthMethod[]) => void
-  /** Report the active live Thread's status UP for the unified sidebar indicators. */
-  onStatusChange: (status: { threadId: string } & ThreadStatus) => void
 }): JSX.Element {
   return (
     <div className="workspace">
@@ -61,7 +58,6 @@ export function ConnectedWorkspace({
           }}
           onAuthExpired={onAuthExpired}
           onBound={onBound}
-          onStatusChange={onStatusChange}
         />
       ) : (
         <ColdThread key={activeThread.id} thread={activeThread} onClose={onCloseCold} onContinue={onContinue} />

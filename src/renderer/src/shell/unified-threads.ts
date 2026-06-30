@@ -62,29 +62,24 @@ export function deriveUnifiedThreads(args: {
 }
 
 /**
- * Whether a unified row may be deleted (pure — the safe-delete gate, TB6 / #48).
- *
- * The hazard: only the ACTIVE Thread is mounted, so a non-active LIVE Thread's
- * `Conversation` is unmounted and reports `streaming: false` — we CANNOT observe
- * whether its turn is still running on the agent (the non-active-sibling indicator
- * gap, follow-up #53). Deleting it would best-effort close a possibly-mid-turn
- * session (the TB1 hazard), so a live Thread is deletable ONLY when it's the active
- * (mounted, observable) row AND idle AND not the primary:
+ * Whether a unified row may be deleted (pure — the safe-delete gate, TB6 / #48 /
+ * #53). The hazard is tearing a session out from under a mid-turn agent. Now that
+ * main pushes real per-Thread `streaming` for ALL live Threads (#53, not just the
+ * active/mounted one), the gate keys off that real flag — it no longer has to
+ * restrict deletion to the active row (the TB3 stopgap, when a non-active sibling's
+ * turn was unobservable so it had to stay non-deletable):
  * - a cold row is always deletable (no live session to tear out from under);
  * - the connection's primary Thread is never deletable mid-connection;
- * - a live non-primary row is deletable only when it's the active, non-streaming row.
+ * - any other live row is deletable when it is NOT streaming (idle), active or not.
  *
- * `activeId`/`primaryThreadId` are null for a Workspace with no live connection
- * (all rows are cold then).
+ * `primaryThreadId` is null for a Workspace with no live connection (all rows are
+ * cold then). The existing delete orchestration tears down a deleted live Thread's
+ * session (`bestEffortCloseFor` + `wt remove`), so deleting an idle one is safe.
  */
-export function isThreadDeletable(
-  row: UnifiedThreadRow,
-  activeId: string | null,
-  primaryThreadId: string | null,
-): boolean {
+export function isThreadDeletable(row: UnifiedThreadRow, primaryThreadId: string | null): boolean {
   if (!row.live) return true
   if (row.thread.id === primaryThreadId) return false
-  return row.thread.id === activeId && !row.streaming
+  return !row.streaming
 }
 
 /**

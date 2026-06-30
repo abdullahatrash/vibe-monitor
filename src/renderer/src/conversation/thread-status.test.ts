@@ -1,54 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { clearThreadStatus, deriveThreadStatus, setThreadStatus, type ThreadStatusMap } from './thread-status'
-import type { ConversationItem, PermissionItem } from './reducer'
+import { clearThreadStatus, setThreadStatus, type ThreadStatusMap } from './thread-status'
 
 /**
- * Per-Thread status surfaced from a live Conversation to the unified sidebar
- * (TB3 #48): `streaming` (turn in flight) and `needsAttention` (a pending
- * permission). Pure derivation + a render-loop-safe registry fold.
+ * The renderer-side per-Thread status REGISTRY (TB3 #48, #53): App folds main's
+ * `thread:status` pushes into this map (`streaming` / `needsAttention`, keyed by
+ * threadId). The authoritative tracking lives in main (`thread-status.ts` there);
+ * here we test only the render-loop-safe fold + the delete drop.
  */
-
-function permission(chosenOptionId: string | null): PermissionItem {
-  return {
-    kind: 'permission',
-    id: 'p1',
-    requestId: 7,
-    toolCallId: null,
-    options: [],
-    chosenOptionId,
-    chosenName: chosenOptionId ? 'Allow' : null,
-  }
-}
-
-const assistant: ConversationItem = { kind: 'assistant', id: 'a1', messageId: 'm1', text: 'hi' }
-
-describe('deriveThreadStatus', () => {
-  it('reports streaming while a turn is in flight', () => {
-    expect(deriveThreadStatus({ isProcessing: true, items: [] })).toEqual({
-      streaming: true,
-      needsAttention: false,
-    })
-  })
-
-  it('reports idle when no turn is in flight and no permission pending', () => {
-    expect(deriveThreadStatus({ isProcessing: false, items: [assistant] })).toEqual({
-      streaming: false,
-      needsAttention: false,
-    })
-  })
-
-  it('reports needsAttention while a permission request is unanswered', () => {
-    expect(
-      deriveThreadStatus({ isProcessing: true, items: [permission(null)] }).needsAttention,
-    ).toBe(true)
-  })
-
-  it('drops needsAttention once the permission has been answered', () => {
-    expect(
-      deriveThreadStatus({ isProcessing: false, items: [permission('opt-allow')] }).needsAttention,
-    ).toBe(false)
-  })
-})
 
 describe('setThreadStatus (render-loop guard)', () => {
   it('adds a Thread status', () => {

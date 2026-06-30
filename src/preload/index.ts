@@ -5,6 +5,7 @@ import {
   type AgentEvictedEvent,
   type CreateDraftArgs,
   type CreateDraftResult,
+  type DeleteThreadResult,
   type ListMetadataResult,
   type ReadTranscriptResult,
   type RespondPermissionArgs,
@@ -18,6 +19,7 @@ import {
   type StartThreadArgs,
   type StartThreadResult,
   type ThreadBoundEvent,
+  type ThreadStatusEvent,
   type VibeDetectResult,
 } from '../shared/ipc'
 
@@ -40,8 +42,9 @@ const api = {
   listMetadata: (): Promise<ListMetadataResult> => ipcRenderer.invoke(IPC.listMetadata),
   createDraft: (args: CreateDraftArgs): Promise<CreateDraftResult> =>
     ipcRenderer.invoke(IPC.createDraft, args),
-  deleteThread: (threadId: string): Promise<void> =>
+  deleteThread: (threadId: string): Promise<DeleteThreadResult> =>
     ipcRenderer.invoke(IPC.deleteThread, threadId),
+  getThreadStatuses: (): Promise<ThreadStatusEvent[]> => ipcRenderer.invoke(IPC.getThreadStatuses),
   readTranscript: (threadId: string): Promise<ReadTranscriptResult> =>
     ipcRenderer.invoke(IPC.readTranscript, threadId),
   onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {
@@ -53,6 +56,11 @@ const api = {
     const handler = (_e: unknown, payload: ThreadBoundEvent): void => listener(payload)
     ipcRenderer.on(IPC.threadBound, handler)
     return () => ipcRenderer.removeListener(IPC.threadBound, handler)
+  },
+  onThreadStatus: (listener: (event: ThreadStatusEvent) => void): (() => void) => {
+    const handler = (_e: unknown, payload: ThreadStatusEvent): void => listener(payload)
+    ipcRenderer.on(IPC.threadStatus, handler)
+    return () => ipcRenderer.removeListener(IPC.threadStatus, handler)
   },
   onAgentEvicted: (listener: (event: AgentEvictedEvent) => void): (() => void) => {
     const handler = (_e: unknown, payload: AgentEvictedEvent): void => listener(payload)

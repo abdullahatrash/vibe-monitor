@@ -1,14 +1,13 @@
-import type { ConversationItem } from './reducer'
-
 /**
- * A live Thread's status, surfaced UP from its `Conversation` to the shell so the
- * unified sidebar list (TB3 #48) can show indicators WITHOUT owning the
- * conversation reducer: `streaming` while a turn is in flight, `needsAttention`
- * while a `session/request_permission` is unanswered. The `Conversation` reducer
- * stays the source of truth; we only report these two transitions out.
+ * A live Thread's status for the unified sidebar list (TB3 #48, #53): `streaming`
+ * while a turn is in flight, `needsAttention` while a `session/request_permission`
+ * is unanswered. The authoritative source is MAIN's `thread:status` push (#53) —
+ * main owns the turn + permission lifecycle, so it surfaces these flags for ALL
+ * live Threads (active or not). This module is the renderer-side REGISTRY: the
+ * fold that App keeps the pushed flags in, keyed by `threadId`.
  */
 export interface ThreadStatus {
-  /** A turn is in flight (`isProcessing`) — drives the streaming indicator. */
+  /** A turn is in flight — drives the streaming indicator. */
   streaming: boolean
   /** A permission request is pending an answer — drives the attention badge. */
   needsAttention: boolean
@@ -17,27 +16,9 @@ export interface ThreadStatus {
 export type ThreadStatusMap = Readonly<Record<string, ThreadStatus>>
 
 /**
- * Derive a Thread's reportable status from its conversation state (pure). A turn
- * in flight is `streaming`; a still-pending permission row (`chosenOptionId ===
- * null`) is `needsAttention` — the latter is what flags a BACKGROUND Workspace
- * whose hidden turn is blocked on an unanswerable prompt (the deferred TB2
- * finding), so the user can spot it in the sidebar and switch to it.
- */
-export function deriveThreadStatus(state: {
-  isProcessing: boolean
-  items: ConversationItem[]
-}): ThreadStatus {
-  const needsAttention = state.items.some(
-    (item) => item.kind === 'permission' && item.chosenOptionId === null,
-  )
-  return { streaming: state.isProcessing, needsAttention }
-}
-
-/**
- * Fold a Thread's reported status into the registry (pure). Returns the SAME map
- * reference when nothing changed, so a Conversation re-reporting an unchanged
- * status can't trigger a render — the guard against a status->render->report loop
- * across several keep-mounted background Conversations.
+ * Fold a Thread's pushed status into the registry (pure). Returns the SAME map
+ * reference when nothing changed, so a redundant push (#53) can't trigger a
+ * render — the guard against a status->render loop.
  */
 export function setThreadStatus(
   map: ThreadStatusMap,

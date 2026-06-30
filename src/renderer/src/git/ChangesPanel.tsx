@@ -3,13 +3,21 @@ import { ChevronDown, ChevronRight, GitBranch, RefreshCw } from 'lucide-react'
 import type { GitStatus } from '../../../shared/ipc'
 import { cn } from '../lib/utils'
 import { buildChangesView, type GitFileView } from './status-view'
+import { DiffWorkerProvider } from './DiffWorkerProvider'
+import { DiffView } from './DiffView'
 
 /**
- * The collapsible right "Changes" panel for a connected Workspace (#84, ADR-0008).
- * It subscribes to the Workspace's STREAMED git status while it is the ACTIVE one
- * (`isActive`), holds the latest snapshot, and renders the branch header + the
- * changed-files list. v1 is purely observational — a file row is a no-op stub (the
- * diff view is slice #85).
+ * The right "Changes" panel for a connected Workspace (#84, ADR-0008). It subscribes to
+ * the Workspace's STREAMED git status while it is the ACTIVE one (`isActive`), holds the
+ * latest snapshot, and renders the branch header + changed-files list. Clicking a file
+ * opens its working-tree diff (#85): the panel has two modes —
+ *  - LIST: the narrow (`w-72`) file list + branch header (the #84 view).
+ *  - DIFF: a WIDER (`flex-1`) view of the selected file's diff (`DiffView`), with a
+ *    "← Changes" back button. A diff needs width, so the panel widens rather than
+ *    cramming a side-by-side into 72px.
+ * The status subscription runs in BOTH modes (the effect is render-mode-independent), so
+ * the panel keeps streaming while a diff is open — and if the selected file drops out of
+ * the changed set (reverted / committed), the panel falls back to the list.
  *
  * Subscription lifecycle (active-Workspace-only, ADR-0008): the effect runs only when
  * active, registering `onGitStatus` (filtered by `workspaceDir`) and calling
@@ -29,6 +37,7 @@ export function ChangesPanel({
 }): JSX.Element | null {
   const [status, setStatus] = useState<GitStatus | null>(null)
   const [collapsed, setCollapsed] = useState(false)
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
 
   useEffect(() => {
     if (!isActive) return
@@ -54,6 +63,32 @@ export function ChangesPanel({
   if (!status || !status.isRepo) return null
 
   const view = buildChangesView(status)
+
+  // DIFF mode, gated on `isActive` so a backgrounded (mounted-hidden) Workspace left
+  // in DIFF doesn't keep the `@pierre/diffs` worker pool alive while off-screen — and
+  // only while the selected file is STILL in the changed set, so a streamed status
+  // update that drops it (revert / commit) falls the panel back to the list. `selected`
+  // is re-derived from the LIVE view each render, so its `untracked` + churn stay
+  // current — and feeding the churn to `DiffView` re-fetches the open diff on an edit.
+  const selected = isActive && selectedPath ? view.files.find((f) => f.path === selectedPath) : undefined
+  if (selected) {
+    return (
+      <aside className="flex min-h-0 flex-1 shrink-0 flex-col self-stretch border-l border-border bg-panel text-text">
+        <DiffWorkerProvider>
+          <DiffView
+            workspaceDir={workspaceDir}
+            file={{
+              path: selected.path,
+              untracked: selected.untracked,
+              insertions: selected.insertions,
+              deletions: selected.deletions,
+            }}
+            onBack={() => setSelectedPath(null)}
+          />
+        </DiffWorkerProvider>
+      </aside>
+    )
+  }
 
   return (
     <aside className="w-72 shrink-0 border-l border-border bg-panel text-text">
@@ -105,7 +140,7 @@ export function ChangesPanel({
           ) : (
             <ul className="flex flex-col py-1">
               {view.files.map((file) => (
-                <FileRow key={file.path} file={file} />
+                <FileRow key={file.path} file={file} onSelect={() => setSelectedPath(file.path)} />
               ))}
             </ul>
           )}
@@ -122,14 +157,13 @@ function glyphClass(glyph: string): string {
   return 'text-accent-text'
 }
 
-/** One changed-file row. Clicking is a no-op stub — the diff view is slice #85. */
-function FileRow({ file }: { file: GitFileView }): JSX.Element {
+/** One changed-file row. Clicking opens the file's working-tree diff (#85, DIFF mode). */
+function FileRow({ file, onSelect }: { file: GitFileView; onSelect: () => void }): JSX.Element {
   return (
     <li>
       <button
         type="button"
-        // diff view — slice #85 (no-op for now).
-        onClick={() => {}}
+        onClick={onSelect}
         title={file.path}
         className="flex w-full items-center gap-2 px-3 py-1 text-left text-xs hover:bg-accent/10"
       >

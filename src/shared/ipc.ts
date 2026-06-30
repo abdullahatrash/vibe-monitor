@@ -104,6 +104,15 @@ export const IPC = {
    * ahead/behind). The renderer filters by `workspaceDir` and holds the latest status.
    */
   gitStatus: 'git:status',
+  /**
+   * Renderer -> main: read ONE changed path's working-tree unified diff (#85,
+   * ADR-0008). Invoke, `{ workspaceDir, path, untracked, ignoreWhitespace? }` ->
+   * `GitDiffResult` (raw patch text + a content `diffHash` + a `truncated` flag). The
+   * renderer parses + renders the patch with `@pierre/diffs`; main only shells `git
+   * diff`. Working-tree source only, read-only. Not agent activity, so it does NOT
+   * touch the warm-agent pool. A git failure (or no diff) returns the empty result.
+   */
+  gitDiff: 'git:diff',
 } as const
 
 /**
@@ -566,4 +575,33 @@ export interface GitStatusEvent {
 /** Args for `gitSubscribeStatus` / `gitUnsubscribeStatus` (#84). */
 export interface GitStatusSubscriptionArgs {
   workspaceDir: string
+}
+
+/**
+ * Args for `gitDiff` (#85): read one changed path's working-tree diff. `path` is the
+ * `GitFile.path` (relative to the Workspace root, as `git status` reported it).
+ * `untracked` routes to the `git diff --no-index -- /dev/null <path>` form (a new file
+ * has no index entry to diff against). `ignoreWhitespace` re-reads the diff with `-w`
+ * for the panel's whitespace toggle — @pierre can't ignore whitespace on a pre-parsed
+ * patch, so the toggle drives a fresh read (a new `diffHash`) here.
+ */
+export interface GitDiffArgs {
+  workspaceDir: string
+  path: string
+  untracked: boolean
+  ignoreWhitespace?: boolean
+}
+
+/**
+ * The `gitDiff` reply (#85): a changed path's RAW working-tree unified diff plus a
+ * content `diffHash` (sha256 of `patch`) the renderer memoizes on, so an unchanged
+ * file skips a re-parse / re-render. `truncated` is true when the patch was capped
+ * (~120 KB) — the viewer flags it. The empty result (`patch:''`, `diffHash:''`,
+ * `truncated:false`) covers BOTH a clean path (no diff) and a swallowed git failure;
+ * the renderer renders nothing for it (degrade quietly, like #84's non-repo panel).
+ */
+export interface GitDiffResult {
+  patch: string
+  diffHash: string
+  truncated: boolean
 }

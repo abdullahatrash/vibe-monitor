@@ -123,6 +123,29 @@ export const IPC = {
    * NOT agent activity, so it does NOT touch the warm-agent pool (like `git:diff`).
    */
   gitCommit: 'git:commit',
+  /**
+   * Renderer -> main: list the active Workspace's branches (#87, ADR-0008). Invoke,
+   * `{ workspaceDir }` -> `GitBranchesResult` (local + remote-only branches, deduped).
+   * Read-only, so — like `git:diff` — it does NOT touch the warm-agent pool. A git
+   * failure returns `{ok:false, error}` (never throws). The dropdown fetches on open.
+   */
+  gitBranches: 'git:branches',
+  /**
+   * Renderer -> main: CHECK OUT a branch on the active Workspace (#87). Invoke,
+   * `{ workspaceDir, name }` -> `GitOpResult`. `name` is the SWITCH TARGET — a local
+   * branch name, or the bare trailing name for a remote-only branch (the renderer
+   * strips the remote prefix so git's DWIM creates a tracking local). On success main
+   * re-reads status (`gitStatus.refresh`) so the panel header shows the new branch. A
+   * dirty-tree refusal returns `{ok:false, error}` (NO data loss — git protects).
+   */
+  gitCheckout: 'git:checkout',
+  /**
+   * Renderer -> main: CREATE + switch to a new branch on the active Workspace (#87).
+   * Invoke, `{ workspaceDir, name }` -> `GitOpResult` (`git switch -c <name>` from the
+   * current HEAD; no base ref in v1). On success main re-reads status so the header
+   * shows the new branch. A name collision returns `{ok:false, error}` (never throws).
+   */
+  gitCreateBranch: 'git:create-branch',
 } as const
 
 /**
@@ -635,3 +658,50 @@ export interface GitCommitArgs {
  * collapsed "commit failed" (#78 style). The renderer shows `error` inline + recoverable.
  */
 export type GitCommitResult = { ok: true } | { ok: false; error: string }
+
+/**
+ * One branch in a Workspace's repo (#87). `name` is the local branch name (e.g. `main`,
+ * `feat/x`) or, for a remote-only branch, the `<remote>/<branch>` name (e.g.
+ * `origin/feature`). `isRemote` distinguishes the two; `current` marks the checked-out
+ * branch; `isDefault` marks the repo's default branch (best-effort from origin/HEAD,
+ * false everywhere when unresolved). The list shows local branches + only the remotes
+ * with NO matching local (deduped), so a tracked branch appears once.
+ */
+export interface GitBranch {
+  name: string
+  isRemote: boolean
+  current: boolean
+  isDefault: boolean
+}
+
+/**
+ * The `gitBranches` reply (#87). `{ok:true, branches}` on a successful list (local +
+ * remote-only, deduped). `{ok:false, error}` carries git's actual reason (e.g. not a
+ * git repository) — never a collapsed message. The dropdown surfaces the error inline.
+ */
+export type GitBranchesResult = { ok: true; branches: GitBranch[] } | { ok: false; error: string }
+
+/**
+ * The reply shape for a branch WRITE — `gitCheckout` / `gitCreateBranch` (#87).
+ * `{ok:true}` on a clean switch/create (main then refreshes status so the panel header
+ * shows the new branch). `{ok:false, error}` carries git's ACTUAL reason — a dirty-tree
+ * checkout refusal (NO data loss; git protects), a name collision — surfaced inline +
+ * recoverable.
+ */
+export type GitOpResult = { ok: true } | { ok: false; error: string }
+
+/** Args for `gitBranches` (#87): list one Workspace's branches. */
+export interface GitBranchesArgs {
+  workspaceDir: string
+}
+
+/**
+ * Args for `gitCheckout` / `gitCreateBranch` (#87). `name` is the SWITCH TARGET for a
+ * checkout (a local name, or the bare trailing name of a remote-only branch — the
+ * renderer strips the remote prefix so git's DWIM creates a tracking local) or the NEW
+ * branch name for a create.
+ */
+export interface GitBranchOpArgs {
+  workspaceDir: string
+  name: string
+}

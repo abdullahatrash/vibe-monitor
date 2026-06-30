@@ -1,7 +1,8 @@
 import { useEffect, useState, type JSX } from 'react'
-import { ChevronDown, ChevronRight, GitBranch, RefreshCw } from 'lucide-react'
-import type { GitStatus } from '../../../shared/ipc'
+import { Check, ChevronDown, ChevronRight, GitBranch, RefreshCw } from 'lucide-react'
+import type { GitBranch as GitBranchInfo, GitStatus } from '../../../shared/ipc'
 import { cn } from '../lib/utils'
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/menu'
 import { buildChangesView, reconcileUnchecked, type GitFileView } from './status-view'
 import { DiffWorkerProvider } from './DiffWorkerProvider'
 import { DiffView } from './DiffView'
@@ -172,19 +173,13 @@ export function ChangesPanel({
 
       {!collapsed && (
         <>
-          <div className="flex items-center gap-1.5 border-b border-border px-3 py-2 text-xs text-muted">
-            <GitBranch size={13} aria-hidden className="shrink-0" />
-            <span className="min-w-0 flex-1 truncate font-medium text-text" title={view.branch}>
-              {view.branch}
-            </span>
-            {(view.ahead > 0 || view.behind > 0) && (
-              <span className="shrink-0 tabular-nums" title={`${view.ahead} ahead, ${view.behind} behind`}>
-                {view.ahead > 0 && <>↑{view.ahead}</>}
-                {view.ahead > 0 && view.behind > 0 && ' '}
-                {view.behind > 0 && <>↓{view.behind}</>}
-              </span>
-            )}
-          </div>
+          <BranchMenu
+            workspaceDir={workspaceDir}
+            branch={view.branch}
+            ahead={view.ahead}
+            behind={view.behind}
+            busy={busy}
+          />
 
           {view.files.length === 0 ? (
             <p className="px-3 py-3 text-xs text-muted">No changes — working tree clean.</p>
@@ -248,6 +243,194 @@ export function ChangesPanel({
       )}
     </aside>
   )
+}
+
+/**
+ * The branch header dropdown (#87): the current branch name as a base-ui Menu trigger
+ * that, ON OPEN, fetches the Workspace's branches (`gitBranches`) and lists them for a
+ * one-click checkout (`gitCheckout`); a "Create branch…" item reveals an inline input
+ * (`gitCreateBranch`). The ahead/behind indicator stays beside the trigger (unchanged).
+ *
+ * Disabled while `busy` (a turn streams) — the same guard as commit: we don't switch
+ * branches under the agent mid-turn (a switch rewrites the working tree). A checkout /
+ * create error surfaces inline + recoverable (the common one is git's dirty-tree
+ * refusal — NO data loss, git protects). The status STREAM updates the header on a
+ * successful switch (main re-reads after the op), so this holds no branch-name state.
+ */
+function BranchMenu({
+  workspaceDir,
+  branch,
+  ahead,
+  behind,
+  busy,
+}: {
+  workspaceDir: string
+  branch: string
+  ahead: number
+  behind: number
+  busy: boolean
+}): JSX.Element {
+  const [branches, setBranches] = useState<GitBranchInfo[] | null>(null)
+  const [listError, setListError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  // The recoverable error from a checkout / create (dirty-tree refusal, name collision).
+  const [opError, setOpError] = useState<string | null>(null)
+  // The inline "Create branch…" affordance: revealed by the menu item, below the header.
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [busyOp, setBusyOp] = useState(false)
+
+  // Fetch the branch list each time the menu opens, so it reflects branches created out
+  // of band (a terminal `git branch`, the agent) without a panel-wide subscription.
+  async function loadBranches(): Promise<void> {
+    setLoading(true)
+    setListError(null)
+    try {
+      const result = await window.api.gitBranches({ workspaceDir })
+      if (result.ok) setBranches(result.branches)
+      else {
+        setBranches([])
+        setListError(result.error)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function checkout(name: string): Promise<void> {
+    if (busy || busyOp) return
+    setBusyOp(true)
+    setOpError(null)
+    try {
+      // A remote-only branch's `name` is `<remote>/<branch>`; pass the bare trailing name
+      // so git's DWIM creates a tracking local. A local name (which may itself contain
+      // `/`, e.g. `feat/x`) is passed verbatim — `info.isRemote` decides which.
+      const info = branches?.find((b) => b.name === name)
+      const target = info?.isRemote ? trailingBranchName(name) : name
+      const result = await window.api.gitCheckout({ workspaceDir, name: target })
+      // On success the streamed status refresh updates the header to the new branch.
+      if (!result.ok) setOpError(result.error)
+    } finally {
+      setBusyOp(false)
+    }
+  }
+
+  async function createBranch(): Promise<void> {
+    const name = newName.trim()
+    if (!name || busy || busyOp) return
+    setBusyOp(true)
+    setOpError(null)
+    try {
+      const result = await window.api.gitCreateBranch({ workspaceDir, name })
+      if (result.ok) {
+        // The header updates via the streamed status refresh; clear + close the input.
+        setNewName('')
+        setCreating(false)
+      } else {
+        setOpError(result.error)
+      }
+    } finally {
+      setBusyOp(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="flex items-center gap-1.5 border-b border-border px-3 py-2 text-xs text-muted">
+        <Menu
+          onOpenChange={(open) => {
+            if (open) void loadBranches()
+          }}
+        >
+          <MenuTrigger
+            disabled={busy}
+            title={busy ? 'Agent is working…' : branch}
+            className={cn(
+              'flex min-w-0 flex-1 items-center gap-1.5 text-left',
+              'hover:text-accent-text disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-muted',
+            )}
+          >
+            <GitBranch size={13} aria-hidden className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate font-medium text-text">{branch}</span>
+            <ChevronDown size={12} aria-hidden className="shrink-0" />
+          </MenuTrigger>
+          <MenuContent align="start" className="max-h-80 min-w-48 overflow-y-auto">
+            {loading ? (
+              <div className="px-3 py-1.5 text-xs text-muted">Loading…</div>
+            ) : listError ? (
+              <div className="px-3 py-1.5 text-xs text-bad">{listError}</div>
+            ) : branches && branches.length > 0 ? (
+              branches.map((b) => (
+                <MenuItem key={b.name} onClick={() => void checkout(b.name)} disabled={b.current}>
+                  <Check size={12} aria-hidden className={cn('shrink-0', b.current ? 'opacity-100' : 'opacity-0')} />
+                  <span className="min-w-0 flex-1 truncate">{b.name}</span>
+                  {b.isRemote && <span className="shrink-0 text-[10px] uppercase text-muted">remote</span>}
+                </MenuItem>
+              ))
+            ) : (
+              <div className="px-3 py-1.5 text-xs text-muted">No branches.</div>
+            )}
+            <MenuSeparator className="my-1 h-px bg-border" />
+            <MenuItem onClick={() => setCreating(true)}>
+              <span className="w-3 shrink-0" aria-hidden />
+              Create branch…
+            </MenuItem>
+          </MenuContent>
+        </Menu>
+        {(ahead > 0 || behind > 0) && (
+          <span className="shrink-0 tabular-nums" title={`${ahead} ahead, ${behind} behind`}>
+            {ahead > 0 && <>↑{ahead}</>}
+            {ahead > 0 && behind > 0 && ' '}
+            {behind > 0 && <>↓{behind}</>}
+          </span>
+        )}
+      </div>
+
+      {creating && (
+        <div className="flex items-center gap-1.5 border-b border-border px-3 py-2">
+          <input
+            autoFocus
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="New branch name"
+            disabled={busy || busyOp}
+            className="min-w-0 flex-1 border border-border bg-panel px-2 py-1 text-xs text-text placeholder:text-muted focus:border-accent focus:outline-none disabled:opacity-50"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                void createBranch()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                setCreating(false)
+                setNewName('')
+                setOpError(null)
+              }
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => void createBranch()}
+            disabled={busy || busyOp || newName.trim().length === 0}
+            className="shrink-0 bg-accent px-2 py-1 text-xs font-medium text-on-accent hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Create
+          </button>
+        </div>
+      )}
+
+      {opError && (
+        <p className="border-b border-border px-3 py-2 text-[11px] text-bad" role="alert">
+          {opError}
+        </p>
+      )}
+    </>
+  )
+}
+
+/** The branch portion of a `<remote>/<branch>` name (drop the leading remote segment). */
+function trailingBranchName(name: string): string {
+  const slash = name.indexOf('/')
+  return slash >= 0 ? name.slice(slash + 1) : name
 }
 
 /** A glyph's accent: added/untracked read positive, deleted negative, else neutral. */

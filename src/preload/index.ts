@@ -4,10 +4,14 @@ import {
   type AcpEvent,
   type AgentEvictedEvent,
   type DeleteThreadResult,
+  type GitBranchesArgs,
+  type GitBranchesResult,
+  type GitBranchOpArgs,
   type GitCommitArgs,
   type GitCommitResult,
   type GitDiffArgs,
   type GitDiffResult,
+  type GitOpResult,
   type GitStatusEvent,
   type GitStatusSubscriptionArgs,
   type ListMetadataResult,
@@ -63,6 +67,12 @@ const api = {
     ipcRenderer.invoke(IPC.gitUnsubscribeStatus, args),
   gitDiff: (args: GitDiffArgs): Promise<GitDiffResult> => ipcRenderer.invoke(IPC.gitDiff, args),
   gitCommit: (args: GitCommitArgs): Promise<GitCommitResult> => ipcRenderer.invoke(IPC.gitCommit, args),
+  gitBranches: (args: GitBranchesArgs): Promise<GitBranchesResult> =>
+    ipcRenderer.invoke(IPC.gitBranches, args),
+  gitCheckout: (args: GitBranchOpArgs): Promise<GitOpResult> =>
+    ipcRenderer.invoke(IPC.gitCheckout, args),
+  gitCreateBranch: (args: GitBranchOpArgs): Promise<GitOpResult> =>
+    ipcRenderer.invoke(IPC.gitCreateBranch, args),
   onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {
     const handler = (_e: unknown, payload: AcpEvent): void => listener(payload)
     ipcRenderer.on(IPC.acpEvent, handler)

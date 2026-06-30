@@ -5,10 +5,14 @@ import { basename, join } from 'node:path'
 import {
   IPC,
   type DeleteThreadResult,
+  type GitBranchesArgs,
+  type GitBranchesResult,
+  type GitBranchOpArgs,
   type GitCommitArgs,
   type GitCommitResult,
   type GitDiffArgs,
   type GitDiffResult,
+  type GitOpResult,
   type GitStatusEvent,
   type GitStatusSubscriptionArgs,
   type ListMetadataResult,
@@ -55,6 +59,7 @@ import { permissionRequestIdOf, ThreadStatusTracker, type ThreadStatusChange } f
 import { gitFetch, readGitStatus } from './git/status'
 import { readGitDiff } from './git/diff'
 import { gitCommit } from './git/commit'
+import { gitBranches, gitCheckout, gitCreateBranch } from './git/branches'
 import { GitStatusManager } from './git/status-stream'
 import { chokidarWatchFactory, realClock } from './git/runtime'
 
@@ -921,6 +926,34 @@ function registerIpc(): void {
     } else {
       console.error(`[vibe-mistro:git] commit failed (${args.workspaceDir}): ${result.error}`)
     }
+    return result
+  })
+
+  ipcMain.handle(IPC.gitBranches, (_event, args: GitBranchesArgs): Promise<GitBranchesResult> => {
+    // List the active Workspace's branches for the header dropdown (#87). cwd is the
+    // Workspace dir (where #84's status ran). Read-only, so — like `git:diff` — it does
+    // NOT `pool.touch`. `gitBranches` swallows git failure into `{ok:false, error}`.
+    return gitBranches(args.workspaceDir)
+  })
+
+  ipcMain.handle(IPC.gitCheckout, async (_event, args: GitBranchOpArgs): Promise<GitOpResult> => {
+    // Check out a branch on the active Workspace (#87). A switch changes `.git/HEAD` +
+    // the working tree, so on success re-read status (`gitStatus.refresh`) to update the
+    // panel header (branch / ahead-behind) and file list. NOT agent activity, so no
+    // `pool.touch` (consistent with git:diff/commit). Never throws.
+    const result = await gitCheckout(args.workspaceDir, args.name)
+    if (result.ok) gitStatus.refresh(args.workspaceDir)
+    else console.error(`[vibe-mistro:git] checkout failed (${args.workspaceDir} -> ${args.name}): ${result.error}`)
+    return result
+  })
+
+  ipcMain.handle(IPC.gitCreateBranch, async (_event, args: GitBranchOpArgs): Promise<GitOpResult> => {
+    // Create + switch to a new branch on the active Workspace (#87). Like checkout, a
+    // successful create moves HEAD, so re-read status to update the header. No
+    // `pool.touch`. Never throws.
+    const result = await gitCreateBranch(args.workspaceDir, args.name)
+    if (result.ok) gitStatus.refresh(args.workspaceDir)
+    else console.error(`[vibe-mistro:git] create-branch failed (${args.workspaceDir} -> ${args.name}): ${result.error}`)
     return result
   })
 }

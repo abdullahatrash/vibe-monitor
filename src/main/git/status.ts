@@ -195,10 +195,14 @@ export async function readGitStatus(cwd: string, run: GitRun = defaultRun): Prom
   try {
     const inside = await run(['rev-parse', '--is-inside-work-tree'], cwd)
     if (inside.code !== 0 || inside.stdout.trim() !== 'true') return notARepo()
+    // `-c core.quotePath=false` so paths with non-ASCII chars (accented / CJK /
+    // emoji) come back as plain UTF-8, not octal-escaped + quoted (git's default
+    // would render `src/héllo.txt` as the literal `"src/h\303\251llo.txt"` in the
+    // panel). Applied to BOTH status and the numstats so their path keys still match.
     const [porcelain, numstat, cachedNumstat] = await Promise.all([
-      run(['status', '--porcelain=2', '--branch'], cwd),
-      run(['diff', '--numstat'], cwd),
-      run(['diff', '--cached', '--numstat'], cwd),
+      run(['-c', 'core.quotePath=false', 'status', '--porcelain=2', '--branch'], cwd),
+      run(['-c', 'core.quotePath=false', 'diff', '--numstat'], cwd),
+      run(['-c', 'core.quotePath=false', 'diff', '--cached', '--numstat'], cwd),
     ])
     if (porcelain.code !== 0) return notARepo()
     return parseGitStatus(porcelain.stdout, numstat.stdout, cachedNumstat.stdout)

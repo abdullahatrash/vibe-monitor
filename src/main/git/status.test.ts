@@ -110,13 +110,42 @@ describe('parseGitStatus', () => {
 })
 
 describe('readGitStatus', () => {
-  // A fake runner keyed off the first git arg — no real git, no real fs.
-  function fakeRun(responses: Record<string, { stdout: string; code: number }>): GitRun {
+  // A fake runner keyed off the git SUBCOMMAND — skips leading `-c <value>` config
+  // pairs (e.g. `-c core.quotePath=false`) so the key is `status`/`diff`, not `-c`.
+  function fakeRun(
+    responses: Record<string, { stdout: string; code: number }>,
+    seen?: string[][],
+  ): GitRun {
     return (args) => {
-      const key = args[0] === 'diff' && args.includes('--cached') ? 'diff:cached' : args[0]
+      seen?.push(args)
+      let i = 0
+      while (args[i] === '-c') i += 2
+      const sub = args[i]
+      const key = sub === 'diff' && args.includes('--cached') ? 'diff:cached' : sub
       return Promise.resolve(responses[key] ?? { stdout: '', code: 0 })
     }
   }
+
+  it('passes -c core.quotePath=false to the path-emitting commands (non-ASCII names)', async () => {
+    const seen: string[][] = []
+    await readGitStatus(
+      '/repo',
+      fakeRun(
+        {
+          'rev-parse': { stdout: 'true\n', code: 0 },
+          status: { stdout: mixPorcelain, code: 0 },
+          diff: { stdout: mixNumstat, code: 0 },
+          'diff:cached': { stdout: mixCachedNumstat, code: 0 },
+        },
+        seen,
+      ),
+    )
+    const pathCmds = seen.filter((a) => a.includes('status') || a.includes('diff'))
+    expect(pathCmds.length).toBe(3)
+    for (const a of pathCmds) {
+      expect(a.slice(0, 2)).toEqual(['-c', 'core.quotePath=false'])
+    }
+  })
 
   it('returns isRepo:false when rev-parse is non-zero (not a repo / no git)', async () => {
     const status = await readGitStatus('/nope', fakeRun({ 'rev-parse': { stdout: '', code: 128 } }))

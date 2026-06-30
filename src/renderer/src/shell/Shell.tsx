@@ -1,52 +1,76 @@
 import { useState, type JSX, type ReactNode } from 'react'
 import type { ListMetadataResult, ThreadMeta } from '../../../shared/ipc'
 import type { NavState } from './nav-reducer'
+import { isThreadDeletable, type UnifiedThreadRow } from './unified-threads'
+
+/** A Workspace's rolled-up live status, for its switcher row. */
+export interface WorkspaceFlags {
+  streaming: boolean
+  needsAttention: boolean
+}
 
 /**
  * The persistent two-pane app shell (ADR-0006 decision 1): a left sidebar that
  * stays mounted and a right conversation OUTLET whose content swaps. Navigation
  * (the pure nav reducer, decision 2) and the per-Workspace connection registry
- * (decision 3) live in App now; Shell is the presentational layout — it renders the
- * always-there sidebar (the Workspace switcher + each Workspace's Threads) and the
- * App-computed `outlet`. The sidebar element is fixed, so navigating never unmounts
- * it — the whole point of the shell.
+ * (decision 3) live in App; Shell is the presentational layout.
  *
- * Two TB1-review findings are resolved by this split (TB2 #47): the outlet is
- * routed off the nav SELECTION (App), so a cold click on a never-connected
- * Workspace replays correctly even after another connected (finding 2); and a
- * connected Workspace's per-Thread highlight is SUPPRESSED here, since its live view
- * (in the outlet) owns Thread selection — the sidebar and outlet can't disagree
- * (finding 1). The unified live/cold Thread list is TB3 (#48).
+ * TB3 (#48) collapses the two competing Thread lists — the TB1 cold-only sidebar
+ * and `ConnectedWorkspace`'s internal switcher — into ONE unified list per
+ * Workspace. The Workspace switcher pins at top; the SELECTED Workspace expands to
+ * its unified rows (cold + live merged, deduped, most-recent-first), each row
+ * showing a live/history badge, a streaming indicator, a needs-attention badge, and
+ * an inline (safe) delete. A New-thread control mints a draft on the live agent.
+ * Selection is the nav reducer's alone, so the sidebar and outlet can never
+ * disagree. A background Workspace blocked on a permission prompt surfaces a
+ * needs-attention badge on its switcher row (the deferred TB2 finding).
  */
 export function Shell({
   workspaces,
   sidebarTop,
   nav,
-  connectedWorkspaceIds,
+  workspaceFlags,
+  rows,
+  protectedThreadId,
+  activeThreadId,
+  canCreateThread,
+  creatingThread,
   outlet,
   onSelectWorkspace,
   onSelectThread,
+  onNewThread,
   onDeleteThread,
 }: {
-  /** Persisted Workspaces + Threads for the sidebar list (cold metadata). */
+  /** Persisted Workspaces (cold metadata) for the switcher rows + display names. */
   workspaces: ListMetadataResult
   /** App-owned controls pinned above the list (Open project + environment status). */
   sidebarTop: ReactNode
   /** The current navigation selection (controlled by App). */
   nav: NavState
-  /** Workspace ids with a live agent — suppress their Thread highlight + delete. */
-  connectedWorkspaceIds: string[]
+  /** Per-Workspace rolled-up live status, keyed by Workspace id (switcher badges). */
+  workspaceFlags: Readonly<Record<string, WorkspaceFlags>>
+  /** The unified rows (cold + live) for the SELECTED Workspace. */
+  rows: UnifiedThreadRow[]
+  /** The connection's primary Thread (never deletable mid-connection), or null. */
+  protectedThreadId: string | null
+  /** The selected Workspace's active (mounted) Thread — a live row is deletable only
+   *  when it IS this one (we can't observe a non-active sibling's turn; #53). */
+  activeThreadId: string | null
+  /** Whether New-thread is available (the selected Workspace is connected). */
+  canCreateThread: boolean
+  /** A draft mint is in flight — disable New-thread to avoid a double mint. */
+  creatingThread: boolean
   /** The fully-computed conversation outlet (connection views / cold replay). */
   outlet: ReactNode
   /** Select a Workspace — App pins it in nav and connect-or-reuses its warm agent. */
   onSelectWorkspace: (workspaceId: string) => void
-  /** Select a Thread — App pins it in nav (the idle outlet then replays it). */
+  /** Select a Thread — App pins it in nav and (if live) remembers it as active. */
   onSelectThread: (workspaceId: string, threadId: string) => void
-  /** Delete a Thread (TB6) — removes its metadata + JSONL, then refreshes the list. */
+  /** Mint a New-thread draft on the selected Workspace's live agent. */
+  onNewThread: () => void
+  /** Delete a Thread (TB6) — main tears down any live session, then the list refreshes. */
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
 }): JSX.Element {
-  const connected = new Set(connectedWorkspaceIds)
-
   return (
     <div className="shell">
       <aside className="shell__sidebar">
@@ -54,9 +78,15 @@ export function Shell({
         <WorkspaceNav
           workspaces={workspaces}
           nav={nav}
-          connected={connected}
+          workspaceFlags={workspaceFlags}
+          rows={rows}
+          protectedThreadId={protectedThreadId}
+          activeThreadId={activeThreadId}
+          canCreateThread={canCreateThread}
+          creatingThread={creatingThread}
           onSelectWorkspace={onSelectWorkspace}
           onSelectThread={onSelectThread}
+          onNewThread={onNewThread}
           onDeleteThread={onDeleteThread}
         />
       </aside>
@@ -67,28 +97,37 @@ export function Shell({
 }
 
 /**
- * The sidebar's navigation list: persisted Workspaces with their Threads, most-
- * recent-first, rendered from cold metadata alone — NO `vibe-acp` spawned. The
- * selected Workspace is highlighted; clicking one selects it (App connect-or-reuses
- * its warm agent). A Thread row highlights only when its Workspace is NOT connected
- * (a connected Workspace's live view owns Thread selection — finding 1). Delete
- * (TB6) is offered only for a non-connected Workspace's Threads, so we never remove
- * a Thread a warm agent is hosting.
+ * The sidebar's navigation list: the Workspace switcher, with the SELECTED
+ * Workspace expanded to its unified Thread list (TB3 #48). A non-selected
+ * Workspace shows only its name + a rolled-up live status (a streaming dot / a
+ * needs-attention badge), so a background Workspace blocked on a permission prompt
+ * is visible without expanding it.
  */
 function WorkspaceNav({
   workspaces,
   nav,
-  connected,
+  workspaceFlags,
+  rows,
+  protectedThreadId,
+  activeThreadId,
+  canCreateThread,
+  creatingThread,
   onSelectWorkspace,
   onSelectThread,
+  onNewThread,
   onDeleteThread,
 }: {
   workspaces: ListMetadataResult
   nav: NavState
-  /** Workspace ids with a live agent (suppress Thread highlight + delete). */
-  connected: ReadonlySet<string>
+  workspaceFlags: Readonly<Record<string, WorkspaceFlags>>
+  rows: UnifiedThreadRow[]
+  protectedThreadId: string | null
+  activeThreadId: string | null
+  canCreateThread: boolean
+  creatingThread: boolean
   onSelectWorkspace: (workspaceId: string) => void
   onSelectThread: (workspaceId: string, threadId: string) => void
+  onNewThread: () => void
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
 }): JSX.Element {
   if (workspaces.length === 0) {
@@ -99,38 +138,52 @@ function WorkspaceNav({
       <div className="recents__title">Workspaces</div>
       <ul className="recents__list">
         {workspaces.map((w) => {
-          const isConnected = connected.has(w.id)
+          const isSelected = w.id === nav.selectedWorkspaceId
+          const flags = workspaceFlags[w.id]
           return (
             <li key={w.id} className="recents__workspace">
               <button
                 className={
-                  w.id === nav.selectedWorkspaceId
-                    ? 'recents__ws-name recents__ws-name--active'
-                    : 'recents__ws-name'
+                  isSelected ? 'recents__ws-name recents__ws-name--active' : 'recents__ws-name'
                 }
                 title={w.dir}
                 onClick={() => onSelectWorkspace(w.id)}
               >
                 {w.displayName}
+                {flags?.streaming && <span className="dot dot--pending ws-streaming" aria-label="streaming" />}
+                {flags?.needsAttention && (
+                  <span className="badge badge--attention" title="A thread needs your attention">
+                    needs you
+                  </span>
+                )}
               </button>
-              {w.threads.length > 0 ? (
-                <ul className="recents__threads">
-                  {w.threads.map((t) => (
-                    <NavThread
-                      key={t.id}
-                      thread={t}
-                      // Suppress the per-Thread highlight for a connected Workspace —
-                      // its live outlet owns Thread selection (finding 1).
-                      selected={!isConnected && t.id === nav.selectedThreadId}
-                      // No delete while the Workspace's agent is live (it may host it).
-                      deletable={!isConnected}
-                      onOpen={() => onSelectThread(w.id, t.id)}
-                      onDelete={onDeleteThread}
-                    />
-                  ))}
-                </ul>
-              ) : (
-                <div className="recents__empty">No threads yet</div>
+
+              {isSelected &&
+                (rows.length > 0 ? (
+                  <ul className="recents__threads">
+                    {rows.map((row) => (
+                      <NavThread
+                        key={row.thread.id}
+                        row={row}
+                        selected={row.thread.id === nav.selectedThreadId}
+                        // Safe delete (TB6 / #48), decided by the pure gate: a cold row
+                        // always; the primary never; a live row only when it's the
+                        // active, idle row (a non-active live sibling's turn is
+                        // unobservable, so it stays non-deletable — the TB1 hazard).
+                        deletable={isThreadDeletable(row, activeThreadId, protectedThreadId)}
+                        onOpen={() => onSelectThread(w.id, row.thread.id)}
+                        onDelete={onDeleteThread}
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="recents__empty">No threads yet</div>
+                ))}
+
+              {isSelected && canCreateThread && (
+                <button className="btn btn--ghost recents__new" onClick={onNewThread} disabled={creatingThread}>
+                  {creatingThread ? 'Creating…' : '+ New thread'}
+                </button>
               )}
             </li>
           )
@@ -141,21 +194,19 @@ function WorkspaceNav({
 }
 
 /**
- * One Thread row in the sidebar: selecting it on click (the outlet reopens it
- * read-only — TB3), highlighted when selected, with a delete control (TB6) shown
- * only when `deletable` (i.e. its Workspace has no live connection — see Shell).
- * Delete is two-step — a first click arms an INLINE confirm (Delete / Cancel)
- * rather than a native `confirm()` (which would block the renderer), so a single
- * misclick can't nuke a Thread's history.
+ * One unified Thread row: its label, a live (●) vs `history` badge, a streaming
+ * indicator and a needs-attention badge driven by the status registry, and a
+ * two-step inline delete (TB6) shown only when `deletable`. Clicking selects it →
+ * the outlet routes live `Conversation` vs cold `ColdThread`.
  */
 function NavThread({
-  thread,
+  row,
   selected,
   deletable,
   onOpen,
   onDelete,
 }: {
-  thread: ThreadMeta
+  row: UnifiedThreadRow
   selected: boolean
   deletable: boolean
   onOpen: () => void
@@ -168,7 +219,15 @@ function NavThread({
         className={selected ? 'recents__thread-btn recents__thread-btn--active' : 'recents__thread-btn'}
         onClick={onOpen}
       >
-        {threadLabel(thread)}
+        <span className={row.live ? 'dot dot--ok' : 'dot dot--idle'} aria-hidden />
+        <span className="recents__thread-label">{threadLabel(row)}</span>
+        {row.streaming && <span className="recents__thread-streaming" title="Streaming">⟳</span>}
+        {!row.live && <span className="badge badge--history">history</span>}
+        {row.needsAttention && (
+          <span className="badge badge--attention" title="Awaiting your response">
+            !
+          </span>
+        )}
       </button>
       {!deletable ? null : confirming ? (
         <span className="recents__thread-confirm">
@@ -176,7 +235,7 @@ function NavThread({
             className="btn btn--ghost btn--danger"
             onClick={() => {
               setConfirming(false)
-              void onDelete(thread)
+              void onDelete(row.thread)
             }}
           >
             Delete
@@ -199,7 +258,10 @@ function NavThread({
   )
 }
 
-/** A Thread's list label — its title, or a placeholder until one arrives. */
-function threadLabel(thread: ThreadMeta): string {
-  return thread.title ?? 'Untitled thread'
+/** A Thread's list label — its title, a draft placeholder, or a fallback. */
+function threadLabel(row: UnifiedThreadRow): string {
+  if (row.thread.title) return row.thread.title
+  // A live, session-less Thread is a fresh draft awaiting its first prompt.
+  if (row.live && row.thread.sessionId === null) return 'New thread (draft)'
+  return 'Untitled thread'
 }

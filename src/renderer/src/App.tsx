@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState, type JSX, type ReactNode } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState, type JSX, type ReactNode } from 'react'
 import type {
   AuthMethod,
   ListMetadataResult,
@@ -21,10 +21,27 @@ import {
   selectedConnection,
   shouldConnect,
 } from './connection/connections'
+import {
+  initialWorkspaceThreads,
+  workspaceThreadsReducer,
+  workspaceThreadStateFor,
+  type WorkspaceThreadState,
+} from './connection/workspace-threads'
 import { ConnectedWorkspace } from './connection/ConnectedWorkspace'
+import { routeThreadSelection, seedSessionId } from './connection/thread-selection'
 import { ColdThread } from './conversation/ColdThread'
-import { Shell } from './shell/Shell'
+import {
+  clearThreadStatus,
+  setThreadStatus,
+  type ThreadStatus,
+  type ThreadStatusMap,
+} from './conversation/thread-status'
+import { Shell, type WorkspaceFlags } from './shell/Shell'
 import { findSelectedThread, initialNavState, navReducer } from './shell/nav-reducer'
+import { deriveUnifiedThreads, workspaceFlags, type UnifiedThreadRow } from './shell/unified-threads'
+
+/** A stable empty live-set for Workspaces with no live-state yet (no re-alloc). */
+const NO_LIVE: ReadonlySet<string> = new Set()
 
 /**
  * Thin glue (ADR-0006): App owns IPC/data wiring — detection, the persisted
@@ -53,13 +70,34 @@ export function App(): JSX.Element {
   // Per-Workspace connection registry (decision 3): one ConnectState per warm
   // Workspace, so switching between two is instant and both keep streaming.
   const [connections, connDispatch] = useReducer(connectionsReducer, initialConnections)
+  // Per-Workspace, per-session Thread state (TB3 #48): the live set, bound sessions,
+  // and the active (kept-mounted) Thread — lifted OUT of ConnectedWorkspace so the
+  // sidebar + nav reducer are the single source of truth for selection/live-state.
+  const [workspaceThreads, wtDispatch] = useReducer(workspaceThreadsReducer, initialWorkspaceThreads)
+  // Per-Thread live status (TB3 #48), reported UP from each live Conversation:
+  // streaming (turn in flight) + needsAttention (pending permission). Keyed by
+  // threadId; the fold returns the same ref when unchanged so reports never loop.
+  const [statuses, setStatuses] = useState<ThreadStatusMap>({})
   // Persisted Workspaces + Threads (ADR-0005), listed cold on launch from
   // metadata alone — no agent spawned, no transcript loaded.
   const [recents, setRecents] = useState<ListMetadataResult>([])
+  // A draft mint in flight — guards New-thread against a double mint.
+  const [creatingThread, setCreatingThread] = useState(false)
+  const creatingRef = useRef(false)
   // Workspaces with a connect IN FLIGHT, tracked synchronously so a fast double-
   // select can't fire two `startThread`s (the `connections` closure is stale
   // within a render frame, so a state check alone would let both through).
   const connectingRef = useRef<Set<string>>(new Set())
+  // The committed selected Workspace, read synchronously by an async connect to
+  // decide whether to pull focus to its just-opened Thread (don't yank focus if the
+  // user has since switched away). Mirrors the latest rendered nav selection.
+  const selectionRef = useRef<string | null>(nav.selectedWorkspaceId)
+  selectionRef.current = nav.selectedWorkspaceId
+
+  /** Fold a live Conversation's reported status into the registry (stable identity). */
+  const reportStatus = useCallback((s: { threadId: string } & ThreadStatus): void => {
+    setStatuses((prev) => setThreadStatus(prev, s.threadId, { streaming: s.streaming, needsAttention: s.needsAttention }))
+  }, [])
 
   async function runDetect(): Promise<void> {
     setLoading(true)
@@ -73,16 +111,88 @@ export function App(): JSX.Element {
   }
 
   /**
-   * Delete a persisted Thread (TB6): main removes its metadata + JSONL and
-   * best-effort closes any live session; we then re-fetch so it disappears from
-   * the list. The shell derives its selected (cold) Thread from `recents`, so a
-   * deleted-and-selected Thread collapses to the placeholder on its own. Gated in
-   * the sidebar to NON-connected Workspaces, so we never delete a Thread a warm
-   * agent is hosting out from under it.
+   * Delete a Thread from the unified list (TB6 + #48 safe-delete). Main removes its
+   * metadata + JSONL and best-effort closes any live session. The sidebar only
+   * offers delete for a row `isThreadDeletable` proves safe (a cold row, or the
+   * active+idle non-primary live row), so we never tear a Thread out from under the
+   * agent mid-stream.
+   *
+   * Reselection is gated on SELECTION, not liveness: `active`/`nav.selectedThreadId`
+   * can legitimately point at a COLD (history) row, and dropping it from `recents`
+   * would leave the outlet/sidebar pinned to a now-gone Thread. So whenever the
+   * deleted Thread is the active/selected one of a CONNECTED Workspace, reselect the
+   * connection's (always-live) primary Thread. The `wt remove` (drop from live-state)
+   * runs ONLY when it was live; its stale status entry is cleared either way.
    */
   async function deleteThread(thread: ThreadMeta): Promise<void> {
     await window.api.deleteThread(thread.id)
+    const wts = workspaceThreadStateFor(workspaceThreads, thread.workspaceId)
+    if (wts?.live.has(thread.id)) {
+      wtDispatch({ type: 'remove', workspaceId: thread.workspaceId, threadId: thread.id })
+    }
+    const conn = connections[thread.workspaceId]
+    const wasSelected = wts?.active === thread.id || nav.selectedThreadId === thread.id
+    if (conn?.status === 'connected' && wasSelected) {
+      selectThreadInWorkspace(thread.workspaceId, conn.thread.threadId)
+    }
+    setStatuses((prev) => clearThreadStatus(prev, thread.id))
     await refreshRecents()
+  }
+
+  /**
+   * Record a Workspace connect outcome: set its ConnectState and, when connected,
+   * (re)seed its per-session live-state with the agent's auto-opened Thread. Pull
+   * focus to that Thread when the user is still on this Workspace (`focus`, or the
+   * live selection still matches) — so the sidebar highlights the live Thread and
+   * the outlet routes to it, without yanking focus from a Workspace switched-to
+   * while this connect was in flight.
+   */
+  function applyConnectResult(workspaceId: string, state: ConnectState, focus: boolean): void {
+    connDispatch({ type: 'set', workspaceId, state })
+    if (state.status !== 'connected') return
+    wtDispatch({
+      type: 'connect',
+      workspaceId,
+      threadId: state.thread.threadId,
+      sessionId: state.thread.sessionId,
+    })
+    if (focus || selectionRef.current === workspaceId) {
+      navDispatch({ type: 'select-thread', workspaceId, threadId: state.thread.threadId })
+    }
+  }
+
+  /**
+   * Select a Thread from the sidebar (TB3 #48): pin it in nav (the single source of
+   * truth) and, for a connected Workspace, remember it as the active (kept-mounted)
+   * Thread so backgrounding the Workspace keeps it streaming.
+   */
+  function selectThreadInWorkspace(workspaceId: string, threadId: string): void {
+    navDispatch({ type: 'select-thread', workspaceId, threadId })
+    if (workspaceThreadStateFor(workspaceThreads, workspaceId)) {
+      wtDispatch({ type: 'select', workspaceId, threadId })
+    }
+  }
+
+  /**
+   * New-thread (TB5 draft) from the unified list: mint a durable id (no ACP session
+   * until its first prompt) on the selected Workspace's live agent, host it live +
+   * select it, then refresh so it lands in the persisted list. No residue if
+   * abandoned — it's a metadata-only record via the existing draft path.
+   */
+  async function newThread(workspaceId: string): Promise<void> {
+    if (creatingRef.current) return
+    creatingRef.current = true
+    setCreatingThread(true)
+    try {
+      const result = await window.api.createDraft({ workspaceId })
+      if (!result.ok) return
+      wtDispatch({ type: 'open', workspaceId, threadId: result.thread.id })
+      navDispatch({ type: 'select-thread', workspaceId, threadId: result.thread.id })
+      await refreshRecents()
+    } finally {
+      creatingRef.current = false
+      setCreatingThread(false)
+    }
   }
 
   useEffect(() => {
@@ -97,7 +207,12 @@ export function App(): JSX.Element {
    * reused as-is — instant, no second spawn or handshake.
    */
   function selectWorkspace(workspaceId: string): void {
-    navDispatch({ type: 'select-workspace', workspaceId })
+    // Restore this Workspace's remembered active Thread (TB3 #48) so the sidebar
+    // highlights it and the kept-mounted outlet shows it again; a never-connected
+    // Workspace just pins the Workspace (its cold list drives the cold outlet).
+    const wts = workspaceThreadStateFor(workspaceThreads, workspaceId)
+    if (wts) navDispatch({ type: 'select-thread', workspaceId, threadId: wts.active })
+    else navDispatch({ type: 'select-workspace', workspaceId })
     // Ignore a select while this Workspace's connect is already in flight (a fast
     // double-click) — the ref read is synchronous, so both clicks see it.
     if (connectingRef.current.has(workspaceId)) return
@@ -112,7 +227,7 @@ export function App(): JSX.Element {
     connDispatch({ type: 'set', workspaceId, state: { status: 'connecting', workspaceDir: workspace.dir } })
     try {
       const result = await window.api.startThread({ workspaceDir: workspace.dir })
-      connDispatch({ type: 'set', workspaceId, state: routeThreadResult(result) })
+      applyConnectResult(workspaceId, routeThreadResult(result), false)
       void refreshRecents()
     } finally {
       connectingRef.current.delete(workspaceId)
@@ -147,8 +262,8 @@ export function App(): JSX.Element {
         if (agentId) void window.api.stopAgent(agentId)
         return
       }
-      connDispatch({ type: 'set', workspaceId: ws.id, state: routeThreadResult(result) })
       navDispatch({ type: 'select-workspace', workspaceId: ws.id })
+      applyConnectResult(ws.id, routeThreadResult(result), true)
     } finally {
       setOpening(false)
     }
@@ -157,7 +272,7 @@ export function App(): JSX.Element {
   // After sign-in (or in-place re-auth) the Workspace's warm agent is already
   // started + signed in; open a Thread on it and land in a connected conversation.
   async function continueToThread(workspaceId: string, agentId: string): Promise<void> {
-    connDispatch({ type: 'set', workspaceId, state: routeThreadResult(await window.api.openThread({ agentId })) })
+    applyConnectResult(workspaceId, routeThreadResult(await window.api.openThread({ agentId })), true)
     void refreshRecents()
   }
 
@@ -174,7 +289,9 @@ export function App(): JSX.Element {
     navDispatch({ type: 'select-workspace', workspaceId: workspace.id })
     connDispatch({ type: 'set', workspaceId: workspace.id, state: { status: 'connecting', workspaceDir: workspace.dir } })
     const result = await window.api.startThread({ workspaceDir: workspace.dir, continueThreadId: thread.id })
-    connDispatch({ type: 'set', workspaceId: workspace.id, state: routeThreadResult(result) })
+    // Main opened NO extra Thread — the continued Thread IS the connection Thread, so
+    // `applyConnectResult` seeds it live + selects it (its first prompt drives resume).
+    applyConnectResult(workspace.id, routeThreadResult(result), true)
     void refreshRecents()
   }
 
@@ -195,49 +312,110 @@ export function App(): JSX.Element {
   )
 
   const connectedIds = connectedWorkspaceIds(connections)
-  const selected = selectedConnection(connections, nav.selectedWorkspaceId)
+  const selectedWs = nav.selectedWorkspaceId
+  const selected = selectedConnection(connections, selectedWs)
 
-  /** The connected view for a Workspace (SignedInBar + ConnectedWorkspace). */
-  function renderConnected(thread: ThreadConnection): ReactNode {
+  // Per-Workspace rolled-up live status for the switcher badges — what flags a
+  // BACKGROUND Workspace blocked on a permission prompt (the deferred TB2 finding).
+  const wsFlags: Record<string, WorkspaceFlags> = {}
+  for (const wid of connectedIds) {
+    const wts = workspaceThreadStateFor(workspaceThreads, wid)
+    wsFlags[wid] = workspaceFlags(wts?.live ?? NO_LIVE, statuses)
+  }
+
+  // The ONE unified Thread list (cold + live merged) for the SELECTED Workspace,
+  // plus its New/delete affordances. A connected Workspace merges its live set; a
+  // cold/idle one lists its persisted Threads (clicking replays them, no agent).
+  let rows: UnifiedThreadRow[] = []
+  let protectedThreadId: string | null = null
+  // The active (mounted, observable) Thread of the selected Workspace — a live row
+  // is only deletable when it's this one and idle (we can't observe a non-active
+  // sibling's turn; #53). Null when the selected Workspace has no live connection.
+  let selectedActiveId: string | null = null
+  let canCreateThread = false
+  if (selectedWs) {
+    const cold = threadsForWorkspace(recents, selectedWs)
+    if (selected.status === 'connected') {
+      const conn = selected.thread
+      const wts = workspaceThreadStateFor(workspaceThreads, selectedWs)
+      rows = deriveUnifiedThreads({
+        cold,
+        live: liveMetasFor(conn, cold, wts),
+        liveThreadIds: wts?.live ?? new Set([conn.threadId]),
+        statuses,
+      })
+      protectedThreadId = conn.threadId
+      selectedActiveId = wts?.active ?? conn.threadId
+      canCreateThread = true
+    } else {
+      rows = deriveUnifiedThreads({ cold, live: [], liveThreadIds: NO_LIVE, statuses })
+    }
+  }
+
+  /** The connected view for a Workspace (SignedInBar + the controlled outlet). */
+  function renderConnected(conn: ThreadConnection): ReactNode {
+    const wts = workspaceThreadStateFor(workspaceThreads, conn.workspaceId)
+    const cold = threadsForWorkspace(recents, conn.workspaceId)
+    const activeId = wts?.active ?? conn.threadId
+    const activeThread =
+      [...liveMetasFor(conn, cold, wts), ...cold].find((t) => t.id === activeId) ?? synthConnectionMeta(conn)
+    // Route + seed via the same pure helpers the cold list uses: live-set membership
+    // decides live-vs-cold; a session bound this session wins over the persisted cursor.
+    const liveIds = wts?.live ?? new Set([conn.threadId])
+    const isLive = routeThreadSelection(activeThread, liveIds) === 'live'
+    const seed = seedSessionId(activeThread, wts?.bound ?? {})
     return (
       <>
         {/* Key by agentId (like Conversation) so its useReducer seed resets across
             connections — a new agent can't inherit the prior session's sign-out gate. */}
         <SignedInBar
-          key={`bar-${thread.agentId}`}
-          agentId={thread.agentId}
-          authMethods={thread.authMethods}
-          signOutAvailable={thread.signOutAvailable}
-          onSignedOut={(authMethods) =>
-            toSignInPanel(thread.workspaceId, thread.agentId, thread.workspaceDir, authMethods)
-          }
+          key={`bar-${conn.agentId}`}
+          agentId={conn.agentId}
+          authMethods={conn.authMethods}
+          signOutAvailable={conn.signOutAvailable}
+          onSignedOut={(authMethods) => toSignInPanel(conn.workspaceId, conn.agentId, conn.workspaceDir, authMethods)}
         />
-        {/* Key by agentId so per-Workspace Thread state can't bleed across
-            connections. Hosts multiple Threads on the one agent + switching (TB5). */}
+        {/* Key by agentId so per-Workspace state can't bleed across connections.
+            A controlled outlet now (TB3 #48): the sidebar drives selection; this just
+            renders App's chosen active Thread live or cold. */}
         <ConnectedWorkspace
-          key={thread.agentId}
-          connection={thread}
-          threads={threadsForWorkspace(recents, thread.workspaceId)}
-          refreshRecents={refreshRecents}
-          onAuthExpired={(authMethods) =>
-            toSignInPanel(thread.workspaceId, thread.agentId, thread.workspaceDir, authMethods)
+          key={conn.agentId}
+          connection={conn}
+          activeThread={activeThread}
+          isLive={isLive}
+          seedSessionId={seed}
+          onBound={(sessionId) =>
+            wtDispatch({ type: 'bind', workspaceId: conn.workspaceId, threadId: activeThread.id, sessionId })
           }
+          onContinue={() => {
+            wtDispatch({ type: 'open', workspaceId: conn.workspaceId, threadId: activeThread.id })
+            navDispatch({ type: 'select-thread', workspaceId: conn.workspaceId, threadId: activeThread.id })
+          }}
+          onCloseCold={() => selectThreadInWorkspace(conn.workspaceId, conn.threadId)}
+          onAuthExpired={(authMethods) => toSignInPanel(conn.workspaceId, conn.agentId, conn.workspaceDir, authMethods)}
+          onStatusChange={reportStatus}
         />
       </>
     )
   }
 
   // The outlet: every connected Workspace stays MOUNTED (hidden unless selected) so
-  // its background turn keeps streaming and a switch-back is instant; the selected
-  // Workspace's transient state (connecting / sign-in / error) or its cold Thread
-  // renders inline. Routed off the nav selection, so cold clicks always route right.
+  // its active Thread's turn keeps streaming and reports status (the sidebar badge),
+  // and a switch-back is instant; the selected Workspace's transient state
+  // (connecting / sign-in / error) or its cold Thread renders inline. Routed off the
+  // nav selection, so cold clicks always route right.
+  //
+  // LIMITATION (follow-up #53): only the ACTIVE Thread per Workspace is mounted, so a
+  // non-active live sibling's turn is unobservable — its streaming/needs-attention
+  // indicators don't update and it stays non-deletable while in the background. We
+  // ship active-only indicators now; mounting all live siblings is deferred to #53.
   const outlet = (
     <>
       {connectedIds.map((wid) => {
         const conn = connections[wid]
         if (conn.status !== 'connected') return null
         return (
-          <div key={wid} className="shell__connection" hidden={wid !== nav.selectedWorkspaceId}>
+          <div key={wid} className="shell__connection" hidden={wid !== selectedWs}>
             {renderConnected(conn.thread)}
           </div>
         )
@@ -246,7 +424,7 @@ export function App(): JSX.Element {
         ? null // rendered (visible) in the keep-mounted map above
         : selected.status !== 'idle'
           ? renderTransientOutlet(selected, {
-              continueToThread: (agentId) => void continueToThread(nav.selectedWorkspaceId ?? '', agentId),
+              continueToThread: (agentId) => void continueToThread(selectedWs ?? '', agentId),
             })
           : renderColdOutlet(recents, nav, {
               onClose: () => navDispatch({ type: 'clear' }),
@@ -266,14 +444,64 @@ export function App(): JSX.Element {
         workspaces={recents}
         sidebarTop={sidebarTop}
         nav={nav}
-        connectedWorkspaceIds={connectedIds}
+        workspaceFlags={wsFlags}
+        rows={rows}
+        protectedThreadId={protectedThreadId}
+        activeThreadId={selectedActiveId}
+        canCreateThread={canCreateThread}
+        creatingThread={creatingThread}
         outlet={outlet}
         onSelectWorkspace={selectWorkspace}
-        onSelectThread={(workspaceId, threadId) => navDispatch({ type: 'select-thread', workspaceId, threadId })}
+        onSelectThread={selectThreadInWorkspace}
+        onNewThread={() => selectedWs && void newThread(selectedWs)}
         onDeleteThread={deleteThread}
       />
     </div>
   )
+}
+
+/**
+ * The metas for a Workspace's live Threads (TB3 #48), feeding the unified-list
+ * merge. A live Thread already in the cold list reuses that meta; one not yet
+ * persisted is synthesized so it shows immediately — the agent's auto-opened Thread
+ * (before the metadata refresh lands) or a freshly minted draft (its bound session,
+ * if any, seeds its live view).
+ */
+function liveMetasFor(
+  conn: ThreadConnection,
+  cold: ThreadMeta[],
+  wts: WorkspaceThreadState | null,
+): ThreadMeta[] {
+  const byId = new Map(cold.map((t) => [t.id, t]))
+  const ids = wts ? wts.live : new Set([conn.threadId])
+  const metas: ThreadMeta[] = []
+  for (const id of ids) {
+    const existing = byId.get(id)
+    if (existing) metas.push(existing)
+    else if (id === conn.threadId) metas.push(synthConnectionMeta(conn))
+    else
+      metas.push({
+        id,
+        workspaceId: conn.workspaceId,
+        sessionId: wts?.bound[id] ?? null,
+        title: null,
+        createdAt: 0,
+        lastActiveAt: 0,
+      })
+  }
+  return metas
+}
+
+/** Synthesize the connection's auto-opened Thread meta (when the list lags). */
+function synthConnectionMeta(conn: ThreadConnection): ThreadMeta {
+  return {
+    id: conn.threadId,
+    workspaceId: conn.workspaceId,
+    sessionId: conn.sessionId,
+    title: conn.title,
+    createdAt: 0,
+    lastActiveAt: 0,
+  }
 }
 
 /**

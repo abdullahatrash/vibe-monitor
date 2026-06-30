@@ -16,6 +16,7 @@ import {
 } from './reducer'
 import { eventBelongsToThread } from './event-routing'
 import { replayTranscript } from './replay'
+import { deriveThreadStatus, type ThreadStatus } from './thread-status'
 
 /** Process-local counter for unique echoed-prompt ids. */
 let promptSeq = 0
@@ -47,6 +48,7 @@ export function Conversation({
   thread,
   onAuthExpired,
   onBound,
+  onStatusChange,
 }: {
   thread: LiveThread
   /** Mid-session expiry (-32000): route to in-place re-auth with these methods. */
@@ -54,6 +56,10 @@ export function Conversation({
   /** The Thread's session once bound (TB5) — lifts it so a switch-away-and-back
    *  re-seeds the bound session instead of re-minting it. */
   onBound?: (sessionId: string) => void
+  /** Report this Thread's live status UP to the shell (TB3 #48) so the unified
+   *  sidebar shows streaming / needs-attention indicators — even for a hidden,
+   *  background Workspace whose turn is blocked on an unanswerable prompt. */
+  onStatusChange?: (status: { threadId: string } & ThreadStatus) => void
 }): JSX.Element {
   const [state, dispatch] = useReducer(conversationReducer, initialConversationState)
   const [draft, setDraft] = useState('')
@@ -66,6 +72,10 @@ export function Conversation({
   // Keep the lift callback in a ref so the bound subscription needn't depend on it.
   const onBoundRef = useRef(onBound)
   onBoundRef.current = onBound
+  // Likewise for the status report — read live in an effect so a changing callback
+  // identity never re-subscribes anything, and so the report never runs in render.
+  const onStatusRef = useRef(onStatusChange)
+  onStatusRef.current = onStatusChange
   const listRef = useRef<HTMLDivElement>(null)
   // True once any live event has been folded in: guards the async hydrate from
   // clobbering events that streamed in before the JSONL read resolved.
@@ -128,6 +138,18 @@ export function Conversation({
     const list = listRef.current
     if (list) list.scrollTop = list.scrollHeight
   }, [state.items])
+
+  // Report this Thread's live status (streaming / needs-attention) UP to the shell
+  // on every transition (TB3 #48). Derived from the reducer (the source of truth);
+  // we only surface the two flags. The shell folds an unchanged report to the same
+  // map reference, so this can't drive a status->render->report loop even with
+  // several keep-mounted background Conversations reporting at once. On unmount we
+  // clear our flags so a torn-down (or switched-away) Thread leaves no stale badge.
+  const { streaming, needsAttention } = deriveThreadStatus(state)
+  useEffect(() => {
+    onStatusRef.current?.({ threadId: thread.threadId, streaming, needsAttention })
+    return () => onStatusRef.current?.({ threadId: thread.threadId, streaming: false, needsAttention: false })
+  }, [thread.threadId, streaming, needsAttention])
 
   async function send(): Promise<void> {
     const text = draft.trim()

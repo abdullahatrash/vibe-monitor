@@ -356,9 +356,13 @@ body {
   background: var(--bad-tint);
 }
 
-/* Clickable Thread in the cold list — reopens its saved conversation (TB3). */
+/* Clickable Thread in the unified list (TB3 #48): a live/cold dot, the label, and
+   any streaming / history / needs-attention indicators on one row. */
 .recents__thread-btn {
   width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   text-align: left;
   background: none;
   border: none;
@@ -373,6 +377,57 @@ body {
 .recents__thread-btn:hover {
   color: var(--accent-text);
   background: var(--accent-tint);
+}
+
+.recents__thread-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* An idle (cold, not hosted live) Thread's dot — muted vs the live --ok dot. */
+.dot--idle {
+  background: var(--border);
+}
+
+/* The per-row streaming indicator (a turn in flight on a live Thread). */
+.recents__thread-streaming {
+  flex: none;
+  color: var(--accent-text);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* New-thread control under the selected Workspace's unified list. */
+.recents__new {
+  margin-top: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+/* A Workspace-switcher streaming dot (any live Thread mid-turn). */
+.ws-streaming {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* Compact list badges: a muted 'history' for cold rows, an alert
+   'needs-attention' badge surfaced even on a background Workspace's row. */
+.badge--history {
+  flex: none;
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  border-color: var(--accent-tint-border);
+  padding: 1px 7px;
+}
+
+.badge--attention {
+  flex: none;
+  background: var(--bad-tint);
+  color: var(--bad);
+  border-color: var(--bad-tint-border);
+  padding: 1px 7px;
+  margin-left: 6px;
 }
 
 /* The read-only reopened-Thread view (TB3): a muted variant of the live conv. */

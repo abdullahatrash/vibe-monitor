@@ -1,155 +1,71 @@
-import { useState, type JSX } from 'react'
+import { type JSX } from 'react'
 import type { AuthMethod, ThreadConnection, ThreadMeta } from '../../../shared/ipc'
 import { ColdThread } from '../conversation/ColdThread'
 import { Conversation } from '../conversation/Conversation'
-import { routeThreadSelection, seedSessionId } from './thread-selection'
+import type { ThreadStatus } from '../conversation/thread-status'
 
 /**
- * A connected Workspace hosting MULTIPLE Threads on one `vibe-acp` agent (TB5
- * #34). Lists the Workspace's Threads, mints new drafts (`New Thread` — a durable
- * id with NO ACP session until its first prompt), and switches between them: a
- * Thread hosted live this session renders as a live `Conversation` (binding its
- * draft session on the first prompt); one bound in a prior launch replays
- * read-only from JSONL (`ColdThread`) until TB4 adds `session/load`.
+ * A connected Workspace's conversation OUTLET (ADR-0006, TB3 #48). It no longer
+ * owns a Thread switcher or any selection/live-state — those are lifted to App (the
+ * unified sidebar drives selection; `workspace-threads` holds the per-Workspace
+ * live set + bound sessions + active Thread). This is now a thin CONTROLLED view:
+ * given the connection and the App-chosen `active` Thread, it renders that Thread
+ * live (`Conversation`, binding its draft session on the first prompt) or, when the
+ * Thread isn't hosted on this session's agent, read-only from JSONL (`ColdThread`)
+ * with a Continue affordance that promotes it live.
  *
- * Thread metadata comes from the cold list (`recents`); the agent context
- * (agentId, our minted ids) comes from the initial `connection`. `liveThreadIds`
- * tracks which Threads are hosted on THIS agent — the auto-opened one plus drafts
- * created since connecting — and is the source of truth for live-vs-cold routing.
+ * It stays MOUNTED (hidden) for a background Workspace so its turn keeps streaming
+ * and its status keeps reporting (`onStatusChange`) — which is what lets the sidebar
+ * flag a background Workspace blocked on an unanswerable permission prompt.
  */
 export function ConnectedWorkspace({
   connection,
-  threads,
-  refreshRecents,
+  activeThread,
+  isLive,
+  seedSessionId,
+  onBound,
+  onContinue,
+  onCloseCold,
   onAuthExpired,
+  onStatusChange,
 }: {
   connection: ThreadConnection
-  /** The Workspace's persisted Threads (most-recent-first) from the cold list. */
-  threads: ThreadMeta[]
-  /** Re-fetch the metadata list (after minting a draft) so it appears immediately. */
-  refreshRecents: () => Promise<void>
+  /** The Thread App chose to show (its remembered active Thread for this Workspace). */
+  activeThread: ThreadMeta
+  /** Whether `activeThread` is hosted live on this session's agent (vs cold replay). */
+  isLive: boolean
+  /** The session to seed a live view with (bound-this-session wins over the cursor). */
+  seedSessionId: string | null
+  /** A draft's first prompt bound its session — lift it to App's live-state. */
+  onBound: (sessionId: string) => void
+  /** Promote the (cold) active Thread to live (Continue) — App hosts + reselects it. */
+  onContinue: () => void
+  /** Back out of a cold view to the connection's primary live Thread. */
+  onCloseCold: () => void
   /** Mid-session expiry (-32000): route to in-place re-auth with these methods. */
   onAuthExpired: (authMethods: AuthMethod[]) => void
+  /** Report the active live Thread's status UP for the unified sidebar indicators. */
+  onStatusChange: (status: { threadId: string } & ThreadStatus) => void
 }): JSX.Element {
-  // A continue-from-cold-launch lands here with the CONTINUED Thread already AS the
-  // connection thread (main opened no extra Thread, TB4 #33) — so it's live +
-  // selected by default, with no separate continue plumbing.
-  const [liveThreadIds, setLiveThreadIds] = useState<ReadonlySet<string>>(
-    () => new Set([connection.threadId]),
-  )
-  const [selectedThreadId, setSelectedThreadId] = useState(connection.threadId)
-  // Sessions bound this session (TB5): a draft's first prompt mints one, lifted
-  // here so switching away and back re-seeds it instead of re-minting.
-  const [boundSessions, setBoundSessions] = useState<Record<string, string>>(() =>
-    connection.sessionId ? { [connection.threadId]: connection.sessionId } : {},
-  )
-  const [busy, setBusy] = useState(false)
-
-  // The agent always hosts at least its auto-opened Thread — ensure it's listed
-  // even before the metadata list refresh that includes it has landed.
-  const list = withConnectionThread(threads, connection)
-  const selected = list.find((t) => t.id === selectedThreadId) ?? list[0]
-  const view = routeThreadSelection(selected, liveThreadIds)
-
-  async function newThread(): Promise<void> {
-    if (busy) return
-    setBusy(true)
-    try {
-      const result = await window.api.createDraft({ workspaceId: connection.workspaceId })
-      if (!result.ok) return
-      // The draft is hosted on THIS agent (its session binds on first prompt).
-      setLiveThreadIds((prev) => new Set(prev).add(result.thread.id))
-      await refreshRecents()
-      setSelectedThreadId(result.thread.id)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  // The session to seed the selected Thread with: the one bound this session (if
-  // any) wins over the persisted cursor, so a bound draft isn't re-minted on switch.
-  const seedSession = seedSessionId(selected, boundSessions)
-
-  // Continue a reopened (cold) Thread (TB4 #33): promote it to live + select it.
-  // Its persisted `sessionId` cursor seeds the live view, so the FIRST prompt drives
-  // `ensureBoundSession`'s resume path (`session/load`, re-binding fresh on failure).
-  function continueThread(threadId: string): void {
-    setLiveThreadIds((prev) => new Set(prev).add(threadId))
-    setSelectedThreadId(threadId)
-  }
-
   return (
     <div className="workspace">
-      <div className="workspace__bar">
-        <span className="workspace__name" title={connection.workspaceDir}>
-          {connection.workspaceDir}
-        </span>
-        <button className="btn" onClick={() => void newThread()} disabled={busy}>
-          New Thread
-        </button>
-      </div>
-
-      <ul className="workspace__threads">
-        {list.map((t) => (
-          <li key={t.id}>
-            <button
-              className={
-                t.id === selected.id ? 'workspace__thread workspace__thread--active' : 'workspace__thread'
-              }
-              onClick={() => setSelectedThreadId(t.id)}
-            >
-              <span className="workspace__thread-label">{threadLabel(t, liveThreadIds)}</span>
-              {!liveThreadIds.has(t.id) && <span className="badge">history</span>}
-            </button>
-          </li>
-        ))}
-      </ul>
-
-      {view === 'live' ? (
+      {isLive ? (
         <Conversation
-          key={selected.id}
+          key={activeThread.id}
           thread={{
             agentId: connection.agentId,
-            threadId: selected.id,
+            threadId: activeThread.id,
             workspaceId: connection.workspaceId,
-            sessionId: seedSession,
-            title: selected.title,
+            sessionId: seedSessionId,
+            title: activeThread.title,
           }}
           onAuthExpired={onAuthExpired}
-          onBound={(sessionId) =>
-            setBoundSessions((prev) => ({ ...prev, [selected.id]: sessionId }))
-          }
+          onBound={onBound}
+          onStatusChange={onStatusChange}
         />
       ) : (
-        <ColdThread
-          key={selected.id}
-          thread={selected}
-          onClose={() => setSelectedThreadId(connection.threadId)}
-          onContinue={() => continueThread(selected.id)}
-        />
+        <ColdThread key={activeThread.id} thread={activeThread} onClose={onCloseCold} onContinue={onContinue} />
       )}
     </div>
   )
-}
-
-/** Ensure the agent's auto-opened Thread is present (synthesized if the list lags). */
-function withConnectionThread(threads: ThreadMeta[], connection: ThreadConnection): ThreadMeta[] {
-  if (threads.some((t) => t.id === connection.threadId)) return threads
-  const synthesized: ThreadMeta = {
-    id: connection.threadId,
-    workspaceId: connection.workspaceId,
-    sessionId: connection.sessionId,
-    title: connection.title,
-    createdAt: 0,
-    lastActiveAt: 0,
-  }
-  return [synthesized, ...threads]
-}
-
-/** A Thread's list label — its title, or a draft/placeholder until one arrives. */
-function threadLabel(thread: ThreadMeta, liveThreadIds: ReadonlySet<string>): string {
-  if (thread.title) return thread.title
-  // A live, session-less Thread is a fresh draft awaiting its first prompt.
-  if (liveThreadIds.has(thread.id) && thread.sessionId === null) return 'New thread (draft)'
-  return 'Untitled thread'
 }

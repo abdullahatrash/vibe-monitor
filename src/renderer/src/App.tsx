@@ -184,6 +184,22 @@ export function App(): JSX.Element {
   }
 
   /**
+   * Toggle a Thread's persisted per-Thread flags (#132 pin / #133 archive). A SAFE
+   * metadata op — no session teardown — so it runs on any row (active or cold-peek).
+   * Best-effort in main (ADR-0005); we refresh the recents list so the new flag
+   * reflects in the sidebar's derivation (`orderByPin` / `partitionArchived`). A
+   * `{ok:false}` (store failure) leaves the list as-is — the toggle is a no-op.
+   */
+  async function setThreadFlags(
+    threadId: string,
+    flags: { pinned?: boolean; archived?: boolean },
+  ): Promise<void> {
+    const result = await window.api.setThreadFlags({ threadId, ...flags })
+    if (!result.ok) return
+    await refreshRecents()
+  }
+
+  /**
    * Record a Workspace connect outcome: set its ConnectState and, when connected,
    * (re)seed its per-session live-state with the agent's auto-opened Thread. Pull
    * focus to that Thread when the user is still on this Workspace (`focus`, or the
@@ -747,6 +763,7 @@ export function App(): JSX.Element {
         onNewThread={() => selectedWs && newThread(selectedWs)}
         onNewThreadInWorkspace={newThreadInWorkspace}
         onDeleteThread={deleteThread}
+        onSetThreadFlags={setThreadFlags}
       />
     </div>
   )

@@ -1,11 +1,15 @@
 import { useState, type JSX, type ReactNode } from 'react'
 import {
+  Archive,
+  ArchiveRestore,
   Atom,
   ChevronDown,
   Clock,
   Ellipsis,
   Folder,
   MoreVertical,
+  Pin,
+  PinOff,
   Plus,
   Search,
   SquarePen,
@@ -13,7 +17,13 @@ import {
 } from 'lucide-react'
 import type { ListMetadataResult, ThreadMeta } from '../../../shared/ipc'
 import type { NavState } from './nav-reducer'
-import { deriveUnifiedThreads, isThreadDeletable, type UnifiedThreadRow } from './unified-threads'
+import {
+  deriveUnifiedThreads,
+  isThreadDeletable,
+  orderByPin,
+  partitionArchived,
+  type UnifiedThreadRow,
+} from './unified-threads'
 import { getOpenProjects, setOpenProjects } from './project-open-store'
 import { getSortOrder, setSortOrder, sortWorkspaces, type WorkspaceSortOrder } from './workspace-sort'
 import { Badge } from '../ui/badge'
@@ -32,6 +42,9 @@ export interface WorkspaceFlags {
   streaming: boolean
   needsAttention: boolean
 }
+
+/** Toggle a Thread's persisted per-Thread flags (#132 pin / #133 archive). */
+type SetThreadFlags = (threadId: string, flags: { pinned?: boolean; archived?: boolean }) => void
 
 /** How many thread rows each project shows before "Show more" (#113/#138). */
 const THREAD_CAP = 5
@@ -74,6 +87,7 @@ export function Shell({
   onNewThread,
   onNewThreadInWorkspace,
   onDeleteThread,
+  onSetThreadFlags,
 }: {
   /** Whether the left sidebar is collapsed (#127) — animate its width to 0 (still mounted). */
   collapsed: boolean
@@ -105,6 +119,8 @@ export function Shell({
   onNewThreadInWorkspace: (workspaceId: string) => void
   /** Delete a Thread (TB6) — main tears down any live session, then the list refreshes. */
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
+  /** Pin/archive a Thread (#132/#133) — a safe metadata toggle on any row. */
+  onSetThreadFlags: SetThreadFlags
 }): JSX.Element {
   return (
     <div className="flex min-h-0 flex-1">
@@ -138,6 +154,7 @@ export function Shell({
             onSelectThread={onSelectThread}
             onNewThreadInWorkspace={onNewThreadInWorkspace}
             onDeleteThread={onDeleteThread}
+            onSetThreadFlags={onSetThreadFlags}
           />
           <div className="flex-1" />
           <AccountChip />
@@ -264,6 +281,7 @@ function WorkspaceNav({
   onSelectThread,
   onNewThreadInWorkspace,
   onDeleteThread,
+  onSetThreadFlags,
 }: {
   workspaces: ListMetadataResult
   nav: NavState
@@ -275,6 +293,7 @@ function WorkspaceNav({
   onSelectThread: (workspaceId: string, threadId: string) => void
   onNewThreadInWorkspace: (workspaceId: string) => void
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
+  onSetThreadFlags: SetThreadFlags
 }): JSX.Element {
   // The DISPLAY-ONLY sort order (#129): renderer-only UI state seeded from
   // localStorage (default 'recent'), persisted on change. It reorders the project
@@ -385,6 +404,7 @@ function WorkspaceNav({
               onNewThread={onNewThreadInWorkspace}
               onSelectThread={onSelectThread}
               onDeleteThread={onDeleteThread}
+              onSetThreadFlags={onSetThreadFlags}
             />
           )
         })
@@ -416,6 +436,7 @@ function ProjectRow({
   onNewThread,
   onSelectThread,
   onDeleteThread,
+  onSetThreadFlags,
 }: {
   workspace: ListMetadataResult[number]
   rows: UnifiedThreadRow[]
@@ -430,20 +451,26 @@ function ProjectRow({
   onNewThread: (workspaceId: string) => void
   onSelectThread: (workspaceId: string, threadId: string) => void
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
+  onSetThreadFlags: SetThreadFlags
 }): JSX.Element {
   const [expandedThreads, setExpandedThreads] = useState(false)
-  // Cap this project's list, PINNING the selected row so opening a thread that sorts
-  // below the cap never hides its (highlighted) row (#113 review). Only the active
-  // project has a selected row in its list (thread ids are globally unique).
+  // Split archived rows out (#133) then float pinned rows to the top of the active
+  // list (#132) — both pure post-processing over the derived rows (deriveUnifiedThreads
+  // stays flag-agnostic). Archived rows fold into a collapsible section at the bottom.
+  const { active: activeRows, archived: archivedRows } = partitionArchived(rows)
+  const mainRows = orderByPin(activeRows)
+  // Cap the main list, PINNING the selected row so opening a thread that sorts below
+  // the cap never hides its (highlighted) row (#113 review). Only the active project
+  // has a selected row in its list (thread ids are globally unique).
   const capped = visibleRows(
-    rows,
+    mainRows,
     THREAD_CAP,
     expandedThreads,
     (r) => r.thread.id === selectedThreadId,
   )
-  const hiddenCount = rows.length - capped.length
+  const hiddenCount = mainRows.length - capped.length
   const cappedIds = new Set(capped.map((r) => r.thread.id))
-  const hiddenNeedsAttention = rows.some((r) => !cappedIds.has(r.thread.id) && r.needsAttention)
+  const hiddenNeedsAttention = mainRows.some((r) => !cappedIds.has(r.thread.id) && r.needsAttention)
 
   return (
     <Collapsible open={open} onOpenChange={(next) => onToggleOpen(workspace.id, next)}>
@@ -490,7 +517,7 @@ function ProjectRow({
       </div>
 
       <CollapsibleContent>
-        {rows.length > 0 ? (
+        {mainRows.length > 0 ? (
           <ul className="flex flex-col gap-0.5">
             {capped.map((row) => (
               <NavThread
@@ -503,10 +530,12 @@ function ProjectRow({
                 // delete to the active project — else a background-connected project's
                 // mid-turn thread would look cold-and-deletable and tear its session.
                 // Within the active project the pure gate decides (cold always; the
-                // primary never; any other live row when idle).
+                // primary never; any other live row when idle). Pin/archive are SAFE
+                // metadata ops (no session teardown), so the kebab shows on every row.
                 deletable={isActive && isThreadDeletable(row, protectedThreadId)}
                 onOpen={() => onSelectThread(workspace.id, row.thread.id)}
                 onDelete={onDeleteThread}
+                onSetThreadFlags={onSetThreadFlags}
               />
             ))}
             {(expandedThreads || hiddenCount > 0) && (
@@ -527,9 +556,84 @@ function ProjectRow({
               </button>
             )}
           </ul>
-        ) : (
+        ) : archivedRows.length === 0 ? (
           <div className="px-3 py-1 pl-[42px] text-[13px] text-muted">No threads yet</div>
+        ) : null}
+
+        {/* Archived section (#133): a collapsible "Archived (N)" fold at the BOTTOM,
+            default-collapsed, hidden entirely when N=0. Same NavThread rows (open /
+            unarchive / delete). */}
+        {archivedRows.length > 0 && (
+          <ArchivedSection
+            rows={archivedRows}
+            isActive={isActive}
+            protectedThreadId={protectedThreadId}
+            selectedThreadId={selectedThreadId}
+            nowMs={nowMs}
+            workspaceId={workspace.id}
+            onSelectThread={onSelectThread}
+            onDeleteThread={onDeleteThread}
+            onSetThreadFlags={onSetThreadFlags}
+          />
         )}
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+/**
+ * The per-project "Archived (N)" collapsible (#133): a nested, default-collapsed fold
+ * at the bottom of a project's panel listing its archived Threads. Uses the SAME
+ * NavThread row (so archived rows keep open / unarchive / delete), with the same
+ * active-project delete gate as the main list.
+ */
+function ArchivedSection({
+  rows,
+  isActive,
+  protectedThreadId,
+  selectedThreadId,
+  nowMs,
+  workspaceId,
+  onSelectThread,
+  onDeleteThread,
+  onSetThreadFlags,
+}: {
+  rows: UnifiedThreadRow[]
+  isActive: boolean
+  protectedThreadId: string | null
+  selectedThreadId: string | null
+  nowMs: number
+  workspaceId: string
+  onSelectThread: (workspaceId: string, threadId: string) => void
+  onDeleteThread: (thread: ThreadMeta) => Promise<void>
+  onSetThreadFlags: SetThreadFlags
+}): JSX.Element {
+  const [open, setOpen] = useState(false)
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="mt-0.5">
+      <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md px-3 py-1 pl-[26px] text-left text-[13px] text-faint outline-none transition-colors hover:bg-accent/10 focus-visible:bg-accent/10">
+        <ChevronDown
+          className={cn('size-3.5 shrink-0 text-muted transition-transform', !open && '-rotate-90')}
+          aria-hidden
+        />
+        <Archive className="size-3.5 shrink-0 text-muted" aria-hidden />
+        <span className="flex-1 truncate">Archived ({rows.length})</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <ul className="flex flex-col gap-0.5">
+          {rows.map((row) => (
+            <NavThread
+              key={row.thread.id}
+              row={row}
+              nowMs={nowMs}
+              selected={row.thread.id === selectedThreadId}
+              deletable={isActive && isThreadDeletable(row, protectedThreadId)}
+              onOpen={() => onSelectThread(workspaceId, row.thread.id)}
+              onDelete={onDeleteThread}
+              onSetThreadFlags={onSetThreadFlags}
+            />
+          ))}
+        </ul>
       </CollapsibleContent>
     </Collapsible>
   )
@@ -550,6 +654,7 @@ function NavThread({
   deletable,
   onOpen,
   onDelete,
+  onSetThreadFlags,
 }: {
   row: UnifiedThreadRow
   nowMs: number
@@ -557,8 +662,11 @@ function NavThread({
   deletable: boolean
   onOpen: () => void
   onDelete: (thread: ThreadMeta) => Promise<void>
+  onSetThreadFlags: SetThreadFlags
 }): JSX.Element {
   const timestamp = formatRelativeTime(row.thread.lastActiveAt, nowMs)
+  const pinned = row.thread.pinned === true
+  const archived = row.thread.archived === true
   return (
     <li className="group/thread relative">
       <NavItem active={selected} onClick={onOpen} className="py-[7px] pr-2 pl-[42px] text-[14.5px]">
@@ -570,6 +678,7 @@ function NavThread({
           }
           aria-hidden
         />
+        {pinned && <Pin className="size-3 shrink-0 text-muted" aria-label="Pinned" />}
         <span className="flex-1 truncate">{threadLabel(row)}</span>
         {row.streaming && (
           <Spinner className="size-3.5 text-accent-text" aria-label="Streaming" />
@@ -581,23 +690,38 @@ function NavThread({
         )}
         {timestamp && <span className="shrink-0 text-[13px] text-faint">{timestamp}</span>}
       </NavItem>
-      {deletable && (
-        <Menu>
-          <MenuTrigger
-            aria-label="Thread actions"
-            title="Thread actions"
-            className="absolute top-1/2 right-1 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-sm text-muted opacity-0 outline-none transition-opacity hover:bg-accent/10 hover:text-text focus-visible:opacity-100 group-hover/thread:opacity-100 data-[popup-open]:opacity-100"
-          >
-            <MoreVertical className="size-3.5" aria-hidden />
-          </MenuTrigger>
-          <MenuContent>
+      {/* Kebab shows on EVERY row now (#132/#133): pin/archive are SAFE metadata ops
+          (no session teardown), so they're always available; only Delete stays gated to
+          `deletable` (the #138 active-project safety). */}
+      <Menu>
+        <MenuTrigger
+          aria-label="Thread actions"
+          title="Thread actions"
+          className="absolute top-1/2 right-1 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-sm text-muted opacity-0 outline-none transition-opacity hover:bg-accent/10 hover:text-text focus-visible:opacity-100 group-hover/thread:opacity-100 data-[popup-open]:opacity-100"
+        >
+          <MoreVertical className="size-3.5" aria-hidden />
+        </MenuTrigger>
+        <MenuContent>
+          <MenuItem onClick={() => onSetThreadFlags(row.thread.id, { pinned: !pinned })}>
+            {pinned ? <PinOff className="size-3.5" aria-hidden /> : <Pin className="size-3.5" aria-hidden />}
+            {pinned ? 'Unpin' : 'Pin'}
+          </MenuItem>
+          <MenuItem onClick={() => onSetThreadFlags(row.thread.id, { archived: !archived })}>
+            {archived ? (
+              <ArchiveRestore className="size-3.5" aria-hidden />
+            ) : (
+              <Archive className="size-3.5" aria-hidden />
+            )}
+            {archived ? 'Unarchive' : 'Archive'}
+          </MenuItem>
+          {deletable && (
             <MenuItem className="text-bad" onClick={() => void onDelete(row.thread)}>
               <Trash2 className="size-3.5" aria-hidden />
               Delete
             </MenuItem>
-          </MenuContent>
-        </Menu>
-      )}
+          )}
+        </MenuContent>
+      </Menu>
     </li>
   )
 }

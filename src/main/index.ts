@@ -41,6 +41,7 @@ import {
   type ThreadAgentControls,
   type ThreadConnection,
   type ThreadStatusEvent,
+  type ThreadTitleEvent,
 } from '../shared/ipc'
 import { detectVibe } from './vibe-detect'
 import { getShellEnv } from './shell-env'
@@ -50,6 +51,7 @@ import {
   agentReboundEntry,
   resolvePermissionEntry,
   sessionIdFromPayload,
+  titleFromSessionInfoUpdate,
   TranscriptStore,
   turnCompleteEntry,
   turnErrorEntry,
@@ -157,6 +159,38 @@ function emitThreadStatus(changes: ThreadStatusChange | ThreadStatusChange[] | n
     if (win.webContents.isDestroyed()) continue
     for (const change of list) win.webContents.send(IPC.threadStatus, change satisfies ThreadStatusEvent)
   }
+}
+
+/** Push a Thread's title change to every renderer so the cold list re-renders. */
+function emitThreadTitle(event: ThreadTitleEvent): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.webContents.isDestroyed()) continue
+    win.webContents.send(IPC.threadTitle, event)
+  }
+}
+
+/**
+ * Persist a Thread's auto-title from a `session_info_update` and push it to the
+ * renderer. vibe-acp titles a session from its first prompt and emits the title
+ * LAZILY (never in `session/new`), so without this every Thread stays "Untitled".
+ * Resolve the Thread by the event's OWN sessionId, upsert the title onto its record
+ * (preserving createdAt / sessionId / pin+archive flags), then ping the renderer so
+ * the sidebar re-pulls. Best-effort/guarded like the transcript tee: no store, no
+ * matching Thread, or a persist failure just skips — the active Thread's header still
+ * updates live via the renderer reducer regardless.
+ */
+async function recordThreadTitle(sessionId: string | null, title: string): Promise<void> {
+  if (!metadataStore || !sessionId) return
+  const threadId = metadataStore.findThreadIdBySessionId(sessionId)
+  if (!threadId) return
+  const workspaceId = metadataStore.snapshot().threads.find((t) => t.id === threadId)?.workspaceId
+  if (!workspaceId) return
+  try {
+    await metadataStore.upsertThread({ id: threadId, workspaceId, title })
+  } catch {
+    return // a persistence failure is non-fatal — skip the push, keep the live title
+  }
+  emitThreadTitle({ threadId, title })
 }
 
 /**
@@ -468,6 +502,11 @@ function wireAgentEvents(agentId: string, agent: WorkspaceAgent, sender: WebCont
   agent.on('event', (payload: unknown) => {
     const sessionId = sessionIdFromPayload(payload)
     teeTranscript(threadIdForTee(agentId, sessionId), acpEventEntry(payload))
+    // vibe-acp pushes the session's auto-title lazily after the first prompt via a
+    // `session_info_update` (never in `session/new`) — capture it so the Thread stops
+    // showing "Untitled". Persist + push by the event's OWN sessionId; best-effort.
+    const title = titleFromSessionInfoUpdate(payload)
+    if (title !== null) void recordThreadTitle(sessionId, title)
     // A forwarded `session/request_permission` blocks the turn until the renderer
     // answers — surface it as the Thread's `needsAttention` (#53). Resolve its
     // Thread the same way the tee does (the event's OWN sessionId via the store,

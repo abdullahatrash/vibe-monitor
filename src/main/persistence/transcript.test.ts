@@ -8,6 +8,7 @@ import {
   parseTranscript,
   resolvePermissionEntry,
   sessionIdFromPayload,
+  titleFromSessionInfoUpdate,
   TRANSCRIPT_SCHEMA_VERSION,
   TranscriptStore,
   transcriptVersionOf,
@@ -319,6 +320,45 @@ describe('sessionIdFromPayload (S3 routing)', () => {
     expect(sessionIdFromPayload({ params: { sessionId: 5 } })).toBeNull()
     expect(sessionIdFromPayload(null)).toBeNull()
     expect(sessionIdFromPayload('nope')).toBeNull()
+  })
+})
+
+describe('titleFromSessionInfoUpdate (auto-title capture)', () => {
+  it('extracts the title from a session_info_update session/update', () => {
+    expect(
+      titleFromSessionInfoUpdate({
+        method: 'session/update',
+        params: { sessionId: 's1', update: { sessionUpdate: 'session_info_update', title: 'Refactor @auth.py' } },
+      }),
+    ).toBe('Refactor @auth.py')
+  })
+
+  it('returns null for other session/update kinds and non-title payloads', () => {
+    // A different sessionUpdate discriminant — not a title event.
+    expect(
+      titleFromSessionInfoUpdate({
+        method: 'session/update',
+        params: { sessionId: 's1', update: { sessionUpdate: 'agent_message_chunk', content: {} } },
+      }),
+    ).toBeNull()
+    // Right discriminant but empty/missing/non-string title → skip (no clobber with '').
+    expect(
+      titleFromSessionInfoUpdate({
+        method: 'session/update',
+        params: { sessionId: 's1', update: { sessionUpdate: 'session_info_update', title: '' } },
+      }),
+    ).toBeNull()
+    expect(
+      titleFromSessionInfoUpdate({
+        method: 'session/update',
+        params: { sessionId: 's1', update: { sessionUpdate: 'session_info_update', title: 7 } },
+      }),
+    ).toBeNull()
+    // Wrong method / garbage.
+    expect(titleFromSessionInfoUpdate({ method: 'session/request_permission', params: {} })).toBeNull()
+    expect(titleFromSessionInfoUpdate({ method: 'session/update', params: {} })).toBeNull()
+    expect(titleFromSessionInfoUpdate(null)).toBeNull()
+    expect(titleFromSessionInfoUpdate('nope')).toBeNull()
   })
 })
 

@@ -1,11 +1,25 @@
 import { useState, type JSX, type ReactNode } from 'react'
-import { Atom, Check, ChevronDown, Clock, Folder, MoreVertical, Search, SquarePen, Trash2 } from 'lucide-react'
+import {
+  Atom,
+  Check,
+  ChevronDown,
+  Clock,
+  Ellipsis,
+  Folder,
+  MoreVertical,
+  Plus,
+  Search,
+  SquarePen,
+  Trash2,
+} from 'lucide-react'
 import type { ListMetadataResult, ThreadMeta } from '../../../shared/ipc'
 import type { NavState } from './nav-reducer'
 import { backgroundAttention } from './background-attention'
 import { isThreadDeletable, type UnifiedThreadRow } from './unified-threads'
+import { getSortOrder, setSortOrder, sortWorkspaces, type WorkspaceSortOrder } from './workspace-sort'
 import { Badge } from '../ui/badge'
-import { Menu, MenuContent, MenuItem, MenuTrigger } from '../ui/menu'
+import { IconButton } from '../ui/icon-button'
+import { Menu, MenuContent, MenuItem, MenuRadioGroup, MenuRadioItem, MenuTrigger } from '../ui/menu'
 import { NavItem } from '../ui/nav-item'
 import { Spinner } from '../ui/spinner'
 import { Logo } from './logo'
@@ -47,6 +61,8 @@ export function Shell({
   protectedThreadId,
   canCreateThread,
   outlet,
+  opening,
+  onOpenProject,
   onSelectWorkspace,
   onSelectThread,
   onNewThread,
@@ -54,7 +70,7 @@ export function Shell({
 }: {
   /** Persisted Workspaces (cold metadata) for the switcher rows + display names. */
   workspaces: ListMetadataResult
-  /** App-owned controls pinned above the list (Open project + environment status). */
+  /** App-owned controls pinned above the list (environment status; the gear). */
   sidebarTop: ReactNode
   /** The current navigation selection (controlled by App). */
   nav: NavState
@@ -68,6 +84,10 @@ export function Shell({
   canCreateThread: boolean
   /** The fully-computed conversation outlet (connection views / cold replay). */
   outlet: ReactNode
+  /** Whether an Open-project connect is in flight — busies the header's new-project +. */
+  opening: boolean
+  /** Open a project via the OS dialog (the existing `openProject`), from the Projects header +. */
+  onOpenProject: () => void
   /** Select a Workspace — App pins it in nav and connect-or-reuses its warm agent. */
   onSelectWorkspace: (workspaceId: string) => void
   /** Select a Thread — App pins it in nav and (if live) remembers it as active. */
@@ -89,6 +109,8 @@ export function Shell({
           workspaceFlags={workspaceFlags}
           rows={rows}
           protectedThreadId={protectedThreadId}
+          opening={opening}
+          onOpenProject={onOpenProject}
           onSelectWorkspace={onSelectWorkspace}
           onSelectThread={onSelectThread}
           onDeleteThread={onDeleteThread}
@@ -211,6 +233,8 @@ function WorkspaceNav({
   workspaceFlags,
   rows,
   protectedThreadId,
+  opening,
+  onOpenProject,
   onSelectWorkspace,
   onSelectThread,
   onDeleteThread,
@@ -220,16 +244,31 @@ function WorkspaceNav({
   workspaceFlags: Readonly<Record<string, WorkspaceFlags>>
   rows: UnifiedThreadRow[]
   protectedThreadId: string | null
+  opening: boolean
+  onOpenProject: () => void
   onSelectWorkspace: (workspaceId: string) => void
   onSelectThread: (workspaceId: string, threadId: string) => void
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
 }): JSX.Element {
   const [expandedThreads, setExpandedThreads] = useState(false)
+  // The switcher's DISPLAY-ONLY sort order (#129): renderer-only UI state seeded
+  // from localStorage (default 'recent'), persisted on change. It reorders the
+  // switcher dropdown ONLY — never selection, nav, or the Thread list below.
+  const [sortOrder, setSortOrderState] = useState<WorkspaceSortOrder>(() =>
+    getSortOrder(window.localStorage),
+  )
+  function changeSortOrder(order: WorkspaceSortOrder): void {
+    setSortOrderState(order)
+    setSortOrder(window.localStorage, order)
+  }
   // ONE Date.now() per render, injected into the pure formatter at each call site.
   const nowMs = Date.now()
 
   const activeId = nav.selectedWorkspaceId
   const activeWorkspace = workspaces.find((w) => w.id === activeId) ?? null
+  // A sorted COPY for the switcher dropdown — the `workspaces` prop is never mutated
+  // and the active/selection logic still keys off ids, so ordering is presentation-only.
+  const sortedWorkspaces = sortWorkspaces(workspaces, sortOrder)
   // The roll-up of every NON-active Workspace's status, for the collapsed trigger —
   // so a background Workspace blocked on a permission is visible without opening.
   const background = backgroundAttention(workspaceFlags, activeId)
@@ -251,7 +290,46 @@ function WorkspaceNav({
 
   return (
     <nav className="flex flex-col gap-0.5">
-      <div className="px-3 py-1.5 text-[13px] font-medium text-faint">Projects</div>
+      {/* Projects header row (#129): the label on the left, and on the right a
+          new-project + (→ the existing openProject) plus an options "…" menu holding
+          the switcher's display-only sort order. The + stays available even with zero
+          Workspaces, so the first project can still be opened from here. */}
+      <div className="flex items-center justify-between px-3 py-1.5">
+        <span className="text-[13px] font-medium text-faint">Projects</span>
+        <div className="flex items-center gap-0.5">
+          <IconButton
+            size="icon-xs"
+            aria-label="Open project"
+            title="Open project"
+            disabled={opening}
+            onClick={onOpenProject}
+          >
+            {opening ? (
+              <Spinner className="size-3.5" aria-label="Opening project" />
+            ) : (
+              <Plus className="size-4" aria-hidden />
+            )}
+          </IconButton>
+          <Menu>
+            <MenuTrigger
+              aria-label="Project list options"
+              title="Project list options"
+              className="inline-flex size-6 items-center justify-center rounded-sm text-muted outline-none transition-colors hover:bg-accent/10 hover:text-text focus-visible:bg-accent/10 data-[popup-open]:bg-accent/10"
+            >
+              <Ellipsis className="size-4" aria-hidden />
+            </MenuTrigger>
+            <MenuContent align="end" className="min-w-[180px]">
+              <MenuRadioGroup
+                value={sortOrder}
+                onValueChange={(value) => changeSortOrder(value as WorkspaceSortOrder)}
+              >
+                <MenuRadioItem value="recent">Recent</MenuRadioItem>
+                <MenuRadioItem value="name">Name (A–Z)</MenuRadioItem>
+              </MenuRadioGroup>
+            </MenuContent>
+          </Menu>
+        </div>
+      </div>
 
       {workspaces.length === 0 ? (
         <p className="px-3 py-1 text-[13px] leading-relaxed text-muted">
@@ -279,7 +357,7 @@ function WorkspaceNav({
             <ChevronDown className="size-4 shrink-0 text-muted" aria-hidden />
           </MenuTrigger>
           <MenuContent align="start" className="min-w-[290px]">
-            {workspaces.map((w) => {
+            {sortedWorkspaces.map((w) => {
               const flags = workspaceFlags[w.id]
               const isActive = w.id === activeId
               return (

@@ -45,15 +45,7 @@ import {
   type ThreadStatusMap,
 } from './conversation/thread-status'
 import { clearDraft } from './conversation/composer-draft-store'
-import {
-  ArrowLeft,
-  ArrowRight,
-  FolderOpen,
-  Maximize2,
-  PanelRight,
-  Settings,
-  Terminal,
-} from 'lucide-react'
+import { ArrowLeft, ArrowRight, Maximize2, PanelRight, Settings, Terminal } from 'lucide-react'
 import { Button } from './ui/button'
 import { IconButton } from './ui/icon-button'
 import { Shell, type WorkspaceFlags } from './shell/Shell'
@@ -466,22 +458,14 @@ export function App(): JSX.Element {
     connDispatch({ type: 'set', workspaceId, state: { status: 'not-signed-in', agentId, workspaceDir, authMethods } })
   }
 
-  // The sidebar's pinned top: the Open-project control + a settings affordance that
-  // reveals the environment status on demand (#49). The env card is no longer pinned
-  // permanently — it lives behind this gear once everything's installed, and is
-  // surfaced prominently in the outlet's first-run state when something's missing.
+  // The sidebar's pinned top: a settings affordance that reveals the environment
+  // status on demand (#49). The Open-project control now lives in the Projects
+  // header's new-project + (#129); the env card is no longer pinned permanently — it
+  // lives behind this gear once everything's installed, and is surfaced prominently in
+  // the outlet's first-run state when something's missing.
   const sidebarTop = (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <Button
-          variant="secondary"
-          className="flex-1 justify-start gap-2"
-          onClick={() => void openProject()}
-          disabled={opening}
-        >
-          <FolderOpen className="size-4" aria-hidden />
-          {opening ? 'Connecting…' : 'Open project'}
-        </Button>
+      <div className="flex items-center justify-end gap-2">
         <IconButton
           aria-label="Environment & settings"
           title="Environment & settings"
@@ -711,6 +695,8 @@ export function App(): JSX.Element {
         protectedThreadId={protectedThreadId}
         canCreateThread={canCreateThread}
         outlet={outlet}
+        opening={opening}
+        onOpenProject={() => void openProject()}
         onSelectWorkspace={selectWorkspace}
         onSelectThread={selectThreadInWorkspace}
         onNewThread={() => selectedWs && newThread(selectedWs)}

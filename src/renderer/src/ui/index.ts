@@ -60,4 +60,12 @@ export { NavItem } from './nav-item'
 
 export { Panel, PanelHeader, PanelTitle, PanelContent } from './panel'
 
-export { Menu, MenuTrigger, MenuContent, MenuItem, MenuSeparator } from './menu'
+export {
+  Menu,
+  MenuTrigger,
+  MenuContent,
+  MenuItem,
+  MenuSeparator,
+  MenuRadioGroup,
+  MenuRadioItem,
+} from './menu'

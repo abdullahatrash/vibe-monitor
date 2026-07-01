@@ -1,5 +1,6 @@
 import type { ComponentProps, JSX } from 'react'
 import { Menu as BaseMenu } from '@base-ui/react/menu'
+import { Check } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 /**
@@ -65,3 +66,41 @@ export function MenuItem({
 }
 
 export const MenuSeparator = BaseMenu.Separator
+
+/**
+ * A single-choice group inside a menu (e.g. a sort-order picker). base-ui owns the
+ * `role="menuitemradio"` + `aria-checked` semantics and the `value`/`onValueChange`
+ * state, so a screen reader announces which option is selected. Wrap {@link
+ * MenuRadioItem}s and drive it with `value` + `onValueChange`.
+ */
+export const MenuRadioGroup = BaseMenu.RadioGroup
+
+/**
+ * One option in a {@link MenuRadioGroup}, styled like {@link MenuItem} with a leading
+ * check that renders only for the active `value` (base-ui shows the indicator when
+ * checked; the fixed slot keeps rows aligned). Accessible state is base-ui's, not a
+ * visual-only cue.
+ */
+export function MenuRadioItem({
+  className,
+  children,
+  ...props
+}: ComponentProps<typeof BaseMenu.RadioItem>): JSX.Element {
+  return (
+    <BaseMenu.RadioItem
+      className={cn(
+        'flex cursor-default select-none items-center gap-2 px-3 py-1.5 outline-none',
+        'data-[highlighted]:bg-accent data-[highlighted]:text-on-accent',
+        className,
+      )}
+      {...props}
+    >
+      <span className="flex size-4 shrink-0 items-center justify-center">
+        <BaseMenu.RadioItemIndicator>
+          <Check className="size-4" aria-hidden />
+        </BaseMenu.RadioItemIndicator>
+      </span>
+      <span className="flex-1">{children}</span>
+    </BaseMenu.RadioItem>
+  )
+}

@@ -402,34 +402,6 @@ body {
   margin-top: 2px;
 }
 
-.signedin {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  margin-bottom: 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--ok-tint);
-  font-size: 13px;
-}
-
-.signedin__label {
-  font-weight: 600;
-}
-
-.signedin__identity {
-  color: var(--muted);
-}
-
-.signedin__error {
-  color: var(--bad);
-}
-
-.signedin__spacer {
-  flex: 1;
-}
-
 /* --- Conversation (TB2) --- */
 
 .conv {

@@ -320,7 +320,7 @@ function PrimaryNav({
  * The account chip pinned to the sidebar's bottom — a gradient avatar + a name + a
  * tier, now the TRIGGER of an account dropdown (#130). The chip's chrome stays a
  * STATIC placeholder (#future): Vibe exposes no account identity (see ADR-0003 / the
- * SignedInBar), so the avatar/name/tier are fixed strings, not live data. The menu
+ * Settings Account section), so the avatar/name/tier are fixed strings, not live data. The menu
  * holds a real "Settings" item (→ the routed Settings page that now hosts the env/CLI
  * status the sidebar gear used to toggle) plus room for future account actions.
  */

@@ -587,9 +587,10 @@ export function App(): JSX.Element {
     }
   }
 
-  /** The connected view for a Workspace (SignedInBar + the controlled outlet). `busy`
-   *  is the Workspace's rolled-up streaming flag (#86) — threaded to the Changes panel
-   *  so the commit affordance is disabled while a turn is in flight (the v1 guard). */
+  /** The connected view for a Workspace (the controlled outlet). `busy` is the
+   *  Workspace's rolled-up streaming flag (#86) — threaded to the Changes panel so the
+   *  commit affordance is disabled while a turn is in flight (the v1 guard). Sign-out now
+   *  lives in the Settings page (`AccountSettings`), not a banner atop the chat. */
   function renderConnected(conn: ThreadConnection, isActive: boolean, busy: boolean): ReactNode {
     const wts = workspaceThreadStateFor(workspaceThreads, conn.workspaceId)
     const cold = threadsForWorkspace(recents, conn.workspaceId)
@@ -602,20 +603,10 @@ export function App(): JSX.Element {
     const isLive = routeThreadSelection(activeThread, liveIds) === 'live'
     const seed = seedSessionId(activeThread, wts?.bound ?? {})
     return (
-      <>
-        {/* Key by agentId (like Conversation) so its useReducer seed resets across
-            connections — a new agent can't inherit the prior session's sign-out gate. */}
-        <SignedInBar
-          key={`bar-${conn.agentId}`}
-          agentId={conn.agentId}
-          authMethods={conn.authMethods}
-          signOutAvailable={conn.signOutAvailable}
-          onSignedOut={(authMethods) => toSignInPanel(conn.workspaceId, conn.agentId, conn.workspaceDir, authMethods)}
-        />
-        {/* Key by agentId so per-Workspace state can't bleed across connections.
-            A controlled outlet now (TB3 #48): the sidebar drives selection; this just
-            renders App's chosen active Thread live or cold. */}
-        <ConnectedWorkspace
+      // Key by agentId so per-Workspace state can't bleed across connections.
+      // A controlled outlet now (TB3 #48): the sidebar drives selection; this just
+      // renders App's chosen active Thread live or cold.
+      <ConnectedWorkspace
           key={conn.agentId}
           connection={conn}
           activeThread={activeThread}
@@ -676,7 +667,6 @@ export function App(): JSX.Element {
           onCloseCold={() => selectThreadInWorkspace(conn.workspaceId, conn.threadId)}
           onAuthExpired={(authMethods) => toSignInPanel(conn.workspaceId, conn.agentId, conn.workspaceDir, authMethods)}
         />
-      </>
     )
   }
 
@@ -713,6 +703,30 @@ export function App(): JSX.Element {
           loading={loading}
           onRecheck={() => void runDetect()}
           onClose={() => navDispatch({ type: 'close-settings' })}
+          account={
+            // The signed-in account for the selected Workspace's warm agent, when
+            // one is connected — else null (Account shows "not connected"). Guarded
+            // behind the connected check so `selected.thread` is safe to read.
+            selected.status === 'connected'
+              ? {
+                  agentId: selected.thread.agentId,
+                  authMethods: selected.thread.authMethods,
+                  signOutAvailable: selected.thread.signOutAvailable,
+                }
+              : null
+          }
+          onSignedOut={(authMethods) => {
+            // After sign-out drop that Workspace to its sign-in panel (same warm
+            // agent) and close Settings, landing the user on the sign-in view.
+            if (selected.status !== 'connected') return
+            toSignInPanel(
+              selected.thread.workspaceId,
+              selected.thread.agentId,
+              selected.thread.workspaceDir,
+              authMethods,
+            )
+            navDispatch({ type: 'close-settings' })
+          }}
         />
       ) : selected.status === 'connected' ? null : ( // connected: rendered (visible) in the keep-mounted map above
         selected.status !== 'idle'
@@ -1031,11 +1045,16 @@ function SettingsView({
   loading,
   onRecheck,
   onClose,
+  account,
+  onSignedOut,
 }: {
   detect: VibeDetectResult | null
   loading: boolean
   onRecheck: () => void
   onClose: () => void
+  /** The selected Workspace's signed-in account, or null when none is connected. */
+  account: AccountInfo | null
+  onSignedOut: (authMethods: AuthMethod[]) => void
 }): JSX.Element {
   return (
     <div className="mx-auto flex w-full max-w-[560px] flex-col gap-5">
@@ -1046,9 +1065,93 @@ function SettingsView({
         <h1 className="text-[19px] font-semibold tracking-tight text-text-strong">Settings</h1>
       </div>
       <section className="flex flex-col gap-2">
+        <h2 className="text-[13px] font-semibold text-faint">Account</h2>
+        <AccountSettings
+          // Key by agentId so the auth reducer's seed resets per connection — a new
+          // agent can't inherit the prior session's sign-out gate/in-flight state.
+          key={account ? `account-${account.agentId}` : 'account-none'}
+          account={account}
+          onSignedOut={onSignedOut}
+        />
+      </section>
+      <section className="flex flex-col gap-2">
         <h2 className="text-[13px] font-semibold text-faint">Environment</h2>
         <Environment detect={detect} loading={loading} onRecheck={onRecheck} />
       </section>
+    </div>
+  )
+}
+
+/** The selected Workspace's connected agent + its advertised auth, for the Account section. */
+interface AccountInfo {
+  agentId: string
+  authMethods: AuthMethod[]
+  signOutAvailable: boolean
+}
+
+/**
+ * The Settings > Account section (moved off the old chat banner). Shows the signed-in
+ * status for the selected Workspace's warm agent + a design-system Sign-out control
+ * gated on `signOutAvailable`, mirroring the old `SignedInBar`'s pure `authReducer` /
+ * `signOut` lifecycle but styled with tokens + `Button` (no legacy banner BEM). Sign-out
+ * still calls `window.api.signOut({ agentId })` and, on success, routes that Workspace
+ * to its sign-in panel via `onSignedOut` (which also closes Settings). When no Workspace
+ * is connected (`account` null) it shows a muted hint and offers no Sign-out.
+ */
+function AccountSettings({
+  account,
+  onSignedOut,
+}: {
+  account: AccountInfo | null
+  onSignedOut: (authMethods: AuthMethod[]) => void
+}): JSX.Element {
+  const [state, dispatch] = useReducer(
+    authReducer,
+    signedInAuthViewState(account?.authMethods ?? [], account?.signOutAvailable ?? false),
+  )
+  const view = selectAuthView(state)
+
+  async function signOut(): Promise<void> {
+    if (!account) return
+    dispatch({ type: 'sign-out-start' })
+    const result = await window.api.signOut({ agentId: account.agentId })
+    if (result.ok) {
+      dispatch({ type: 'sign-out-success' })
+      onSignedOut(result.authMethods)
+    } else {
+      dispatch({ type: 'sign-out-error', message: result.error })
+    }
+  }
+
+  if (!account) {
+    return (
+      <div className="rounded-[9px] border border-border p-3 text-[13px] text-muted">
+        Not connected — open a project to manage your session.
+      </div>
+    )
+  }
+
+  const signingOut = view.kind === 'signing-out'
+  return (
+    <div className="flex flex-col gap-2.5 rounded-[9px] border border-border p-3">
+      <div className="flex items-center gap-2 text-[13px]">
+        {!signingOut && <span className="size-[7px] shrink-0 rounded-full bg-ok" aria-hidden />}
+        <span className="font-semibold text-text-strong">
+          {signingOut ? 'Signing out…' : 'Signed in to Mistral Vibe'}
+        </span>
+        {view.kind === 'signed-in' && view.identity && (
+          <span className="text-muted">{view.identity}</span>
+        )}
+        <span className="flex-1" />
+        {view.kind === 'signed-in' && view.signOutAvailable && (
+          <Button variant="outline" size="sm" onClick={() => void signOut()}>
+            Sign out
+          </Button>
+        )}
+      </div>
+      {view.kind === 'signed-in' && view.error && (
+        <div className="text-[13px] text-bad">{view.error}</div>
+      )}
     </div>
   )
 }
@@ -1206,66 +1309,6 @@ function SignInPanel({
       <button className="btn btn--ghost signin__action" onClick={() => void checkStatus()}>
         Already signed in? Check status
       </button>
-    </div>
-  )
-}
-
-/**
- * The signed-in indicator shown while connected: status + a Sign-out control
- * gated on `signOutAvailable` (Vibe exposes no account identity, so none is
- * shown). Sign-out returns to the sign-in panel (`onSignedOut`) for an account
- * switch. The sign-out lifecycle is the pure `authReducer`.
- */
-function SignedInBar({
-  agentId,
-  authMethods,
-  signOutAvailable,
-  onSignedOut,
-}: {
-  agentId: string
-  authMethods: AuthMethod[]
-  signOutAvailable: boolean
-  onSignedOut: (authMethods: AuthMethod[]) => void
-}): JSX.Element | null {
-  const [state, dispatch] = useReducer(
-    authReducer,
-    signedInAuthViewState(authMethods, signOutAvailable),
-  )
-  const view = selectAuthView(state)
-
-  async function signOut(): Promise<void> {
-    dispatch({ type: 'sign-out-start' })
-    const result = await window.api.signOut({ agentId })
-    if (result.ok) {
-      dispatch({ type: 'sign-out-success' })
-      onSignedOut(result.authMethods)
-    } else {
-      dispatch({ type: 'sign-out-error', message: result.error })
-    }
-  }
-
-  if (view.kind === 'signing-out') {
-    return (
-      <div className="signedin">
-        <span className="signedin__label">Signing out…</span>
-      </div>
-    )
-  }
-
-  if (view.kind !== 'signed-in') return null
-
-  return (
-    <div className="signedin">
-      <span className="dot dot--ok" aria-hidden />
-      <span className="signedin__label">Signed in to Mistral Vibe</span>
-      {view.identity && <span className="signedin__identity">{view.identity}</span>}
-      {view.error && <span className="signedin__error">{view.error}</span>}
-      <span className="signedin__spacer" />
-      {view.signOutAvailable && (
-        <button className="btn btn--ghost" onClick={() => void signOut()}>
-          Sign out
-        </button>
-      )}
     </div>
   )
 }

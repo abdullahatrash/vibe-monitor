@@ -37,6 +37,8 @@ import {
   type SignOutResult,
   type StartThreadArgs,
   type StartThreadResult,
+  type SetThreadTitleArgs,
+  type SetThreadTitleResult,
   type ThreadBoundEvent,
   type ThreadStatusEvent,
   type ThreadTitleEvent,
@@ -70,6 +72,8 @@ const api = {
     ipcRenderer.invoke(IPC.setThreadConfig, args),
   setThreadFlags: (args: SetThreadFlagsArgs): Promise<SetThreadFlagsResult> =>
     ipcRenderer.invoke(IPC.setThreadFlags, args),
+  setThreadTitle: (args: SetThreadTitleArgs): Promise<SetThreadTitleResult> =>
+    ipcRenderer.invoke(IPC.setThreadTitle, args),
   readTranscript: (threadId: string): Promise<ReadTranscriptResult> =>
     ipcRenderer.invoke(IPC.readTranscript, threadId),
   gitSubscribeStatus: (args: GitStatusSubscriptionArgs): Promise<void> =>

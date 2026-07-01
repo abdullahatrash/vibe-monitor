@@ -255,6 +255,23 @@ export class MetadataStore {
   }
 
   /**
+   * Set a Thread's title in place (auto-title on first prompt, or a rename). Like
+   * `setThreadFlags`, this HOLDS the record's list position — a title change is not
+   * activity, so unlike `upsertThread` it does NOT bump `lastActiveAt` or re-head the
+   * list. Returns `true` when the title actually changed (so the caller pushes/refreshes
+   * only then): an unknown id or an unchanged title is a no-op with NO disk write — which
+   * also absorbs the `session_info_update` vibe-acp echoes back after our own rename.
+   */
+  async setThreadTitle(id: string, title: string | null): Promise<boolean> {
+    const existing = this.state.threads.find((t) => t.id === id)
+    if (!existing || existing.title === title) return false
+    const updated: ThreadRecord = { ...existing, title }
+    this.state.threads = this.state.threads.map((t) => (t.id === id ? updated : t))
+    await this.persist()
+    return true
+  }
+
+  /**
    * Remove a Thread record by its minted `id` (TB6 #35). Idempotent: an unknown
    * id (or an already-deleted Thread) is a no-op — the filter simply matches
    * nothing — so deleting twice never throws. The JSONL transcript + any live ACP

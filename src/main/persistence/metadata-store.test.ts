@@ -93,6 +93,49 @@ describe('MetadataStore round-trip', () => {
     expect(ids).toEqual([t1.id, t2.id]) // t1 now most-recent
   })
 
+  it('setThreadTitle renames in place: sets title, holds position, does NOT bump lastActiveAt', async () => {
+    let clock = 1000
+    const store = new MetadataStore({ filePath: join(dir, 'set-title.json'), now: () => clock })
+    await store.load()
+    const ws = await store.upsertWorkspace({ dir: '/proj/rename' })
+    clock = 1100
+    const t1 = await store.upsertThread({ workspaceId: ws.id, sessionId: 's1' })
+    clock = 1200
+    const t2 = await store.upsertThread({ workspaceId: ws.id, sessionId: 's2', pinned: true })
+
+    // Rename the OLDER thread; time advances but a title change is not activity.
+    clock = 9999
+    const changed = await store.setThreadTitle(t1.id, 'Renamed thread')
+    expect(changed).toBe(true)
+
+    const t1After = store.snapshot().threads.find((t) => t.id === t1.id)
+    expect(t1After?.title).toBe('Renamed thread')
+    expect(t1After?.lastActiveAt).toBe(1100) // NOT bumped to 9999 — no reorder
+    expect(t1After?.sessionId).toBe('s1') // preserved
+    // Order unchanged: t2 (1200) still ahead of t1 (1100); t2's pin flag intact.
+    expect(store.snapshot().threads.map((t) => t.id)).toEqual([t2.id, t1.id])
+    expect(store.snapshot().threads.find((t) => t.id === t2.id)?.pinned).toBe(true)
+  })
+
+  it('setThreadTitle is a no-op (returns false, no write) for an unknown id or unchanged title', async () => {
+    const writes: string[] = []
+    const store = new MetadataStore({
+      filePath: join(dir, 'set-title-noop.json'),
+      writeFile: async (_p, data) => {
+        writes.push(data)
+      },
+      rename: async () => {},
+    })
+    await store.load()
+    const ws = await store.upsertWorkspace({ dir: '/proj/noop' })
+    const t = await store.upsertThread({ workspaceId: ws.id, title: 'Same' })
+    const writesAfterSetup = writes.length
+
+    expect(await store.setThreadTitle('no-such-thread', 'X')).toBe(false)
+    expect(await store.setThreadTitle(t.id, 'Same')).toBe(false) // unchanged → absorbs the echo
+    expect(writes.length).toBe(writesAfterSetup) // neither no-op wrote to disk
+  })
+
   it('sets a Thread title by id (auto-title capture) preserving session + createdAt', async () => {
     // The `session_info_update` path (main's recordThreadTitle) upserts { id, workspaceId,
     // title } onto an existing bound Thread — the title must land WITHOUT dropping its

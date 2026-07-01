@@ -11,6 +11,18 @@ import type { ThreadMeta, WorkspaceMeta, WorkspaceThreads } from '../../shared/i
  * seam (deps) so tests run over a temp-dir file without touching real `userData`,
  * mirroring the fs-read/fs-write handlers. A corrupt or missing file degrades to
  * empty state — never a throw — so a bad index can't wedge launch.
+ *
+ * SEAM CONTRACT (ADR-0005 hardening): this class is the ONLY reader/writer of the
+ * metadata file. No other module may derive its path or touch it directly — the
+ * `userData` path is single-sourced in `src/main/index.ts` and injected here. Keep
+ * it that way so the JSON→SQLite swap (ADR-0005 defers it) stays a drop-in: swap
+ * this class's body behind the same public methods + injected `deps`.
+ *
+ * SCHEMA VERSIONING: the file is a versioned envelope
+ * (`{ schemaVersion, workspaces, threads }`). Legacy files predate the envelope and
+ * are read as v1. A file whose version is NEWER than this build FAILS CLOSED: we
+ * refuse to load it AND refuse to overwrite it (see `load`/`persist`), so an older
+ * build can never atomically wipe history written by a newer one.
  */
 
 /**
@@ -25,6 +37,25 @@ export type ThreadRecord = ThreadMeta
 export interface MetadataSnapshot {
   workspaces: WorkspaceRecord[]
   threads: ThreadRecord[]
+}
+
+/**
+ * The on-disk schema version of the metadata envelope. Bump ONLY on a
+ * backward-incompatible layout change, and add a migration branch in `load()`
+ * for the older version(s). A file with a HIGHER version than this constant is
+ * refused (fail-closed) rather than migrated down.
+ */
+export const METADATA_SCHEMA_VERSION = 1
+
+/**
+ * The persisted envelope: the flat index wrapped with its `schemaVersion`.
+ * `workspaces`/`threads` are typed `unknown` because `load()` must tolerate an
+ * arbitrary/corrupt shape before its per-record guards run.
+ */
+interface PersistedIndex {
+  schemaVersion?: number
+  workspaces?: unknown
+  threads?: unknown
 }
 
 /** Upsert a Workspace by its `dir` (the natural key); mints `id` when new. */
@@ -69,6 +100,13 @@ export class MetadataStore {
   private readonly now: () => number
   private readonly mintId: () => string
   private state: MetadataSnapshot = { workspaces: [], threads: [] }
+  /**
+   * Set when `load()` saw a file written by a NEWER schema version. While locked,
+   * `persist()` is a no-op so we never overwrite (and thus destroy) data this
+   * build can't safely parse. Exposed via `isLocked()` so the caller can surface
+   * an honest "upgrade to open your data" notice instead of showing empty.
+   */
+  private locked = false
 
   constructor(deps: MetadataStoreDeps) {
     this.filePath = deps.filePath
@@ -84,20 +122,65 @@ export class MetadataStore {
    * a parseable-but-partially-malformed file degrades to its VALID subset —
    * each record is shape-checked so a single bad entry (e.g. a `null` thread)
    * can't later crash `snapshot()`/`groupThreadsByWorkspace`. Never throws.
+   *
+   * FAIL-CLOSED on a future version: if the file's `schemaVersion` is newer than
+   * this build understands, we DON'T degrade to empty (which would let the next
+   * `persist()` atomically overwrite real data) — we lock the store instead, so
+   * the newer file is preserved untouched until an upgraded build reads it.
    */
   async load(): Promise<void> {
+    let raw: string
     try {
-      const raw = await this.readFileFn(this.filePath)
-      const parsed = JSON.parse(raw) as Partial<MetadataSnapshot>
-      this.state = {
-        workspaces: (Array.isArray(parsed.workspaces) ? parsed.workspaces : []).filter(
-          isWorkspaceRecord,
-        ),
-        threads: (Array.isArray(parsed.threads) ? parsed.threads : []).filter(isThreadRecord),
-      }
+      raw = await this.readFileFn(this.filePath)
     } catch {
+      // Missing/unreadable file — the normal first-run case. Start empty; a file
+      // that never existed carries no version, so this is NOT a lock condition.
       this.state = { workspaces: [], threads: [] }
+      return
     }
+
+    let parsed: PersistedIndex
+    try {
+      parsed = JSON.parse(raw) as PersistedIndex
+    } catch {
+      // Unparseable JSON (a torn write or hand-edit) has no trustworthy version.
+      // Degrade to empty as before — locking here would wedge launch forever on
+      // genuine corruption. (Versioned fail-closed applies only to WELL-FORMED
+      // files that declare a newer version.)
+      this.state = { workspaces: [], threads: [] }
+      return
+    }
+
+    // Legacy files predate the envelope and carry no `schemaVersion` — they ARE
+    // v1 by definition, so a missing/non-numeric version reads as the current one.
+    const version =
+      typeof parsed.schemaVersion === 'number' ? parsed.schemaVersion : METADATA_SCHEMA_VERSION
+    if (version > METADATA_SCHEMA_VERSION) {
+      this.locked = true
+      this.state = { workspaces: [], threads: [] }
+      console.error(
+        `[MetadataStore] ${this.filePath} is schemaVersion ${version}; this build supports ` +
+          `${METADATA_SCHEMA_VERSION}. Refusing to load or overwrite it to avoid destroying ` +
+          `data written by a newer version of vibe-mistro. Upgrade to open these Workspaces/Threads.`,
+      )
+      return
+    }
+
+    this.state = {
+      workspaces: (Array.isArray(parsed.workspaces) ? parsed.workspaces : []).filter(
+        isWorkspaceRecord,
+      ),
+      threads: (Array.isArray(parsed.threads) ? parsed.threads : []).filter(isThreadRecord),
+    }
+  }
+
+  /**
+   * Whether the store is locked because the on-disk file was written by a newer
+   * schema version (see `load`). Callers should surface an honest "upgrade to
+   * open your data" notice rather than presenting the empty state as real.
+   */
+  isLocked(): boolean {
+    return this.locked
   }
 
   /**
@@ -182,10 +265,20 @@ export class MetadataStore {
    * index loads empty = silent total data loss). Residual: with a single writer
    * (main) this is safe; truly-concurrent writers would be last-rename-wins —
    * revisit if write frequency rises (TB2). No write queue/mutex for now.
+   *
+   * Wraps the state in the versioned envelope. NO-OP while locked: a store that
+   * loaded a newer-version file must never write, so the newer on-disk data is
+   * preserved (in-memory mutations are intentionally non-durable in that state).
    */
   private async persist(): Promise<void> {
+    if (this.locked) return
     const tmp = `${this.filePath}.tmp`
-    await this.writeFileFn(tmp, JSON.stringify(this.state, null, 2))
+    const envelope: PersistedIndex = {
+      schemaVersion: METADATA_SCHEMA_VERSION,
+      workspaces: this.state.workspaces,
+      threads: this.state.threads,
+    }
+    await this.writeFileFn(tmp, JSON.stringify(envelope, null, 2))
     await this.renameFn(tmp, this.filePath)
   }
 }

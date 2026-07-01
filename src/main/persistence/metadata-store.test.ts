@@ -1,8 +1,8 @@
 import { describe, it, expect, afterAll } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { groupThreadsByWorkspace, MetadataStore } from './metadata-store'
+import { groupThreadsByWorkspace, METADATA_SCHEMA_VERSION, MetadataStore } from './metadata-store'
 
 /**
  * The main-side Workspace/Thread metadata store (ADR-0005 metadata-first lazy
@@ -141,6 +141,62 @@ describe('MetadataStore round-trip', () => {
     // Listing the valid subset must not throw on the dropped malformed records.
     expect(() => groupThreadsByWorkspace(snap)).not.toThrow()
     expect(groupThreadsByWorkspace(snap)[0].threads.map((t) => t.id)).toEqual(['t1'])
+  })
+})
+
+describe('MetadataStore schema versioning (ADR-0005 hardening)', () => {
+  it('persists a versioned envelope: { schemaVersion, workspaces, threads }', async () => {
+    const file = join(dir, 'envelope.json')
+    const store = new MetadataStore({ filePath: file })
+    await store.load()
+    await store.upsertWorkspace({ dir: '/proj/env' })
+
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    expect(raw.schemaVersion).toBe(METADATA_SCHEMA_VERSION)
+    expect(raw.workspaces).toHaveLength(1)
+    expect(Array.isArray(raw.threads)).toBe(true)
+  })
+
+  it('reads a legacy header-less file (no schemaVersion) as the current version', async () => {
+    // Files written before the envelope carry no schemaVersion — they ARE v1.
+    const file = join(dir, 'legacy.json')
+    writeFileSync(
+      file,
+      JSON.stringify({
+        workspaces: [{ id: 'w1', dir: '/legacy', displayName: 'L', lastOpenedAt: 5 }],
+        threads: [
+          { id: 't1', workspaceId: 'w1', sessionId: null, title: null, createdAt: 1, lastActiveAt: 2 },
+        ],
+      }),
+    )
+    const store = new MetadataStore({ filePath: file })
+    await store.load()
+
+    expect(store.isLocked()).toBe(false)
+    expect(store.snapshot().workspaces.map((w) => w.id)).toEqual(['w1'])
+    expect(store.snapshot().threads.map((t) => t.id)).toEqual(['t1'])
+  })
+
+  it('FAILS CLOSED on a newer schemaVersion: loads empty, locks, and never overwrites the file', async () => {
+    // The crux safety property: an older build must not atomically wipe history
+    // written by a newer one (which the pre-versioning degrade-to-empty would).
+    const file = join(dir, 'future.json')
+    const future = JSON.stringify({
+      schemaVersion: METADATA_SCHEMA_VERSION + 99,
+      workspaces: [{ id: 'wFuture', dir: '/future', displayName: 'F', lastOpenedAt: 9, brandNew: true }],
+      threads: [],
+    })
+    writeFileSync(file, future)
+    const store = new MetadataStore({ filePath: file })
+    await store.load()
+
+    // Refused to load the unknown-future shape — but LOCKED, not silently empty.
+    expect(store.isLocked()).toBe(true)
+    expect(store.snapshot()).toEqual({ workspaces: [], threads: [] })
+
+    // A subsequent write is a NO-OP: the newer on-disk file is preserved byte-for-byte.
+    await store.upsertWorkspace({ dir: '/proj/should-not-persist' })
+    expect(readFileSync(file, 'utf8')).toBe(future)
   })
 })
 

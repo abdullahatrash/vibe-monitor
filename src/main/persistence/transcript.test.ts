@@ -8,12 +8,17 @@ import {
   parseTranscript,
   resolvePermissionEntry,
   sessionIdFromPayload,
+  TRANSCRIPT_SCHEMA_VERSION,
   TranscriptStore,
+  transcriptVersionOf,
   turnCompleteEntry,
   turnErrorEntry,
   userPromptEntry,
   type TranscriptEntry,
 } from './transcript'
+
+/** The version-header line every fresh log starts with (see TRANSCRIPT_SCHEMA_VERSION). */
+const HEADER_LINE = `{"t":"__transcript_header","v":${TRANSCRIPT_SCHEMA_VERSION}}`
 
 /**
  * The main-side per-Thread JSONL transcript (ADR-0005: vibe owns agent context,
@@ -31,12 +36,15 @@ function storeAt(): TranscriptStore {
 }
 
 describe('TranscriptStore append', () => {
-  it('appends a user-prompt entry to <threadId>.jsonl', async () => {
+  it('writes a version header then appends a user-prompt entry to <threadId>.jsonl', async () => {
     const store = storeAt()
     await store.append('thread-up', { t: 'user-prompt', id: 'u1', text: 'hello' })
 
     const raw = readFileSync(join(dir, 'thread-up.jsonl'), 'utf8')
-    expect(raw).toBe('{"t":"user-prompt","id":"u1","text":"hello"}\n')
+    // Line 1 is the schema-version header; the conversation entry follows it.
+    expect(raw).toBe(`${HEADER_LINE}\n{"t":"user-prompt","id":"u1","text":"hello"}\n`)
+    // read() skips the header and returns just the conversation entry.
+    expect(await store.read('thread-up')).toEqual([{ t: 'user-prompt', id: 'u1', text: 'hello' }])
   })
 
   it('appends acp-event then resolve-permission in order, append-only across turns', async () => {
@@ -55,6 +63,7 @@ describe('TranscriptStore append', () => {
 
     const lines = readFileSync(join(dir, `${id}.jsonl`), 'utf8').trimEnd().split('\n')
     expect(lines).toEqual([
+      HEADER_LINE, // written once, as line 1, before the first entry
       '{"t":"user-prompt","id":"u1","text":"go"}',
       '{"t":"acp-event","payload":{"method":"session/update"}}',
       '{"t":"resolve-permission","requestId":7,"optionId":"allow","name":"Allow"}',
@@ -112,6 +121,46 @@ describe('TranscriptStore read / parseTranscript', () => {
 
     const read = await store.read(id)
     expect(read).toEqual([{ t: 'user-prompt', id: 'u1', text: 'hi' }])
+  })
+})
+
+describe('TranscriptStore schema versioning (ADR-0005 hardening)', () => {
+  it('writes the header exactly once, not before every append', async () => {
+    const store = storeAt()
+    const id = 'thread-header-once'
+    await store.append(id, { t: 'user-prompt', id: 'u1', text: 'a' })
+    await store.append(id, { t: 'user-prompt', id: 'u2', text: 'b' })
+
+    const lines = readFileSync(join(dir, `${id}.jsonl`), 'utf8').trimEnd().split('\n')
+    expect(lines.filter((l) => l === HEADER_LINE)).toHaveLength(1)
+    expect(lines[0]).toBe(HEADER_LINE) // and it's line 1
+  })
+
+  it('does NOT prepend a header to a legacy header-less log (restart-safe)', async () => {
+    // A log written before versioning starts with a real entry, not a header.
+    // Re-opening and appending must leave it header-less (it reads back as v1),
+    // never inject a header into the MIDDLE of the file.
+    const id = 'thread-legacy'
+    const path = join(dir, `${id}.jsonl`)
+    appendFileSync(path, '{"t":"user-prompt","id":"old","text":"pre-versioning"}\n')
+
+    const store = storeAt() // fresh instance: header fast-path set is empty
+    await store.append(id, { t: 'user-prompt', id: 'new', text: 'after upgrade' })
+
+    const lines = readFileSync(path, 'utf8').trimEnd().split('\n')
+    expect(lines).toEqual([
+      '{"t":"user-prompt","id":"old","text":"pre-versioning"}',
+      '{"t":"user-prompt","id":"new","text":"after upgrade"}',
+    ])
+    expect(transcriptVersionOf(readFileSync(path, 'utf8'))).toBe(1)
+  })
+
+  it('transcriptVersionOf reads the header version, or 1 for a legacy log', () => {
+    expect(transcriptVersionOf(`${HEADER_LINE}\n{"t":"turn-complete"}\n`)).toBe(
+      TRANSCRIPT_SCHEMA_VERSION,
+    )
+    expect(transcriptVersionOf('{"t":"user-prompt","id":"u1","text":"hi"}\n')).toBe(1)
+    expect(transcriptVersionOf('')).toBe(1)
   })
 })
 
@@ -212,9 +261,14 @@ describe('TranscriptStore serializes concurrent appends (M1)', () => {
     }
     await tail
 
-    expect(written.map((l) => (JSON.parse(l) as { text: string }).text)).toEqual(
-      Array.from({ length: 10 }, (_, i) => String(i)),
-    )
+    // Ignore the one-time version header (not a conversation entry); the
+    // user-prompt entries must land in strict call order.
+    expect(
+      written
+        .map((l) => JSON.parse(l) as { t: string; text?: string })
+        .filter((e) => e.t === 'user-prompt')
+        .map((e) => e.text),
+    ).toEqual(Array.from({ length: 10 }, (_, i) => String(i)))
   })
 
   it('preserves order with the real fs writer over a temp dir (mirrors production concurrency)', async () => {

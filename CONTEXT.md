@@ -12,7 +12,16 @@ _Avoid_: project, folder, repo (a workspace need not be a git repo).
 **Thread**:
 A user-facing conversation with the agent inside a Workspace. Maps one-to-one to an ACP session,
 but is our own domain concept (own id, name, persistence). A Workspace can have many Threads.
+A Thread starts as a Draft and becomes durable only on its first prompt (see **Draft Thread**).
 _Avoid_: chat, conversation, session (in the UI/app layer).
+
+**Draft Thread**:
+A newly created Thread that exists only in the renderer and is persisted nowhere. A Thread holds its
+minted id from creation, but is written to disk (metadata + transcript) only on its **first prompt** —
+the single event that makes a Thread durable. Abandoning a Draft leaves zero residue; the persisted
+Thread list contains only prompted Threads. Applies equally to both entry points — the New Thread
+button and opening a Workspace.
+_Avoid_: unsaved / temporary / phantom / ephemeral thread.
 
 **ACP session**:
 The protocol-level handle returned by `session/new` and addressed by `session/*` methods. Lives only

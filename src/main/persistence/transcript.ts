@@ -14,8 +14,51 @@ import type { TranscriptEntry } from '../../shared/ipc'
  * `TranscriptEntry` (the entry union, mirroring the reducer's `ConversationAction`
  * inputs) lives in `src/shared/ipc.ts` so the renderer replay can name it across
  * the composite project boundary; re-exported here for the main-side writers.
+ *
+ * SEAM CONTRACT (ADR-0005 hardening): this class is the ONLY reader/writer of the
+ * transcript files. No other module may build a `<threadId>.jsonl` path or touch
+ * that dir — the `userData` transcripts dir is single-sourced in `src/main/index.ts`
+ * and injected here. Keep it that way so the JSONL→SQLite swap stays a drop-in.
+ *
+ * SCHEMA VERSIONING: each log's FIRST line is a version header (see
+ * `TRANSCRIPT_SCHEMA_VERSION`), so a future reader/migrator can tell which format
+ * a file is in. Legacy logs predate the header and are read as v1. The header is
+ * NOT a conversation entry — replay skips it (`isTranscriptEntry` rejects it).
  */
 export type { TranscriptEntry }
+
+/**
+ * The on-disk format version, written as the first line of every new transcript.
+ * Bump ONLY on a backward-incompatible change to the entry format, and teach the
+ * reader/migrator to branch on the header version. A log with no header is v1.
+ */
+export const TRANSCRIPT_SCHEMA_VERSION = 1
+
+/** The header line's discriminator tag. Deliberately outside the entry union so
+ * `isTranscriptEntry` drops it and replay never sees it as a conversation event. */
+const TRANSCRIPT_HEADER_TAG = '__transcript_header'
+
+/** The version-header record written as line 1 of a fresh log. */
+function transcriptHeader(): { t: typeof TRANSCRIPT_HEADER_TAG; v: number } {
+  return { t: TRANSCRIPT_HEADER_TAG, v: TRANSCRIPT_SCHEMA_VERSION }
+}
+
+/**
+ * The format version of a raw transcript: the `v` from its header line, or `1`
+ * for a legacy header-less log. For future migrators (JSONL→SQLite) to branch on;
+ * `parseTranscript` itself is version-agnostic today (only v1 exists).
+ */
+export function transcriptVersionOf(raw: string): number {
+  const first = raw.split('\n', 1)[0]
+  if (!first) return TRANSCRIPT_SCHEMA_VERSION
+  try {
+    const parsed = JSON.parse(first) as { t?: unknown; v?: unknown }
+    if (parsed.t === TRANSCRIPT_HEADER_TAG && typeof parsed.v === 'number') return parsed.v
+  } catch {
+    // First line isn't a header (legacy log starts with a real entry) — v1.
+  }
+  return TRANSCRIPT_SCHEMA_VERSION
+}
 
 /** The user's prompt, teed at `sendPrompt` — mirrors the `send-prompt` action. */
 export function userPromptEntry(id: string, text: string): TranscriptEntry {
@@ -112,6 +155,13 @@ export class TranscriptStore {
    * scrambles, or a `tool_call_update` folds before its `tool_call`).
    */
   private readonly tails = new Map<string, Promise<void>>()
+  /**
+   * Threads whose header we've already ensured this session (so we don't re-check
+   * on every append). Cleared on `delete` so a re-created log gets a fresh header.
+   * Restart-safe because `ensureHeader` checks the file's CONTENTS, not this set,
+   * to decide whether to write — the set is only a per-session fast-path.
+   */
+  private readonly headerEnsured = new Set<string>()
 
   constructor(deps: TranscriptDeps) {
     this.dir = deps.dir
@@ -136,12 +186,45 @@ export class TranscriptStore {
     const path = this.pathFor(threadId)
     const line = `${JSON.stringify(entry)}\n`
     const prev = this.tails.get(threadId) ?? Promise.resolve()
-    const next = prev.then(() => this.appendFn(path, line)).catch(() => {
-      // A transcript write failure is non-fatal — the conversation proceeds, and
-      // the chain stays alive (resolved) so later appends still run in order.
-    })
+    const next = prev
+      // Ensure the version header is line 1 BEFORE this entry, inside the same
+      // serialized chain so it can't race a concurrent append.
+      .then(() => this.ensureHeader(threadId, path))
+      .then(() => this.appendFn(path, line))
+      .catch(() => {
+        // A transcript write failure is non-fatal — the conversation proceeds, and
+        // the chain stays alive (resolved) so later appends still run in order.
+      })
     this.tails.set(threadId, next)
     return next
+  }
+
+  /**
+   * Guarantee a fresh log's FIRST line is the version header, exactly once per
+   * file. Restart-safe: it checks the file's CURRENT contents rather than an
+   * in-memory "first append" flag, so after a restart an existing non-empty log
+   * (header, or a legacy header-less v1 log) is left intact and only a brand-new
+   * or empty file gets the header. Self-guarded: a header read/write failure is
+   * swallowed so it can never cost the entry that follows it — a missing header
+   * simply reads back as v1.
+   */
+  private async ensureHeader(threadId: string, path: string): Promise<void> {
+    if (this.headerEnsured.has(threadId)) return
+    this.headerEnsured.add(threadId)
+    try {
+      let existing = ''
+      try {
+        existing = await this.readFileFn(path)
+      } catch {
+        existing = '' // ENOENT — a brand-new log
+      }
+      if (existing.length === 0) {
+        await this.appendFn(path, `${JSON.stringify(transcriptHeader())}\n`)
+      }
+    } catch {
+      // Header write failed — proceed to append the entry regardless. Losing the
+      // header (reads back as v1) must never lose the conversation line.
+    }
   }
 
   /**
@@ -175,6 +258,8 @@ export class TranscriptStore {
    */
   async delete(threadId: string): Promise<void> {
     this.tails.delete(threadId)
+    // Forget the header fast-path so a re-created log for this id re-writes it.
+    this.headerEnsured.delete(threadId)
     try {
       await this.unlinkFn(this.pathFor(threadId))
     } catch {
@@ -188,6 +273,10 @@ export class TranscriptStore {
  * trailing line. A crash mid-append (or a torn write) can leave the final line
  * truncated; we parse each line independently and SKIP any that don't yield a
  * well-formed entry rather than throwing — so the valid prefix always replays.
+ *
+ * The version-header line (present on logs written since the versioning change)
+ * is not a conversation entry, so `isTranscriptEntry` drops it here — replay is
+ * unaffected. Read the version separately via `transcriptVersionOf` if needed.
  */
 export function parseTranscript(raw: string): TranscriptEntry[] {
   const entries: TranscriptEntry[] = []

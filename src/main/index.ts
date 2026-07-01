@@ -38,7 +38,6 @@ import {
   type StartThreadResult,
   type ThreadAgentControls,
   type ThreadConnection,
-  type ThreadInfo,
   type ThreadStatusEvent,
 } from '../shared/ipc'
 import { detectVibe } from './vibe-detect'
@@ -264,8 +263,8 @@ let transcriptStore: TranscriptStore | null = null
  * for chokepoints with no sessionId in hand (e.g. `respondPermission`).
  *
  * Residual (documented): both routes miss during the brief window after
- * `session/new` returns but before `recordThread` persists the sessionId +
- * seeds the map — a `session/update` streamed THEN (notably the immediate
+ * `session/new` returns but before the first-prompt bind (`mintAndBind`) persists
+ * the sessionId + seeds the map — a `session/update` streamed THEN (notably the immediate
  * `available_commands_update`, not rendered this slice) is dropped from replay.
  * The Thread title is unaffected — it's also persisted in the metadata record.
  */
@@ -280,7 +279,7 @@ function threadIdForTee(agentId: string, sessionId?: string | null): string | nu
 
 /**
  * Tee one conversation INPUT to the active Thread's JSONL (ADR-0005). Best-effort
- * and fire-and-forget, guarded exactly like `recordThread`: an absent store or an
+ * and fire-and-forget, guarded exactly like `recordWorkspaceOpen`: an absent store or an
  * unresolved Thread id skips the write; the append itself swallows I/O errors.
  */
 function teeTranscript(threadId: string | null, entry: TranscriptEntry): void {
@@ -304,43 +303,42 @@ function bestEffortCloseFor(threadId: string): (() => Promise<void>) | undefined
   }
 }
 
-/** Our minted handles for a connected Thread (TB5) — carried to the renderer. */
-interface ThreadIds {
-  threadId: string
-  workspaceId: string
-}
-
 /**
- * Persist that this Workspace was opened and a Thread minted, and RETURN our
- * durable Thread + Workspace ids (TB5) so the renderer can later create drafts
- * and bind-on-first-prompt under them. The Thread id is distinct from its ACP
- * `sessionId` (the resume cursor for a reopen, TB3). Best-effort: a metadata
- * write must never break the live connect flow — on a store failure we synthesize
- * ids so the live conversation still works (the binding upsert simply retries).
- * Also seeds the `agentId -> threadId` transcript bridge so the agent's streamed
- * events tee to this Thread.
+ * Build a connection for a fresh DRAFT Thread (ADR-0011): mint our durable Thread
+ * id but open NO ACP session and persist NO record. The Thread stays a renderer-
+ * only draft until its FIRST prompt, which drives `session/new` + the persist via
+ * `ensureBoundSession`/`mintAndBind`. This is the fix for the empty-Thread bug —
+ * opening a Workspace no longer records a Thread nobody prompted.
+ *
+ * Mirrors `continueConnection`'s session-less shape (null session, null controls
+ * until the first prompt binds — consistent with the Continue flow); the only
+ * difference is a brand-new minted id rather than a resolved existing record. Also
+ * seeds the `agentId -> threadId` transcript bridge so a session-less lifecycle
+ * event tees to this Thread. `workspaceId` is the persisted Workspace id (from
+ * `recordWorkspaceOpen`) so the first-prompt `upsertThread` records under the real
+ * Workspace; a synthesized id is used only in degraded mode (no store), where the
+ * draft never persists anyway.
  */
-async function recordThread(agentId: string, workspaceDir: string, thread: ThreadInfo): Promise<ThreadIds> {
-  if (metadataStore) {
-    try {
-      const ws = await metadataStore.upsertWorkspace({
-        dir: workspaceDir,
-        displayName: basename(workspaceDir),
-      })
-      const record = await metadataStore.upsertThread({
-        workspaceId: ws.id,
-        sessionId: thread.sessionId,
-        title: thread.title,
-      })
-      transcriptThreads.set(agentId, record.id)
-      return { threadId: record.id, workspaceId: ws.id }
-    } catch {
-      // A persistence failure is non-fatal — fall through to synthesized ids.
-    }
+function draftConnection(
+  agentId: string,
+  agent: WorkspaceAgent,
+  workspaceId: string | null,
+): ThreadConnection {
+  const threadId = randomUUID()
+  transcriptThreads.set(agentId, threadId)
+  return {
+    agentId,
+    workspaceDir: agent.workspaceDir,
+    sessionId: null,
+    title: null,
+    modes: null,
+    models: null,
+    reasoningEffort: null,
+    threadId,
+    workspaceId: workspaceId ?? randomUUID(),
+    signOutAvailable: agent.signOutAvailable,
+    authMethods: agent.authMethods,
   }
-  const ids = { threadId: randomUUID(), workspaceId: randomUUID() }
-  transcriptThreads.set(agentId, ids.threadId)
-  return ids
 }
 
 /**
@@ -385,38 +383,24 @@ async function bindThreadSession(
 
 /**
  * Persist that a Workspace was opened, BEFORE the agent starts, so even a
- * not-signed-in Workspace lists. Best-effort exactly like `recordThread`: a
- * failing `persist()` (disk full / read-only userData) must NEVER reject the
- * connect flow — the renderer's onClick has no `.catch`, so a throw here would
- * wedge the UI on "Launching…".
+ * not-signed-in Workspace lists. Returns the persisted Workspace id (so a fresh
+ * draft's first-prompt `upsertThread` can record its Thread under the real
+ * Workspace), or `null` with no store / on failure. Best-effort: a failing
+ * `persist()` (disk full / read-only userData) must NEVER reject the connect
+ * flow — the renderer's onClick has no `.catch`, so a throw here would wedge the
+ * UI on "Launching…".
  */
-async function recordWorkspaceOpen(workspaceDir: string): Promise<void> {
-  if (!metadataStore) return
+async function recordWorkspaceOpen(workspaceDir: string): Promise<string | null> {
+  if (!metadataStore) return null
   try {
-    await metadataStore.upsertWorkspace({
+    const ws = await metadataStore.upsertWorkspace({
       dir: workspaceDir,
       displayName: basename(workspaceDir),
     })
+    return ws.id
   } catch {
-    // A persistence failure is non-fatal — the connect flow proceeds.
-  }
-}
-
-/** Build the renderer-facing connection (carries our minted ids + sign-out gate). */
-function connectionFor(
-  agentId: string,
-  agent: WorkspaceAgent,
-  thread: ThreadInfo,
-  ids: ThreadIds,
-): ThreadConnection {
-  return {
-    agentId,
-    workspaceDir: agent.workspaceDir,
-    ...thread,
-    threadId: ids.threadId,
-    workspaceId: ids.workspaceId,
-    signOutAvailable: agent.signOutAvailable,
-    authMethods: agent.authMethods,
+    // A persistence failure is non-fatal — the connect flow proceeds (degraded).
+    return null
   }
 }
 
@@ -645,7 +629,8 @@ function registerIpc(): void {
 
     // Persist the Workspace open up front (ADR-0005), so even a not-signed-in
     // Workspace shows in the cold list. Best-effort — must not reject connect.
-    await recordWorkspaceOpen(args.workspaceDir)
+    // Its id seeds a fresh draft's first-prompt upsert (below).
+    const workspaceId = await recordWorkspaceOpen(args.workspaceDir)
 
     try {
       // Idempotent: spawns + handshakes a fresh agent, no-ops a warm one (already
@@ -661,34 +646,33 @@ function registerIpc(): void {
 
       // Continue from the cold launch list (TB4 #33): connect to the EXISTING
       // Thread (its first prompt drives the lazy `session/load` resume) without
-      // opening — and persisting — a throwaway empty Thread. Falls through to the
-      // normal open when the record can't be resolved (degraded / no store).
+      // opening — and persisting — a throwaway empty Thread. Falls through to a
+      // fresh draft when the record can't be resolved (degraded / no store).
       if (args.continueThreadId) {
         const continued = continueConnection(agentId, agent, args.continueThreadId)
         if (continued) return { ok: true, thread: continued }
       }
 
-      const thread = await agent.openThread()
-      const ids = await recordThread(agentId, args.workspaceDir, thread)
-      return { ok: true, thread: connectionFor(agentId, agent, thread, ids) }
+      // Open a fresh DRAFT Thread (ADR-0011): NO `session/new`, NO empty record.
+      // The draft binds a session + persists only on its first prompt, so clicking
+      // a Workspace never leaves a Thread nobody prompted. The `agent.start()`
+      // above still surfaces a not-signed-in / handshake error via the catch.
+      return { ok: true, thread: draftConnection(agentId, agent, workspaceId) }
     } catch (err) {
       return threadFailureResult(agentId, agent, err)
     }
   })
 
   ipcMain.handle(IPC.openThread, async (_event, args: OpenThreadArgs): Promise<StartThreadResult> => {
-    // Open a Thread on an agent already started + signed in (after sign-in or an
-    // in-place re-auth). Reuses the retained agent — no re-spawn.
+    // Land in a fresh DRAFT Thread on an agent already started + signed in (after
+    // sign-in or an in-place re-auth). Reuses the retained agent — no re-spawn — and,
+    // like Workspace-open, opens NO session and persists NO record until the first
+    // prompt (ADR-0011). Records the Workspace open to learn its id for that upsert.
     const agent = pool.get(args.agentId)
     if (!agent) return { ok: false, kind: 'error', error: `No active agent for id ${args.agentId}.`, hint: null }
-    pool.touch(args.agentId) // opening a Thread is activity — outrank idle peers (TB5 #50)
-    try {
-      const thread = await agent.openThread()
-      const ids = await recordThread(args.agentId, agent.workspaceDir, thread)
-      return { ok: true, thread: connectionFor(args.agentId, agent, thread, ids) }
-    } catch (err) {
-      return threadFailureResult(args.agentId, agent, err)
-    }
+    pool.touch(args.agentId) // landing in a Thread is activity — outrank idle peers (TB5 #50)
+    const workspaceId = await recordWorkspaceOpen(agent.workspaceDir)
+    return { ok: true, thread: draftConnection(args.agentId, agent, workspaceId) }
   })
 
   ipcMain.handle(

@@ -867,6 +867,13 @@ body {
   border: 1px solid var(--border);
 }
 
+/* Interrupt (#103): an outline action distinct from the primary Send. */
+.btn--stop {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
 .recover {
   align-self: flex-start;
   background: transparent;

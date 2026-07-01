@@ -848,6 +848,19 @@ describe('WorkspaceAgent.prompt()', () => {
     const reply = sent(fake).find((m) => m.id === 0 && m.result !== undefined)
     expect(reply?.result).toEqual({ content: 'file body' })
   })
+
+  it('cancel() writes a `session/cancel` NOTIFICATION (no id) with {sessionId} (#103)', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connect(fake)
+
+    agent.cancel(SESSION_ID)
+
+    const cancel = sent(fake).find((m) => m.method === 'session/cancel')
+    expect(cancel).toBeDefined()
+    expect(cancel?.params?.sessionId).toBe(SESSION_ID)
+    // It's a NOTIFICATION (acp-capture §12) — no JSON-RPC id, no response expected.
+    expect(cancel?.id).toBeUndefined()
+  })
 })
 
 // --- TB6: best-effort session close (#35) -----------------------------------

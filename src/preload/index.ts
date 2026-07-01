@@ -3,6 +3,7 @@ import {
   IPC,
   type AcpEvent,
   type AgentEvictedEvent,
+  type CancelTurnArgs,
   type DeleteThreadResult,
   type GitBranchesArgs,
   type GitBranchesResult,
@@ -50,6 +51,7 @@ const api = {
     ipcRenderer.invoke(IPC.sendPrompt, args),
   respondPermission: (args: RespondPermissionArgs): Promise<void> =>
     ipcRenderer.invoke(IPC.respondPermission, args),
+  cancelTurn: (args: CancelTurnArgs): Promise<void> => ipcRenderer.invoke(IPC.cancelTurn, args),
   signIn: (args: SignInArgs): Promise<SignInResult> => ipcRenderer.invoke(IPC.signIn, args),
   signOut: (args: SignOutArgs): Promise<SignOutResult> => ipcRenderer.invoke(IPC.signOut, args),
   checkAuthStatus: (args: CheckAuthStatusArgs): Promise<CheckAuthStatusResult> =>

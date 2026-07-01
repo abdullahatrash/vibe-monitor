@@ -645,6 +645,17 @@ export class WorkspaceAgent extends EventEmitter {
   }
 
   /**
+   * Cancel the active turn on a Thread (#103, acp-capture §12). `session/cancel`
+   * is a NOTIFICATION — the in-flight `session/prompt` then resolves with
+   * `stopReason:"cancelled"` (handled by the normal turn-complete path). Fire-and-
+   * forget: no-op if the agent isn't initialized (nothing is streaming).
+   */
+  cancel(sessionId: string): void {
+    if (!this.initialized) return
+    this.client.notify('session/cancel', { sessionId })
+  }
+
+  /**
    * Forward every server-initiated request for transparency, and serve the
    * file-I/O requests Vibe delegates to us so turns don't stall: `fs/read` for
    * reads and `fs/write` for approved writes (docs/acp-capture.md §5, §7).

@@ -589,6 +589,21 @@ export function Conversation({
           >
             📎
           </button>
+          {state.isProcessing && boundSessionId && (
+            // Interrupt the active turn (#103, ADR-0009): fire `session/cancel`. The
+            // turn then resolves `cancelled`, which the existing turn-complete path
+            // flips `isProcessing` off on — no new local state needed here. Gated on
+            // `boundSessionId` so it only shows once there's a turn it can cancel (a
+            // draft's first prompt is pre-bind for its session/new round-trip).
+            <button
+              className="btn btn--stop"
+              onClick={() =>
+                void window.api.cancelTurn({ agentId: thread.agentId, sessionId: boundSessionId })
+              }
+            >
+              ⏹ Stop
+            </button>
+          )}
           <button
             className="btn"
             onClick={() => void send()}

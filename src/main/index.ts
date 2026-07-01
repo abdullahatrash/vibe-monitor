@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import {
   IPC,
+  type CancelTurnArgs,
   type DeleteThreadResult,
   type GitBranchesArgs,
   type GitBranchesResult,
@@ -742,6 +743,15 @@ function registerIpc(): void {
     // Clear the Thread's `needsAttention` (#53): the blocking permission is answered.
     emitThreadStatus(threadStatus.resolvePermission(args.agentId, args.requestId))
     agent?.respondPermission(args.requestId, args.optionId)
+  })
+
+  ipcMain.handle(IPC.cancelTurn, (_event, args: CancelTurnArgs) => {
+    // Interrupt the active turn (#103, ADR-0009): resolve the pool agent and fire
+    // the `session/cancel` notification. The cancelled `session/prompt` resolves
+    // via the normal turn-complete path — no new output shape here.
+    if (!args.sessionId) return // an unbound draft has no active turn to cancel
+    const agent = pool.get(args.agentId)
+    agent?.cancel(args.sessionId)
   })
 
   ipcMain.handle(IPC.setActiveAgent, (_event, agentId: string | null) => {

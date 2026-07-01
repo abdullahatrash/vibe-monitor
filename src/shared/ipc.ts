@@ -18,6 +18,13 @@ export const IPC = {
   sendPrompt: 'thread:prompt',
   /** Answer a `session/request_permission` by its JSON-RPC request id. */
   respondPermission: 'permission:respond',
+  /**
+   * Interrupt a Thread's active turn (#103, ADR-0009) — fire the `session/cancel`
+   * NOTIFICATION (acp-capture §12). The in-flight `session/prompt` then RESOLVES
+   * with `stopReason:"cancelled"`, so the existing turn-complete path flips
+   * `isProcessing` off; cancel is a thin outbound control, NOT a new event/output.
+   */
+  cancelTurn: 'thread:cancel',
   /** Drive Vibe's browser sign-in on a not-signed-in agent (`authenticate`). */
   signIn: 'auth:sign-in',
   /** Sign out the agent's session (`_auth/signOut`). */
@@ -435,6 +442,18 @@ export type SendPromptResult =
  * through just as a turn began; the renderer leaves the row in place.
  */
 export type DeleteThreadResult = { ok: true } | { ok: false; reason: 'streaming' }
+
+/**
+ * Interrupt a Thread's active turn (#103, ADR-0009). Fired by the Stop button,
+ * routed to `WorkspaceAgent.cancel` -> `session/cancel` notification. A no-op when
+ * `sessionId` is null (an unbound draft has no active turn to cancel).
+ */
+export interface CancelTurnArgs {
+  /** agent hosting the Thread. */
+  agentId: string
+  /** the Thread's bound ACP session, or null if not yet bound. */
+  sessionId: string | null
+}
 
 /** Reply to an agent `session/request_permission` with the user's choice. */
 export interface RespondPermissionArgs {

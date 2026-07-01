@@ -3,7 +3,8 @@
 > You are picking up an in-flight project. Read this top to bottom once, then keep it open.
 > It tells you **what this is**, **how we work**, **what exists**, **what's next**, and **where the
 > authoritative information lives** (in-repo docs + three local reference repos). Last updated
-> 2026-06-30, `main` @ `7b4ba75`, **444 tests**, **0 open issues** (backlog empty — pick a roadmap item).
+> 2026-07-01, `main` @ `d7a2b64`, **468 tests**, **0 open issues** (backlog empty — pick a roadmap item;
+> the **composer-extras** epic is now in flight — slice 1 shipped, see §5/§6).
 
 ---
 
@@ -22,7 +23,9 @@
   resilience** (#78 preserve failure reason + RPC code + stderr log; #80 a "Check status" re-query
   recovery — static-verified, live re-check smoke still pending), and the full **git/GitHub epic**
   (ADR-0008: a Changes panel = status #84 + diff #85 + commit #86 + branches #87 + gh-PR surfacing #88;
-  #84-86 live-verified, #87-88 static+unit). **Backlog is empty.** Pick a roadmap item (see §6).
+  #84-86 live-verified, #87-88 static+unit), and **composer-extras slice 1** — `/` slash-command
+  autocomplete (#95; PR #96 + scroll-fix #97; **live-verified** in `bun run dev`). **Backlog is empty.**
+  The composer-extras epic is in flight (3 sub-features left; see §6). Pick the next slice or a roadmap item.
 - **How we work:** PRD → tracer-bullet issues → **per-slice agent team** (implement → independent
   verify → adversarial review → fold fixes → **user merges**). TDD, vertical slices. Details in §3.
 
@@ -257,24 +260,53 @@ external `<a target=_blank>`; Create-PR gated on an upstream — never pushes fo
 **live-verified**; `#87-88` static+unit only (live smoke pending). Deferred: multi-repo, PR/issue
 browser, "Ask PR", worktree-per-Thread isolation.
 
+**composer-extras epic — slice 1 (#95; PR #96 + scroll-fix #97)** — `/` slash-command autocomplete in
+the composer. **Renderer-only** (no main/IPC/protocol change): the agent's commands already arrive on the
+`available_commands_update` stream and are folded into the conversation reducer's `state.availableCommands`
+(pre-existing, "stored, not rendered") — this slice renders them. Load-bearing logic is the pure, DOM-free
+`src/renderer/src/conversation/command-autocomplete.ts` (+ 24 tests): `getCommandQuery` (trigger =
+`/`-token at input/line start, caret-after-`/`, whitespace closes it, caret clamped), `filterCommands`
+(prefix-then-substring, case-insensitive), `applyCommand` (splice `/<name> `, keep text after caret),
+`moveSelection` (wrapping). `Conversation.tsx` keeps only thin popover JSX + keyboard/caret wiring:
+Enter/Tab accept (intercepted **only while open**, so Enter still sends when closed), ↑/↓ wrap with
+`scrollIntoView({block:'nearest'})` (#97), Esc dismisses with a **per-token latch** (the escape hatch for
+sending literal `/text`), mousedown-accept beats blur, rAF caret restore, draft + localStorage draft (#60)
+kept in sync. **Live-verified** in `bun run dev`. This slice only INSERTS the `/name ` text — command
+*execution* is deferred. See the `composer-extras-epic` memory + §6 for the remaining sub-features.
+
 ---
 
 ## 6. What's next
 
-**Backlog is empty** — the Agent-controls, sign-in, and git/GitHub epics are all fully shipped. The
-next move is a roadmap pick; the user chose "verify + housekeeping first" (this refresh) before a
-new feature.
+**Backlog is empty (no open issues)** — the Agent-controls, sign-in, and git/GitHub epics are fully
+shipped, and the **composer-extras epic is in flight** (slice 1 `/` autocomplete shipped, #95/#96/#97).
+The next move is the epic's next slice or a fresh roadmap pick.
+
+**Composer-extras — remaining sub-features (own grilled slices; see the `composer-extras-epic` memory
+for the protocol-readiness details).** Each needs groundwork BEFORE code:
+- **Image attachments/paste** — vibe-acp advertises `promptCapabilities.image:true`+`embeddedContext:true`
+  but the image content-block **wire shape is NOT in `docs/acp-capture.md`** (only `{type:text}` seen;
+  errs -31007/-31008 hint at handling) → **spike the block shape first**, then extend `SendPromptArgs`
+  (main+ipc+preload) + composer paste/drop/picker UI.
+- **Queue-vs-steer follow-ups** — `session/cancel` + second-prompt-mid-turn shapes **unverified** in
+  capture; genuine design fork (queue vs steer vs interrupt) → **ADR + cancel/steer spike first**.
+  CodexMonitor does BOTH (persisted default + per-message override key; `turn/start|steer|interrupt`).
+  Today the composer just DISABLES while `isProcessing` — no second prompt is possible yet.
+- **`$` skills / `@` file-path autocomplete** — `$`=skills (CodexMonitor `skills/list`; mechanism NOT in
+  vibe-acp capture — uncertain); `@`=file paths, **blocked on the unbuilt file tree** (below). Command
+  *execution* (running `/name` vs. inserting text) is also deferred — slice 1 only inserts `/name `.
 
 **Still-pending verification:** (a) the **sign-in re-check (#80)** has not been smoked live (needs a
 real sign-out → "Check status" → out-of-band `vibe` CLI sign-in → "Check status" lands connected);
 (b) **git branches (#87)** and **gh PR surfacing (#88)** shipped static+unit-verified only — smoke
 them live (branch list/switch/create; PR chip + Create-PR gated on an existing upstream). Git
-status/diff/commit (#84-86) and Agent-controls ARE live-verified. Do these smokes when convenient.
+status/diff/commit (#84-86), Agent-controls, and composer-extras slice 1 (#95) ARE live-verified. Do
+these smokes when convenient.
 
 **Deferred roadmap (no issues yet — propose as a PRD / grill-with-docs → tracer-bullet issues when the
 user picks one up; rough CodexMonitor build order):**
-- **Composer extras** — image attachments/paste, queue-vs-steer follow-ups, `$`/`/`/`@` autocomplete
-  (model picker + drafts already done).
+- **Composer extras (in flight)** — remaining: image attachments/paste, queue-vs-steer, `$`/`@`
+  autocomplete (see the per-sub-feature gates above; `/` autocomplete + model picker + drafts done).
 - **Git/GitHub follow-ups** (ADR-0008 deferred-tier; v1 = status/diff/commit/branches/gh-PR-surfacing
   shipped) — multi-repo aggregation, a full PR/issue *browser*, "Ask PR", worktree-per-Thread isolation.
 - **File tree + prompt library.**
@@ -312,12 +344,14 @@ user's call; don't just diverge.
 
 ## 8. First moves for the new agent
 
-1. Read this file, then skim `docs/acp-capture.md` and the memory file `vibe-monitor-project.md`.
+1. Read this file, then skim `docs/acp-capture.md` and the `composer-extras-epic` memory (the in-flight
+   epic's decomposition + per-sub-feature protocol readiness).
 2. Confirm the baseline: `cd /Users/abdullahatrash/mistral/vibe-mistro` (on `main`), run the gates
    (`export PATH=...nvm...; bun run lint && bun run typecheck && bun run build && bun run test`) →
-   expect **444 tests green**.
+   expect **468 tests green**.
 3. Check the backlog: `GH_HOST=github.com gh issue list --state open` → expect **empty**. The next move
-   is a roadmap pick (§6) — propose it as a grill-with-docs → PRD → tracer-bullet issues. Verification
+   is the **composer-extras** epic's next slice (image / queue-vs-steer — each needs a spike/ADR first,
+   §6) or a fresh roadmap pick — propose as a grill-with-docs → PRD → tracer-bullet issues. Verification
    debt remains: the #80 sign-in re-check and the #87/#88 git slices haven't been smoked live (§6).
 4. When the user picks a roadmap item (or says "start <N>"), run the **team loop in §3** — manual
    worktree (real `bun install`, NOT a node_modules symlink — §2), implementer agent, your independent

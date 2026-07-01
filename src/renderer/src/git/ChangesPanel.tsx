@@ -1,8 +1,18 @@
 import { useEffect, useState, type JSX } from 'react'
-import { Check, ChevronDown, ChevronRight, GitBranch, GitPullRequest, RefreshCw } from 'lucide-react'
+import {
+  Boxes,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  GitBranch,
+  GitCommitHorizontal,
+  GitPullRequest,
+  Monitor,
+  RefreshCw,
+} from 'lucide-react'
 import type { GhPr, GhPrResult, GitBranch as GitBranchInfo, GitStatus } from '../../../shared/ipc'
 import { cn } from '../lib/utils'
-import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/menu'
+import { Badge, Button, IconButton, Input, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Textarea } from '../ui'
 import { buildChangesView, reconcileUnchecked, type GitFileView } from './status-view'
 import { DiffWorkerProvider } from './DiffWorkerProvider'
 import { DiffView } from './DiffView'
@@ -12,10 +22,10 @@ import { DiffView } from './DiffView'
  * the Workspace's STREAMED git status while it is the ACTIVE one (`isActive`), holds the
  * latest snapshot, and renders the branch header + changed-files list. Clicking a file
  * opens its working-tree diff (#85): the panel has two modes —
- *  - LIST: the narrow (`w-72`) file list + branch header (the #84 view).
+ *  - LIST: the narrow (`w-80`) file list + branch header (the #84 view).
  *  - DIFF: a WIDER (`flex-1`) view of the selected file's diff (`DiffView`), with a
  *    "← Changes" back button. A diff needs width, so the panel widens rather than
- *    cramming a side-by-side into 72px.
+ *    cramming a side-by-side into 80px.
  * The status subscription runs in BOTH modes (the effect is render-mode-independent), so
  * the panel keeps streaming while a diff is open — and if the selected file drops out of
  * the changed set (reverted / committed), the panel falls back to the list.
@@ -28,6 +38,11 @@ import { DiffView } from './DiffView'
  *
  * Degrades to nothing for a non-repo Workspace (`isRepo:false`) or before the first
  * snapshot — "a Workspace need not be a git repo" (CONTEXT.md): no panel, not an error.
+ *
+ * Visuals (#119, ADR-0010): the panel is on the design-system primitives + the warm,
+ * rounded "Environment / Review" aesthetic — Button / Input / Textarea / Badge and the
+ * soft `--border-muted` dividers. The git BEHAVIOUR is untouched (ADR-0008): only the
+ * chrome changed.
  */
 export function ChangesPanel({
   workspaceDir,
@@ -149,36 +164,52 @@ export function ChangesPanel({
   }
 
   return (
-    <aside className="w-72 shrink-0 border-l border-border bg-panel text-text">
-      <div className="flex items-center gap-1.5 border-b border-border px-3 py-2">
+    <aside className="w-80 shrink-0 border-l border-border bg-panel text-text">
+      <div className="flex items-center gap-2 border-b border-border-muted px-3 py-2.5">
         <button
           type="button"
           onClick={() => setCollapsed((c) => !c)}
           title={collapsed ? 'Expand' : 'Collapse'}
           aria-expanded={!collapsed}
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs font-medium"
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left text-sm font-semibold text-text-strong"
         >
           {collapsed ? (
-            <ChevronRight size={14} aria-hidden className="shrink-0 text-muted" />
+            <ChevronRight size={15} aria-hidden className="shrink-0 text-muted" />
           ) : (
-            <ChevronDown size={14} aria-hidden className="shrink-0 text-muted" />
+            <ChevronDown size={15} aria-hidden className="shrink-0 text-muted" />
           )}
           <span>Changes</span>
-          {view.fileCount > 0 && <span className="text-muted">{view.fileCount}</span>}
+          {view.fileCount > 0 && (
+            <Badge variant="outline" className="ml-0.5 rounded-full px-1.5 py-0 text-[11px] tabular-nums text-muted">
+              {view.fileCount}
+            </Badge>
+          )}
         </button>
-        <button
-          type="button"
+        <IconButton
+          size="icon-sm"
           onClick={refresh}
           title="Refresh"
           aria-label="Refresh git status"
-          className="shrink-0 text-muted hover:text-accent-text"
+          className="text-muted"
         >
-          <RefreshCw size={13} aria-hidden />
-        </button>
+          <RefreshCw className="size-3.5" aria-hidden />
+        </IconButton>
       </div>
 
       {!collapsed && (
         <>
+          {/* Environment (#119) — a STATIC placeholder gesturing at the mockup's fuller
+              "Environment / Local / Sources" side-panel (styled chrome, non-functional,
+              like the sidebar's Search/Scheduled/Plugins "Soon" rows). Not wired to
+              anything; the live git surface begins at the branch header below. */}
+          <div className="border-b border-border-muted px-3 py-2.5">
+            <p className="mb-1 px-1 text-[11px] font-medium text-faint">Environment</p>
+            <div className="flex flex-col gap-0.5">
+              <EnvPlaceholder icon={<Monitor className="size-4" aria-hidden />}>Local</EnvPlaceholder>
+              <EnvPlaceholder icon={<Boxes className="size-4" aria-hidden />}>Sources</EnvPlaceholder>
+            </div>
+          </div>
+
           <BranchMenu
             workspaceDir={workspaceDir}
             branch={view.branch}
@@ -197,10 +228,10 @@ export function ChangesPanel({
           />
 
           {view.files.length === 0 ? (
-            <p className="px-3 py-3 text-xs text-muted">No changes — working tree clean.</p>
+            <p className="px-3 py-3 text-[13px] text-muted">No changes — working tree clean.</p>
           ) : (
             <>
-              <ul className="flex flex-col py-1">
+              <ul className="flex flex-col gap-0.5 py-1.5">
                 {view.files.map((file) => (
                   <FileRow
                     key={file.path}
@@ -222,13 +253,13 @@ export function ChangesPanel({
               {/* Commit area (#86): message + "Commit N". Disabled on an empty message,
                   no selection, or `busy` (the v1 concurrency guard — no concurrent
                   user+agent commit). git's reason surfaces inline + recoverable. */}
-              <div className="flex flex-col gap-2 border-t border-border px-3 py-2">
-                <textarea
+              <div className="flex flex-col gap-2 border-t border-border-muted px-3 py-2.5">
+                <Textarea
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   placeholder="Commit message"
                   rows={2}
-                  className="w-full resize-y border border-border bg-panel px-2 py-1 text-xs text-text placeholder:text-muted focus:border-accent focus:outline-none"
+                  className="min-h-16 resize-y text-[13px]"
                   // Ctrl/Cmd+Enter commits, matching the prompt composer's submit chord.
                   onKeyDown={(e) => {
                     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -243,20 +274,34 @@ export function ChangesPanel({
                   </p>
                 )}
                 {busy && <p className="text-[11px] text-muted">Agent is working…</p>}
-                <button
-                  type="button"
-                  onClick={() => void commit()}
-                  disabled={!canCommit}
-                  className="bg-accent px-2 py-1 text-xs font-medium text-on-accent hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
-                >
+                <Button type="button" size="sm" className="w-full" onClick={() => void commit()} disabled={!canCommit}>
+                  <GitCommitHorizontal className="size-4" aria-hidden />
                   {committing ? 'Committing…' : `Commit ${selectedPaths.length}`}
-                </button>
+                </Button>
               </div>
             </>
           )}
         </>
       )}
     </aside>
+  )
+}
+
+/**
+ * A static, non-functional "Environment" row (#119): the mockup's Local / Sources
+ * concepts as styled-but-inert chrome, mirroring the sidebar's disabled "Soon"
+ * placeholders. Purely decorative — no handler, `cursor-default`, muted + tagged.
+ */
+function EnvPlaceholder({ icon, children }: { icon: JSX.Element; children: string }): JSX.Element {
+  return (
+    <div
+      title="Coming soon"
+      className="flex cursor-default items-center gap-2 rounded-md px-2 py-1 text-[13px] text-muted opacity-70"
+    >
+      <span className="shrink-0 text-muted">{icon}</span>
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+      <span className="shrink-0 text-[10px] font-medium text-faint">Soon</span>
+    </div>
   )
 }
 
@@ -351,7 +396,7 @@ function BranchMenu({
 
   return (
     <>
-      <div className="flex items-center gap-1.5 border-b border-border px-3 py-2 text-xs text-muted">
+      <div className="flex items-center gap-1.5 border-b border-border-muted px-3 py-2 text-[13px] text-muted">
         <Menu
           onOpenChange={(open) => {
             if (open) void loadBranches()
@@ -361,31 +406,31 @@ function BranchMenu({
             disabled={busy}
             title={busy ? 'Agent is working…' : branch}
             className={cn(
-              'flex min-w-0 flex-1 items-center gap-1.5 text-left',
-              'hover:text-accent-text disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-muted',
+              'flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left transition-colors',
+              'hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
             )}
           >
-            <GitBranch size={13} aria-hidden className="shrink-0" />
+            <GitBranch size={14} aria-hidden className="shrink-0" />
             <span className="min-w-0 flex-1 truncate font-medium text-text">{branch}</span>
-            <ChevronDown size={12} aria-hidden className="shrink-0" />
+            <ChevronDown size={13} aria-hidden className="shrink-0" />
           </MenuTrigger>
           <MenuContent align="start" className="max-h-80 min-w-48 overflow-y-auto">
             {loading ? (
-              <div className="px-3 py-1.5 text-xs text-muted">Loading…</div>
+              <div className="px-3 py-1.5 text-sm text-muted">Loading…</div>
             ) : listError ? (
-              <div className="px-3 py-1.5 text-xs text-bad">{listError}</div>
+              <div className="px-3 py-1.5 text-sm text-bad">{listError}</div>
             ) : branches && branches.length > 0 ? (
               branches.map((b) => (
                 <MenuItem key={b.name} onClick={() => void checkout(b.name)} disabled={b.current}>
-                  <Check size={12} aria-hidden className={cn('shrink-0', b.current ? 'opacity-100' : 'opacity-0')} />
+                  <Check size={13} aria-hidden className={cn('shrink-0', b.current ? 'opacity-100' : 'opacity-0')} />
                   <span className="min-w-0 flex-1 truncate">{b.name}</span>
                   {b.isRemote && <span className="shrink-0 text-[10px] uppercase text-muted">remote</span>}
                 </MenuItem>
               ))
             ) : (
-              <div className="px-3 py-1.5 text-xs text-muted">No branches.</div>
+              <div className="px-3 py-1.5 text-sm text-muted">No branches.</div>
             )}
-            <MenuSeparator className="my-1 h-px bg-border" />
+            <MenuSeparator className="my-1 h-px bg-border-muted" />
             <MenuItem onClick={() => setCreating(true)}>
               <span className="w-3 shrink-0" aria-hidden />
               Create branch…
@@ -402,15 +447,15 @@ function BranchMenu({
       </div>
 
       {creating && (
-        <div className="flex items-center gap-1.5 border-b border-border px-3 py-2">
-          <input
+        <div className="flex items-center gap-1.5 border-b border-border-muted px-3 py-2">
+          <Input
             autoFocus
             aria-label="New branch name"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="New branch name"
             disabled={busy || busyOp}
-            className="min-w-0 flex-1 border border-border bg-panel px-2 py-1 text-xs text-text placeholder:text-muted focus:border-accent focus:outline-none disabled:opacity-50"
+            className="h-8 min-w-0 flex-1 text-[13px]"
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault()
@@ -423,19 +468,19 @@ function BranchMenu({
               }
             }}
           />
-          <button
+          <Button
             type="button"
+            size="sm"
             onClick={() => void createBranch()}
             disabled={busy || busyOp || newName.trim().length === 0}
-            className="shrink-0 bg-accent px-2 py-1 text-xs font-medium text-on-accent hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Create
-          </button>
+          </Button>
         </div>
       )}
 
       {opError && (
-        <p className="border-b border-border px-3 py-2 text-[11px] text-bad" role="alert">
+        <p className="border-b border-border-muted px-3 py-2 text-[11px] text-bad" role="alert">
           {opError}
         </p>
       )}
@@ -531,12 +576,12 @@ function PrSection({
   // Detached HEAD / before the first fetch: render nothing (no PR surface).
   if (detached || result === null) return null
   if (result === 'loading') {
-    return <p className="border-b border-border px-3 py-1.5 text-[11px] text-muted">Checking pull request…</p>
+    return <p className="border-b border-border-muted px-3 py-1.5 text-[11px] text-muted">Checking pull request…</p>
   }
   // gh missing / not authed / an unexpected gh failure: a subtle hint, not a crash.
   if (!result.ok) {
     return (
-      <p className="border-b border-border px-3 py-1.5 text-[11px] text-muted" title={result.error}>
+      <p className="border-b border-border-muted px-3 py-1.5 text-[11px] text-muted" title={result.error}>
         {result.error}
       </p>
     )
@@ -549,14 +594,16 @@ function PrSection({
   if (isDefault) return null
 
   return (
-    <div className="border-b border-border px-3 py-2">
+    <div className="border-b border-border-muted px-3 py-2">
       {!hasUpstream ? (
         // The push gate: `gh pr create` non-interactively can't prompt to push an
         // unpushed branch, and we never push on the user's behalf — so guide them first.
         <p className="text-[11px] text-muted">Push your branch to GitHub to open a pull request.</p>
       ) : !creating ? (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="xs"
           onClick={() => {
             // Prefill the title from the branch name — the common, editable starting point.
             setTitle(branch)
@@ -566,30 +613,30 @@ function PrSection({
           }}
           disabled={busy}
           title={busy ? 'Agent is working…' : 'Create a pull request for this branch'}
-          className="flex items-center gap-1.5 text-xs text-muted hover:text-accent-text disabled:cursor-not-allowed disabled:opacity-50"
+          className="-mx-2 text-muted hover:text-accent-text"
         >
-          <GitPullRequest size={13} aria-hidden className="shrink-0" />
+          <GitPullRequest className="size-3.5" aria-hidden />
           Create PR
-        </button>
+        </Button>
       ) : (
         <div className="flex flex-col gap-2">
-          <input
+          <Input
             autoFocus
             aria-label="Pull request title"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="PR title"
             disabled={busy || submitting}
-            className="w-full border border-border bg-panel px-2 py-1 text-xs text-text placeholder:text-muted focus:border-accent focus:outline-none disabled:opacity-50"
+            className="h-8 text-[13px]"
           />
-          <textarea
+          <Textarea
             aria-label="Pull request body"
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder="Description (optional)"
             rows={2}
             disabled={busy || submitting}
-            className="w-full resize-y border border-border bg-panel px-2 py-1 text-xs text-text placeholder:text-muted focus:border-accent focus:outline-none disabled:opacity-50"
+            className="min-h-16 resize-y text-[13px]"
           />
           {createError && (
             <p className="text-[11px] text-bad" role="alert">
@@ -598,25 +645,27 @@ function PrSection({
           )}
           {busy && <p className="text-[11px] text-muted">Agent is working…</p>}
           <div className="flex items-center gap-2">
-            <button
+            <Button
               type="button"
+              size="sm"
               onClick={() => void createPr()}
               disabled={busy || submitting || title.trim().length === 0}
-              className="bg-accent px-2 py-1 text-xs font-medium text-on-accent hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitting ? 'Creating…' : 'Create PR'}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => {
                 setCreating(false)
                 setCreateError(null)
               }}
               disabled={submitting}
-              className="text-xs text-muted hover:text-accent-text disabled:opacity-50"
+              className="text-muted hover:text-accent-text"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -640,17 +689,19 @@ function prStateClass(state: string): string {
  */
 function PrChip({ pr }: { pr: GhPr }): JSX.Element {
   return (
-    <a
-      href={pr.url}
-      target="_blank"
-      rel="noreferrer"
-      title={`#${pr.number} · ${pr.title} (${pr.state})`}
-      className="flex items-center gap-1.5 border-b border-border px-3 py-2 text-xs hover:bg-accent/10"
-    >
-      <GitPullRequest size={13} aria-hidden className={cn('shrink-0', prStateClass(pr.state))} />
-      <span className={cn('shrink-0 font-medium tabular-nums', prStateClass(pr.state))}>#{pr.number}</span>
-      <span className="min-w-0 flex-1 truncate text-text">{pr.title}</span>
-    </a>
+    <div className="border-b border-border-muted px-3 py-2">
+      <a
+        href={pr.url}
+        target="_blank"
+        rel="noreferrer"
+        title={`#${pr.number} · ${pr.title} (${pr.state})`}
+        className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] transition-colors hover:bg-accent/10"
+      >
+        <GitPullRequest className={cn('size-3.5 shrink-0', prStateClass(pr.state))} aria-hidden />
+        <span className={cn('shrink-0 font-medium tabular-nums', prStateClass(pr.state))}>#{pr.number}</span>
+        <span className="min-w-0 flex-1 truncate text-text">{pr.title}</span>
+      </a>
+    </div>
   )
 }
 
@@ -665,6 +716,8 @@ function glyphClass(glyph: string): string {
  * One changed-file row. A leading checkbox toggles the file's commit selection (#86)
  * WITHOUT opening the diff (it's a separate control, not nested in the row button);
  * clicking the rest of the row opens the file's working-tree diff (#85, DIFF mode).
+ * The row insets from the panel edges (mx-2) so its rounded hover tint floats clear of
+ * the border, matching the menu/list idiom.
  */
 function FileRow({
   file,
@@ -678,20 +731,20 @@ function FileRow({
   onSelect: () => void
 }): JSX.Element {
   return (
-    <li className="flex items-center hover:bg-accent/10">
+    <li className="mx-2 flex items-center gap-1 rounded-md transition-colors hover:bg-accent/10">
       <input
         type="checkbox"
         checked={checked}
         onChange={onToggle}
         aria-label={`Include ${file.path} in commit`}
         title="Include in commit"
-        className="ml-3 shrink-0 accent-accent"
+        className="ml-2 size-3.5 shrink-0 rounded accent-accent"
       />
       <button
         type="button"
         onClick={onSelect}
         title={file.path}
-        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left text-xs"
+        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-[13px]"
       >
         <span
           className={cn('w-3 shrink-0 text-center font-semibold tabular-nums', glyphClass(file.glyph))}

@@ -4,6 +4,7 @@ import { code } from '@streamdown/code'
 import { cn } from '../lib/utils'
 import { extractLinkHrefs, fileLinkLabels, isSafeExternalHref, parseFileLink } from './file-link'
 import { FileChip } from './FileChip'
+import { responseRehypePlugins } from './response-rehype'
 
 /**
  * Renders agent-authored text as streaming-safe Markdown (#114, spike #112). Wraps
@@ -12,16 +13,25 @@ import { FileChip } from './FileChip'
  * shiki syntax highlighting + a copy control via the `@streamdown/code` plugin.
  * Themed to our tokens through the `@source` + `@theme inline` map in styles.css.
  *
- * SECURITY: agent output is UNTRUSTED. Two layers defend it:
- *  - `skipHtml` drops raw HTML tags the model emits (`<script>`, `<img onerror=…>`) —
- *    keeping the conservative escape-everything posture our old react-markdown wrapper
- *    had (we accept losing benign inline HTML for it). Do not remove `skipHtml`.
- *  - Dangerous LINK hrefs (`javascript:`/`data:`/`vbscript:`) are neutralized by
- *    streamdown's DEFAULT `rehypePlugins` (rehype-sanitize + harden), which render a
- *    `[blocked]` span instead of ever calling our `a` override. **Do NOT pass a custom
- *    `rehypePlugins` prop without re-adding that harden/sanitize chain** — doing so would
- *    silently reintroduce `javascript:`-href XSS. As defence-in-depth (so the `a` override
- *    is safe even if that chain changes) we also allow-list the scheme in `a` below.
+ * SECURITY: agent output is UNTRUSTED. The `rehypePlugins` below is streamdown's own default
+ * `[raw, sanitize, harden]` chain, minimally reconfigured for #168 — see `response-rehype.ts` for
+ * the full rationale. Each layer:
+ *  - `sanitize` (`rehype-sanitize`) is THE XSS wall — the only one: it drops disallowed raw
+ *    HTML elements/attributes the model emits (`<script>`, `<img onerror=…>`, `<svg onload>`)
+ *    and STRIPS the href off `javascript:`/`data:`/`vbscript:` links before render. NB raw
+ *    HTML is NOT "skipped": `raw` parses it into real element nodes first, which makes
+ *    `skipHtml` (below) inert in this chain — it only removes raw-type nodes, which no longer
+ *    exist after `raw` runs. It's kept as a dead-man's guard (it matters again if `raw` is
+ *    ever dropped), NOT as a live protection — do not credit it in a security analysis.
+ *  - `harden` (`rehype-harden`) origin-checks external link/image URLs. #168 wraps it so ONLY
+ *    file-path anchors bypass it (reaching the `a` override unrewritten so `FileChip` can render);
+ *    every dangerous or external href still goes through harden exactly as before.
+ *  - the `a` override below is the final layer: it renders a file path as a `FileChip` and only
+ *    emits a real anchor for an `isSafeExternalHref` scheme, so it can't become a `javascript:` sink
+ *    even if the chain upstream ever changes.
+ * We pass `responseRehypePlugins` because the `rehypePlugins` prop REPLACES streamdown's defaults;
+ * **do NOT drop `raw`/`sanitize` from that list** — either would reintroduce raw-HTML/href XSS.
+ * Do not remove `skipHtml` either.
  *
  * Three `components` overrides:
  *  - `inlineCode` — resolves the spike's `muted` token collision: streamdown's default
@@ -71,7 +81,7 @@ export function Response({ text, className }: { text: string; className?: string
       a: ({ href, className: linkClassName, children }) => {
         const link = href ? parseFileLink(href) : null
         if (link) return <FileChip link={link} label={labels.get(link.path) ?? link.basename} />
-        // Defence-in-depth: streamdown's harden chain already blocks dangerous hrefs
+        // Defence-in-depth: the sanitize/harden chain already strips dangerous hrefs
         // before we get here, but only render a real anchor for an allow-listed scheme
         // so a future config change can't turn this override into a `javascript:` sink.
         // A rejected scheme renders as inert text (no href), never a clickable link.
@@ -95,6 +105,7 @@ export function Response({ text, className }: { text: string; className?: string
       className={cn('min-w-0 [&>:first-child]:mt-0 [&>:last-child]:mb-0', className)}
       plugins={{ code }}
       controls={{ code: { copy: true } }}
+      rehypePlugins={responseRehypePlugins}
       parseIncompleteMarkdown
       skipHtml
       components={components}

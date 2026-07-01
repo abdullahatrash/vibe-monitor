@@ -126,6 +126,28 @@ export function sessionIdFromPayload(payload: unknown): string | null {
 }
 
 /**
+ * Extract the TITLE from a `session_info_update` session-update, else `null`.
+ * vibe-acp auto-titles a session from its FIRST prompt (first ~50 chars, not an LLM
+ * summary) and pushes the result LAZILY as
+ * `{ method:'session/update', params:{ update:{ sessionUpdate:'session_info_update', title } } }`
+ * — never in the `session/new` response, which is why an un-listening client shows
+ * every Thread as "Untitled". Pairs with `sessionIdFromPayload` (same payload) to
+ * route the title to its Thread. Any other payload (a chunk, a tool call, a blank
+ * title) yields `null` so callers skip it.
+ */
+export function titleFromSessionInfoUpdate(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null
+  if ((payload as { method?: unknown }).method !== 'session/update') return null
+  const params = (payload as { params?: unknown }).params
+  if (!params || typeof params !== 'object') return null
+  const update = (params as { update?: unknown }).update
+  if (!update || typeof update !== 'object') return null
+  if ((update as { sessionUpdate?: unknown }).sessionUpdate !== 'session_info_update') return null
+  const title = (update as { title?: unknown }).title
+  return typeof title === 'string' && title.length > 0 ? title : null
+}
+
+/**
  * The injectable seam: where the logs live and how to append a line. Production
  * wires `node:fs/promises` + a `userData` transcripts dir; tests pass a temp dir
  * (and may stub `append` to simulate a failing disk), mirroring MetadataStore.

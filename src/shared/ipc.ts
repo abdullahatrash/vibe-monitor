@@ -61,6 +61,13 @@ export const IPC = {
    * the renderer folds these into its status registry (same-ref fold, no loop).
    */
   threadStatus: 'thread:status',
+  /**
+   * Main -> renderer: a Thread's TITLE changed. vibe-acp auto-titles a session from
+   * its first prompt and pushes it lazily via `session_info_update` (never in
+   * `session/new`), so main persists it and pings here for the cold list to re-pull.
+   * The ACTIVE Thread's header already updates live via the renderer reducer.
+   */
+  threadTitle: 'thread:title',
   /** List persisted Workspaces + their Threads for the cold launch list (ADR-0005). */
   listMetadata: 'metadata:list',
   /** Read a Thread's persisted JSONL transcript for a process-free reopen (TB3). */
@@ -386,6 +393,16 @@ export interface ThreadStatusEvent {
   threadId: string
   streaming: boolean
   needsAttention: boolean
+}
+
+/**
+ * Main -> renderer: a Thread's persisted title changed — vibe-acp's auto-title on the
+ * first prompt (or a later rename). Carries the new title; the renderer re-pulls the
+ * cold list so the sidebar re-renders (the active Thread's header updates via the reducer).
+ */
+export interface ThreadTitleEvent {
+  threadId: string
+  title: string
 }
 
 /** Token usage for a completed turn (`session/prompt` response). */

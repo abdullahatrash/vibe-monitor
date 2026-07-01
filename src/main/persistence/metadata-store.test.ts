@@ -93,6 +93,31 @@ describe('MetadataStore round-trip', () => {
     expect(ids).toEqual([t1.id, t2.id]) // t1 now most-recent
   })
 
+  it('sets a Thread title by id (auto-title capture) preserving session + createdAt', async () => {
+    // The `session_info_update` path (main's recordThreadTitle) upserts { id, workspaceId,
+    // title } onto an existing bound Thread — the title must land WITHOUT dropping its
+    // sessionId (resume cursor) or resetting createdAt.
+    let clock = 500
+    const store = new MetadataStore({ filePath: join(dir, 'title-set.json'), now: () => clock })
+    await store.load()
+    const ws = await store.upsertWorkspace({ dir: '/proj/title' })
+    clock = 600
+    const t = await store.upsertThread({ workspaceId: ws.id, sessionId: 'sess-x' })
+    expect(t.title).toBeNull() // untitled until the first prompt's auto-title arrives
+
+    clock = 700
+    const titled = await store.upsertThread({ id: t.id, workspaceId: ws.id, title: 'Fix @auth.py bug' })
+
+    expect(titled.id).toBe(t.id)
+    expect(titled.title).toBe('Fix @auth.py bug')
+    expect(titled.sessionId).toBe('sess-x') // resume cursor NOT clobbered by the title upsert
+    expect(titled.createdAt).toBe(600) // creation time preserved
+    // Durable across a reopen.
+    const reopened = new MetadataStore({ filePath: join(dir, 'title-set.json') })
+    await reopened.load()
+    expect(reopened.snapshot().threads.find((x) => x.id === t.id)?.title).toBe('Fix @auth.py bug')
+  })
+
   it('degrades to an empty index on a missing file (no throw)', async () => {
     const store = storeAt('does-not-exist.json')
     await expect(store.load()).resolves.toBeUndefined()

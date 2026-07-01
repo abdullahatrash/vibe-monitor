@@ -561,36 +561,11 @@ body {
   word-break: break-word;
 }
 
-/* --- Permission prompt (TB3) --- */
+/* --- Permission prompt --- */
 /* The tool row is now the compact design-system ToolRow, styled inline via tokens
-   in Conversation.tsx (#115) — its old `.tool*` BEM rules were retired here. */
-
-.permission {
-  border: 1px solid var(--accent-tint-border);
-  background: var(--accent-tint);
-  border-radius: var(--radius);
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.permission__title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--accent-text);
-}
-
-.permission__chosen {
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.permission__options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
+   in Conversation.tsx (#115), and the permission prompt is the design-system
+   PermissionRow (Button primitives over the accent-tint card, #116) — both retired
+   their old BEM rules here. */
 
 .btn--ghost {
   background: transparent;

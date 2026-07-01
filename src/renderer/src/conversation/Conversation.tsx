@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useReducer,
   useRef,
@@ -21,26 +22,35 @@ import {
   Brain,
   Check,
   ChevronDown,
+  Copy,
   Eye,
   Globe,
   Loader2,
   Mic,
   Move,
   Plus,
+  RotateCcw,
   Search,
+  ShieldAlert,
   Square,
   SquarePen,
   Terminal,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   Wrench,
   X,
 } from 'lucide-react'
 import { AgentControls } from './AgentControls'
+import { Button } from '../ui/button'
 import { Card } from '../ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible'
 import { IconButton } from '../ui/icon-button'
 import { Textarea } from '../ui/textarea'
 import { cn } from '../lib/utils'
+import { FileOpenProvider } from './file-open-context'
+import { isRejectOption } from './permission-option'
+import type { FileLink } from './file-link'
 import { describeToolStatus, type ToolStatusGlyph } from './tool-status'
 import { toolKindIcon, type ToolIconName } from './tool-icon'
 import { formatElapsed } from './working-time'
@@ -425,6 +435,19 @@ export function Conversation({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [followUps.sending, followUps.queued])
 
+  // Reveal a file behind a clickable file-path chip (#116) in the OS file manager.
+  // Provided to the deeply-nested FileChip via context so we don't prop-drill through
+  // Response/Streamdown. Fire-and-forget: main resolves the (possibly relative) path
+  // against THIS Thread's Workspace cwd, confines it, and reveals it (never opens/
+  // executes — the chip text is untrusted agent output). Memoized on agentId so a
+  // keystroke-driven re-render doesn't re-render every chip under the provider.
+  const openFile = useCallback(
+    (link: FileLink): void => {
+      void window.api.revealPath({ agentId: thread.agentId, path: link.path })
+    },
+    [thread.agentId],
+  )
+
   // Answer a pending permission request: relay the choice to the agent and mark
   // the prompt resolved so it stops asking (state stays renderer-owned).
   function respondPermission(item: PermissionItem, option: PermissionOption): void {
@@ -448,8 +471,7 @@ export function Conversation({
   function recover(): void {
     for (const item of state.items) {
       if (item.kind !== 'permission' || item.chosenOptionId !== null) continue
-      const deny =
-        item.options.find((o) => o.kind.startsWith('reject')) ?? item.options[item.options.length - 1]
+      const deny = item.options.find(isRejectOption) ?? item.options[item.options.length - 1]
       if (!deny) continue
       void window.api.respondPermission({
         agentId: thread.agentId,
@@ -567,6 +589,9 @@ export function Conversation({
   const lastUserIndex = state.items.map((i) => i.kind).lastIndexOf('user')
 
   return (
+    // Chip clicks (#116) open files through main; provided here (agentId closed over)
+    // for the FileChips streamdown renders far below in the assistant markdown.
+    <FileOpenProvider value={openFile}>
     <div className="conv">
       <div className="conv__head">
         <span className="dot dot--ok" aria-hidden />
@@ -796,6 +821,7 @@ export function Conversation({
         </Card>
       </div>
     </div>
+    </FileOpenProvider>
   )
 }
 
@@ -834,7 +860,7 @@ export function Item({
     case 'reasoning':
       return <ReasoningRow item={item} streaming={streaming} />
     case 'assistant':
-      return <AssistantRow item={item} />
+      return <AssistantRow item={item} streaming={streaming} />
     case 'tool':
       return <ToolRow item={item} />
     case 'permission':
@@ -872,10 +898,90 @@ function UserRow({ item }: { item: UserItem }): JSX.Element {
   )
 }
 
-function AssistantRow({ item }: { item: AssistantItem }): JSX.Element {
+function AssistantRow({ item, streaming }: { item: AssistantItem; streaming: boolean }): JSX.Element {
   // Assistant turn (#114): no bubble — full-width flowing markdown via the Response
-  // primitive (streamdown), so tables/code/lists get room to breathe.
-  return <Response className="text-[15px] leading-relaxed text-text-body" text={item.text} />
+  // primitive (streamdown), so tables/code/lists get room to breathe. Wrapped in a
+  // `group` so the #116 actions bar reveals on hover of the whole answer.
+  return (
+    <div className="group flex flex-col gap-1.5">
+      <Response className="text-[15px] leading-relaxed text-text-body" text={item.text} />
+      {/* Actions bar (#116): a hover-reveal row under the answer. Copy is the only
+          FUNCTIONAL action (clipboard + anchored toast); thumbs up/down + retry are
+          designed affordances from the mockup — present + styled but not yet wired to
+          any backend (no feedback store, no re-submit) so we don't invent behavior.
+          Hidden while the answer streams (a half-written reply isn't copyable) and for
+          an empty item. `focus-within` also reveals it for keyboard users. */}
+      {!streaming && item.text.trim().length > 0 && (
+        <div className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
+          <MessageCopyButton text={item.text} />
+          <IconButton size="icon-xs" className="text-muted hover:text-text" aria-label="Good response" title="Good response">
+            <ThumbsUp className="size-3.5" aria-hidden />
+          </IconButton>
+          <IconButton size="icon-xs" className="text-muted hover:text-text" aria-label="Bad response" title="Bad response">
+            <ThumbsDown className="size-3.5" aria-hidden />
+          </IconButton>
+          <IconButton size="icon-xs" className="text-muted hover:text-text" aria-label="Retry" title="Retry">
+            <RotateCcw className="size-3.5" aria-hidden />
+          </IconButton>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The copy control on the assistant actions bar (#116, mirrors t3code `MessageCopyButton`).
+ * Writes the answer to the clipboard, flips the icon to a check, and floats an ANCHORED
+ * "Copied!" toast above the button (a popover positioned on the button, NOT an inline
+ * label) that clears after a beat. Self-contained: no toast manager, just local state +
+ * a positioned span. The timer is cleared on unmount so a fast switch-away can't set
+ * state on a dead component.
+ */
+function MessageCopyButton({ text }: { text: string }): JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const timeoutRef = useRef<number | null>(null)
+  const mountedRef = useRef(true)
+  useEffect(
+    () => () => {
+      mountedRef.current = false
+      if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current)
+    },
+    [],
+  )
+  function onCopy(): void {
+    void navigator.clipboard.writeText(text).then(() => {
+      // The clipboard write is async — bail if we unmounted between click and resolve.
+      if (!mountedRef.current) return
+      setCopied(true)
+      if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current)
+      timeoutRef.current = window.setTimeout(() => setCopied(false), 1200)
+    })
+  }
+  return (
+    <span className="relative inline-flex">
+      <IconButton
+        size="icon-xs"
+        className="text-muted hover:text-text"
+        aria-label="Copy message"
+        title="Copy"
+        onClick={onCopy}
+      >
+        {copied ? (
+          <Check className="size-3.5 text-accent-text" aria-hidden />
+        ) : (
+          <Copy className="size-3.5" aria-hidden />
+        )}
+      </IconButton>
+      {copied && (
+        <span
+          role="status"
+          className="pointer-events-none absolute bottom-full left-1/2 mb-1 -translate-x-1/2 rounded-sm bg-text px-2 py-1 text-xs whitespace-nowrap text-bg shadow-md"
+        >
+          Copied!
+        </span>
+      )}
+    </span>
+  )
 }
 
 function ReasoningRow({ item, streaming }: { item: ReasoningItem; streaming: boolean }): JSX.Element {
@@ -1072,23 +1178,34 @@ function PermissionRow({
   item: PermissionItem
   onPermission: (item: PermissionItem, option: PermissionOption) => void
 }): JSX.Element {
+  // Permission request (#116): kept INLINE in the transcript (not the composer footer),
+  // restyled onto the Button primitive over the accent-tint card. Allow actions read as
+  // the primary (default) Button; reject actions (kind starts with `reject`) as an
+  // outline — the same classification `recover()` uses to auto-deny a wedged turn. The
+  // settled "You chose: …" state is unchanged; the wiring (`onPermission`, `item.options`,
+  // `chosenName`) is behaviour-identical to the retired BEM version.
   return (
-    <div className="permission">
-      <div className="permission__title">
-        Permission request{item.toolCallId ? ` · ${item.toolCallId}` : ''}
+    <div className="flex flex-col gap-2.5 rounded-lg border border-[var(--accent-tint-border)] bg-[var(--accent-tint)] p-3">
+      <div className="flex items-center gap-1.5 text-[13px] font-semibold text-accent-text">
+        <ShieldAlert className="size-4 shrink-0" aria-hidden />
+        <span>Permission request{item.toolCallId ? ` · ${item.toolCallId}` : ''}</span>
       </div>
       {item.chosenName ? (
-        <div className="permission__chosen">You chose: {item.chosenName}</div>
+        <div className="flex items-center gap-1.5 text-[13px] text-muted">
+          <Check className="size-3.5 shrink-0" aria-hidden />
+          <span>You chose: {item.chosenName}</span>
+        </div>
       ) : (
-        <div className="permission__options">
+        <div className="flex flex-wrap gap-2">
           {item.options.map((option) => (
-            <button
+            <Button
               key={option.optionId}
-              className={option.kind.startsWith('reject') ? 'btn btn--ghost' : 'btn'}
+              size="sm"
+              variant={isRejectOption(option) ? 'outline' : 'default'}
               onClick={() => onPermission(item, option)}
             >
               {option.name}
-            </button>
+            </Button>
           ))}
         </div>
       )}

@@ -192,6 +192,18 @@ export const IPC = {
    * affordance on the branch having an upstream). NOT agent activity, so no `pool.touch`.
    */
   ghCreatePr: 'gh:create-pr',
+  /**
+   * Renderer -> main: REVEAL a file referenced by a clickable file-path chip (#116) in
+   * the OS file manager. Fire-and-forget (invoke → `Promise<void>`, like `respondPermission`).
+   * The chip text is AGENT-AUTHORED (untrusted), so main never OPENS/executes the target —
+   * it resolves the (possibly relative) path against the hosting agent's Workspace cwd,
+   * CONFINES it to the Workspace (symlink-resolved), and calls `shell.showItemInFolder`
+   * (highlight only, no Launch Services / code execution). Best-effort — an out-of-Workspace
+   * or bad path is a logged no-op, never thrown. Reveal can't deep-link a line, so the
+   * chip's `Lx:Cy` ref stays display-only. (Do NOT switch this to `shell.openPath` — that
+   * would execute `.app`/`.command`/installers from untrusted markdown on one click.)
+   */
+  revealPath: 'shell:reveal-path',
 } as const
 
 /**
@@ -885,4 +897,16 @@ export interface GhCreatePrArgs {
   workspaceDir: string
   title: string
   body: string
+}
+
+/**
+ * Args for `revealPath` (#116): reveal a file referenced by a clickable file-path chip.
+ * `agentId` identifies the hosting Workspace agent so main can resolve `path`'s
+ * Workspace cwd (the renderer has no fs, so relative→absolute resolution is main's
+ * job) and confine it. `path` is the `FileLink.path` from the chip — already stripped
+ * of any `:line:col` position.
+ */
+export interface RevealPathArgs {
+  agentId: string
+  path: string
 }

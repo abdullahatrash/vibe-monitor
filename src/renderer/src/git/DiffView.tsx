@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react'
 import { PatchDiff } from '@pierre/diffs/react'
 import type { GitDiffResult } from '../../../shared/ipc'
 import { cn } from '../lib/utils'
+import { Button } from '../ui'
 
 /**
  * The working-tree diff viewer for ONE changed file (#85, ADR-0008). Fetches the raw
@@ -75,16 +76,18 @@ export function DiffView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-1.5 border-b border-border px-3 py-2">
-        <button
+      <div className="flex items-center gap-1.5 border-b border-border-muted px-3 py-2">
+        <Button
           type="button"
+          variant="ghost"
+          size="xs"
           onClick={onBack}
-          className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted hover:text-accent-text"
+          className="-ml-1 shrink-0 text-muted hover:text-accent-text"
         >
-          <ArrowLeft size={14} aria-hidden />
+          <ArrowLeft className="size-3.5" aria-hidden />
           <span>Changes</span>
-        </button>
-        <span className="min-w-0 flex-1 truncate text-xs text-text" dir="rtl" title={file.path}>
+        </Button>
+        <span className="min-w-0 flex-1 truncate text-[13px] text-text" dir="rtl" title={file.path}>
           {file.path}
         </span>
         {result?.truncated && (
@@ -94,8 +97,8 @@ export function DiffView({
         )}
       </div>
 
-      <div className="flex items-center gap-1 border-b border-border px-3 py-1.5 text-xs">
-        <div className="flex border border-border">
+      <div className="flex items-center gap-2 border-b border-border-muted px-3 py-2 text-[13px]">
+        <div className="flex overflow-hidden rounded-md border border-border">
           <ToggleButton active={diffStyle === 'unified'} onClick={() => setDiffStyle('unified')}>
             Stacked
           </ToggleButton>
@@ -109,7 +112,7 @@ export function DiffView({
           aria-pressed={ignoreWhitespace}
           title={ignoreWhitespace ? 'Show whitespace changes' : 'Hide whitespace changes'}
           className={cn(
-            'ml-auto shrink-0 border border-border px-2 py-0.5',
+            'ml-auto shrink-0 rounded-md border border-border px-2.5 py-1 transition-colors',
             ignoreWhitespace ? 'bg-accent/10 text-accent-text' : 'text-muted hover:text-accent-text',
           )}
         >
@@ -119,11 +122,11 @@ export function DiffView({
 
       <div className="min-h-0 flex-1 overflow-auto">
         {loading && !result ? (
-          <p className="px-3 py-3 text-xs text-muted">Loading diff…</p>
+          <p className="px-3 py-3 text-[13px] text-muted">Loading diff…</p>
         ) : rendered ? (
           rendered
         ) : (
-          <p className="px-3 py-3 text-xs text-muted">
+          <p className="px-3 py-3 text-[13px] text-muted">
             No changes to show{ignoreWhitespace ? ' (whitespace-only changes hidden).' : '.'}
           </p>
         )}
@@ -132,7 +135,7 @@ export function DiffView({
   )
 }
 
-/** A segmented-control button (Stacked / Split) in the brand's zero-radius idiom. */
+/** A segmented-control button (Stacked / Split) — rounded via its container's clip. */
 function ToggleButton({
   active,
   onClick,
@@ -148,7 +151,7 @@ function ToggleButton({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        'px-2 py-0.5',
+        'px-2.5 py-1 transition-colors',
         active ? 'bg-accent/10 text-accent-text' : 'text-muted hover:text-accent-text',
       )}
     >

@@ -39,7 +39,8 @@ import {
 } from './reducer'
 import { eventBelongsToThread } from './event-routing'
 import { replayTranscript } from './replay'
-import { ChatMarkdown } from './ChatMarkdown'
+import { Response } from './Response'
+import { MessageScroller } from './MessageScroller'
 import { getDraft, setDraft as persistDraft, clearDraft } from './composer-draft-store'
 import {
   applyCommand,
@@ -152,7 +153,6 @@ export function Conversation({
   // Keep the lift callback in a ref so the bound subscription needn't depend on it.
   const onBoundRef = useRef(onBound)
   onBoundRef.current = onBound
-  const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // The hidden file picker behind the 📎 button (#100).
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -232,12 +232,6 @@ export function Conversation({
       dispatch({ type: 'acp-event', payload: event.payload })
     })
   }, [thread.agentId])
-
-  // Keep the latest item in view as the answer streams in.
-  useEffect(() => {
-    const list = listRef.current
-    if (list) list.scrollTop = list.scrollHeight
-  }, [state.items])
 
   // Read a pasted/picked image blob to a data URL (DOM: FileReader lives here, not
   // in the pure module), split it into bare base64 + mime via `parseDataUrl`, and
@@ -557,14 +551,14 @@ export function Conversation({
 
       <UsageBar state={state} />
 
-      <div className="messages" ref={listRef}>
+      <MessageScroller>
         {state.items.length === 0 && (
           <p className="hint">Send a prompt to start the conversation.</p>
         )}
         {state.items.map((item) => (
           <Item key={item.id} item={item} onPermission={respondPermission} />
         ))}
-      </div>
+      </MessageScroller>
 
       {state.isProcessing && (
         // Escape hatch: if a turn wedges (e.g. a permission prompt is dismissed
@@ -815,36 +809,42 @@ export function Item({
 }
 
 function UserRow({ item }: { item: UserItem }): JSX.Element {
+  // User turn (#114): a right-aligned rounded bubble, capped so long prose wraps
+  // instead of spanning the pane. Echoed attachments (#100) re-home into the bubble.
   return (
-    <div className="msg msg--user">
-      <div className="msg__role">You</div>
-      {item.images && item.images.length > 0 && (
-        // Echo the sent attachments in the user bubble (#100).
-        <div className="msg__images">
-          {item.images.map((img, i) => (
-            <img key={i} className="msg__image" src={img.previewUrl} alt="attachment" />
-          ))}
-        </div>
-      )}
-      {item.text && <div className="msg__body">{item.text}</div>}
+    <div className="flex flex-col items-end gap-1.5">
+      <div className="max-w-[80%] rounded-2xl border border-border bg-surface px-3.5 py-2.5 text-[15px] leading-relaxed break-words whitespace-pre-wrap text-text-body">
+        {item.images && item.images.length > 0 && (
+          <div className="mb-2 flex flex-wrap justify-end gap-2">
+            {item.images.map((img, i) => (
+              <img
+                key={i}
+                className="max-h-[200px] max-w-[200px] rounded-lg border border-border"
+                src={img.previewUrl}
+                alt="attachment"
+              />
+            ))}
+          </div>
+        )}
+        {item.text}
+      </div>
     </div>
   )
 }
 
 function AssistantRow({ item }: { item: AssistantItem }): JSX.Element {
-  return (
-    <div className="msg msg--assistant">
-      <div className="msg__role">Vibe</div>
-      <ChatMarkdown className="msg__body" text={item.text} />
-    </div>
-  )
+  // Assistant turn (#114): no bubble — full-width flowing markdown via the Response
+  // primitive (streamdown), so tables/code/lists get room to breathe.
+  return <Response className="text-[15px] leading-relaxed text-text-body" text={item.text} />
 }
 
 function ReasoningRow({ item }: { item: ReasoningItem }): JSX.Element {
+  // Reasoning container stays as-is (#115 owns its restyle); only its markdown body
+  // now flows through the new Response primitive.
   return (
     <details className="reasoning" open>
       <summary className="reasoning__summary">Reasoning</summary>
-      <ChatMarkdown className="reasoning__body" text={item.text} />
+      <Response className="reasoning__body" text={item.text} />
     </details>
   )
 }

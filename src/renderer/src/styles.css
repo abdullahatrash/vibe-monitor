@@ -1,5 +1,10 @@
 @import 'tailwindcss';
 
+/* Scan streamdown's dist (#114) so Tailwind emits the utility classes it bakes into
+   its rendered markdown JSX — node_modules isn't scanned by default. Its classes are
+   themed onto our tokens via the semantic mappings appended to `@theme inline` below. */
+@source '../../../node_modules/streamdown/dist';
+
 :root {
   /* Mistral light-mode brand tokens — final-design values (docs/design-tokens.md).
      Warm neutral ramp · softer gradient-forward orange · rounded.
@@ -103,6 +108,20 @@
   --color-on-accent: var(--on-accent);
   --color-ok: var(--ok);
   --color-bad: var(--bad);
+
+  /* Streamdown's shadcn semantic tokens → our brand tokens (#114, spike #112). Its
+     rendered markdown styles with `text-primary` (links), `text-foreground`,
+     `text-muted-foreground`, `font-mono`, etc.; map them here so it paints in brand
+     colours. `--color-border` / `--color-sidebar` already exist above (code-block
+     container = `bg-sidebar`). NOTE the `muted` collision (spike caveat): our
+     `--color-muted` is a TEXT grey, so streamdown's `bg-muted` inline-code default is
+     overridden in the `Response` `inlineCode` component (→ `--accent-tint`), NOT here. */
+  --color-primary: var(--accent-text);
+  --color-primary-foreground: var(--on-accent);
+  --color-foreground: var(--text);
+  --color-background: var(--bg);
+  --color-muted-foreground: var(--muted);
+  --font-mono: 'SF Mono', ui-monospace, 'Menlo', monospace;
 }
 
 /* Radius scale (docs/design-tokens.md §Radius) — reverses the old all-zero
@@ -477,38 +496,6 @@ body {
   padding: 4px 2px;
 }
 
-.msg {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.msg__role {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-}
-
-.msg__body {
-  font-size: 14px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.msg--user .msg__body {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 8px 12px;
-  align-self: flex-start;
-}
-
-.msg--assistant .msg__role {
-  color: var(--accent-text);
-}
-
 .reasoning {
   border-left: 2px solid var(--border);
   padding-left: 10px;
@@ -527,7 +514,9 @@ body {
   font-size: 13px;
   line-height: 1.5;
   color: var(--muted);
-  white-space: pre-wrap;
+  /* No `white-space: pre-wrap`: this now hosts block markdown via <Response>, which
+     manages its own whitespace — pre-wrap would turn source soft-newlines into hard
+     breaks. (The old .chat-md wrapper normalized this; #115 owns the fuller restyle.) */
   word-break: break-word;
 }
 
@@ -633,108 +622,4 @@ body {
 .recover:hover {
   color: var(--text);
   border-color: var(--accent);
-}
-
-.msg__images {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.msg__image {
-  max-width: 200px;
-  max-height: 200px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-/* --- Rendered Markdown (#61): agent/reasoning text via ChatMarkdown ---
-   Scoped so it only styles react-markdown output, not plain rows. Block elements
-   replace the old raw-text node, so we tame margins and keep brand tokens (links
-   = --accent-text, code blocks square per the zero-radius rule). The wrapper still
-   carries .msg__body / .reasoning__body for its font/colour; we just override the
-   pre-wrap meant for raw text, since markdown now owns its own block flow. */
-.chat-md {
-  white-space: normal;
-}
-
-.chat-md > :first-child {
-  margin-top: 0;
-}
-
-.chat-md > :last-child {
-  margin-bottom: 0;
-}
-
-.chat-md p {
-  margin: 0 0 8px;
-}
-
-.chat-md ul,
-.chat-md ol {
-  margin: 0 0 8px;
-  padding-left: 20px;
-}
-
-.chat-md li {
-  margin: 2px 0;
-}
-
-.chat-md a {
-  color: var(--accent-text);
-  text-decoration: underline;
-}
-
-.chat-md code {
-  font-family: var(--font-mono);
-  font-size: 0.9em;
-  background: var(--accent-tint);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.1em 0.3em;
-}
-
-.chat-md pre {
-  margin: 0 0 8px;
-  padding: 10px 12px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow-x: auto;
-}
-
-/* A fenced block's <code> sheds the inline chip styling — the <pre> owns the box. */
-.chat-md pre code {
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: 0.85em;
-}
-
-.chat-md blockquote {
-  margin: 0 0 8px;
-  padding-left: 10px;
-  border-left: 2px solid var(--border);
-  color: var(--muted);
-}
-
-.chat-md h1,
-.chat-md h2,
-.chat-md h3,
-.chat-md h4 {
-  margin: 12px 0 6px;
-  font-size: 1em;
-  font-weight: 600;
-}
-
-.chat-md table {
-  border-collapse: collapse;
-  margin: 0 0 8px;
-}
-
-.chat-md th,
-.chat-md td {
-  border: 1px solid var(--border);
-  padding: 4px 8px;
-  text-align: left;
 }

@@ -22,6 +22,7 @@
     "@fontsource-variable/geist": "^5.2.9",
     "@fontsource-variable/geist-mono": "^5.2.8",
     "@pierre/diffs": "^1.2.12",
+    "@streamdown/code": "1.1.1",
     "@tailwindcss/vite": "^4",
     "chokidar": "^5.0.0",
     "class-variance-authority": "^0.7.1",
@@ -29,11 +30,10 @@
     "lucide-react": "^0.564",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-markdown": "^10",
-    "remark-breaks": "^4",
-    "remark-gfm": "^4",
+    "streamdown": "2.5.0",
     "tailwind-merge": "^3",
-    "tailwindcss": "^4"
+    "tailwindcss": "^4",
+    "use-stick-to-bottom": "^1.1.6"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -45,7 +45,20 @@ import {
   type ThreadStatusMap,
 } from './conversation/thread-status'
 import { clearDraft } from './conversation/composer-draft-store'
+import {
+  ArrowLeft,
+  ArrowRight,
+  FolderOpen,
+  Maximize2,
+  PanelRight,
+  Settings,
+  Terminal,
+} from 'lucide-react'
+import { Button } from './ui/button'
+import { IconButton } from './ui/icon-button'
 import { Shell, type WorkspaceFlags } from './shell/Shell'
+import { Logo } from './shell/logo'
+import { heroHeadline } from './shell/hero-headline'
 import { firstRunState, type FirstRunState } from './shell/first-run'
 import { findSelectedThread, initialNavState, navReducer } from './shell/nav-reducer'
 import { deriveUnifiedThreads, workspaceFlags, type UnifiedThreadRow } from './shell/unified-threads'
@@ -458,20 +471,25 @@ export function App(): JSX.Element {
   // permanently — it lives behind this gear once everything's installed, and is
   // surfaced prominently in the outlet's first-run state when something's missing.
   const sidebarTop = (
-    <div className="shell__top">
-      <div className="shell__top-row">
-        <button className="btn shell__open" onClick={() => void openProject()} disabled={opening}>
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <Button
+          variant="secondary"
+          className="flex-1 justify-start gap-2"
+          onClick={() => void openProject()}
+          disabled={opening}
+        >
+          <FolderOpen className="size-4" aria-hidden />
           {opening ? 'Connecting…' : 'Open project'}
-        </button>
-        <button
-          className="btn btn--ghost shell__settings"
+        </Button>
+        <IconButton
           aria-label="Environment & settings"
           title="Environment & settings"
           aria-expanded={showSettings}
           onClick={() => setShowSettings((s) => !s)}
         >
-          ⚙
-        </button>
+          <Settings className="size-4" aria-hidden />
+        </IconButton>
       </div>
       {showSettings && (
         <Environment detect={detect} loading={loading} onRecheck={() => void runDetect()} />
@@ -482,6 +500,8 @@ export function App(): JSX.Element {
   const connectedIds = connectedWorkspaceIds(connections)
   const selectedWs = nav.selectedWorkspaceId
   const selected = selectedConnection(connections, selectedWs)
+  // The selected Workspace's display name, for the empty-state hero headline (#113).
+  const selectedWorkspaceName = recents.find((w) => w.id === selectedWs)?.displayName ?? null
 
   // Tell main which agent backs the ON-SCREEN Workspace (TB5 #50) so the pool
   // protects it from idle/cap eviction — the Workspace the user is looking at is
@@ -613,7 +633,7 @@ export function App(): JSX.Element {
         const conn = connections[wid]
         if (conn.status !== 'connected') return null
         return (
-          <div key={wid} className="shell__connection" hidden={wid !== selectedWs}>
+          <div key={wid} hidden={wid !== selectedWs}>
             {renderConnected(conn.thread, wid === selectedWs, wsFlags[wid]?.streaming ?? false)}
           </div>
         )
@@ -637,6 +657,7 @@ export function App(): JSX.Element {
                 detect={detect}
                 loading={loading}
                 opening={opening}
+                workspaceName={selectedWorkspaceName}
                 onRecheck={() => void runDetect()}
                 onOpenProject={() => void openProject()}
               />,
@@ -645,10 +666,40 @@ export function App(): JSX.Element {
   )
 
   return (
-    <div className="app">
-      <header className="app__header">
-        <h1>Vibe Mistro</h1>
-        <span className="app__subtitle">Orchestrator for Mistral Vibe agents · ACP backend</span>
+    <div className="flex h-screen flex-col bg-bg text-text">
+      {/* Window chrome (#113): a draggable top bar. Traffic lights, back/forward, and
+          the top-right layout-mode icons are STATIC placeholders (#future) — styled but
+          non-functional. The bar stays `-webkit-app-region: drag` so the window moves;
+          every interactive control opts back out with `[-webkit-app-region:no-drag]`. */}
+      <header className="flex h-11 flex-none items-center gap-2 border-b border-border px-3 [-webkit-app-region:drag]">
+        {/* placeholder — window traffic lights (#future) */}
+        <div className="flex items-center gap-2 [-webkit-app-region:no-drag]" aria-hidden>
+          <span className="size-3 rounded-full" style={{ backgroundColor: '#ec6a5e' }} />
+          <span className="size-3 rounded-full" style={{ backgroundColor: '#f4bf4f' }} />
+          <span className="size-3 rounded-full" style={{ backgroundColor: '#61c554' }} />
+        </div>
+        {/* placeholder — back / forward navigation (#future) */}
+        <div className="ml-2 flex items-center gap-0.5 [-webkit-app-region:no-drag]">
+          <IconButton size="icon-sm" aria-label="Back" title="Back">
+            <ArrowLeft className="size-4" aria-hidden />
+          </IconButton>
+          <IconButton size="icon-sm" aria-label="Forward" title="Forward">
+            <ArrowRight className="size-4" aria-hidden />
+          </IconButton>
+        </div>
+        <div className="flex-1" />
+        {/* placeholder — layout / view modes (#future) */}
+        <div className="flex items-center gap-0.5 [-webkit-app-region:no-drag]">
+          <IconButton size="icon-sm" aria-label="Toggle side panel" title="Toggle side panel">
+            <PanelRight className="size-4" aria-hidden />
+          </IconButton>
+          <IconButton size="icon-sm" aria-label="Toggle terminal" title="Toggle terminal">
+            <Terminal className="size-4" aria-hidden />
+          </IconButton>
+          <IconButton size="icon-sm" aria-label="Expand" title="Expand">
+            <Maximize2 className="size-4" aria-hidden />
+          </IconButton>
+        </div>
       </header>
 
       <Shell
@@ -747,10 +798,10 @@ function renderTransientOutlet(
   switch (connect.status) {
     case 'connecting':
       return (
-        <div className="connecting">
+        <div className="mx-auto mt-14 flex max-w-[420px] flex-col items-center gap-2 text-center">
           <span className="dot dot--pending" aria-hidden />
-          <div className="connecting__title">Connecting…</div>
-          <div className="connecting__message">
+          <div className="text-sm font-semibold text-text-strong">Connecting…</div>
+          <div className="text-[13px] leading-relaxed text-muted">
             Launching <code>vibe-acp</code> in <code>{connect.workspaceDir}</code> and running the
             ACP handshake.
           </div>
@@ -817,6 +868,7 @@ function EmptyState({
   detect,
   loading,
   opening,
+  workspaceName,
   onRecheck,
   onOpenProject,
 }: {
@@ -824,13 +876,17 @@ function EmptyState({
   detect: VibeDetectResult | null
   loading: boolean
   opening: boolean
+  /** The selected Workspace's name, emphasized in the idle hero headline (or null). */
+  workspaceName: string | null
   onRecheck: () => void
   onOpenProject: () => void
 }): JSX.Element {
   if (state === 'needs-install') {
     return (
-      <div className="empty empty--install">
-        <div className="empty__title">Install Mistral Vibe to get started</div>
+      <div className="flex max-w-[460px] flex-col items-start gap-3">
+        <div className="text-[15px] font-semibold text-text-strong">
+          Install Mistral Vibe to get started
+        </div>
         <p className="hint">
           vibe-mistro drives the <code>vibe-acp</code> ACP server. Install the Mistral Vibe CLI and{' '}
           <code>vibe-acp</code>, then re-check below.
@@ -841,17 +897,26 @@ function EmptyState({
   }
   if (state === 'no-workspaces') {
     return (
-      <div className="empty">
-        <div className="empty__title">No workspaces yet</div>
+      <div className="flex max-w-[460px] flex-col items-start gap-3">
+        <div className="text-[15px] font-semibold text-text-strong">No workspaces yet</div>
         <p className="hint">Open a project to spawn its agent and start a thread.</p>
-        <button className="btn" onClick={onOpenProject} disabled={opening}>
+        <Button onClick={onOpenProject} disabled={opening}>
           {opening ? 'Connecting…' : 'Open project'}
-        </button>
+        </Button>
       </div>
     )
   }
+  // idle — the empty-state hero: a centered logo + a dynamic headline with the
+  // selected Workspace name in orange (`--accent-emphasis`).
+  const headline = heroHeadline(workspaceName)
   return (
-    <div className="shell__empty">
+    <div className="mx-auto flex h-full max-w-[830px] flex-col items-center justify-center gap-6 text-center">
+      <Logo size={52} />
+      <h1 className="text-[37px] font-semibold tracking-[-0.6px] text-text-strong">
+        {headline.lead}
+        {headline.name && <span className="text-accent-emphasis">{headline.name}</span>}
+        {headline.tail}
+      </h1>
       <p className="hint">
         Select a thread from the sidebar to view it, or open a project to start a live agent.
       </p>
@@ -870,12 +935,12 @@ function Environment({
   onRecheck: () => void
 }): JSX.Element {
   return (
-    <div className="env">
-      <div className="env__title">
+    <div className="flex flex-col gap-2.5 rounded-[9px] border border-border p-3">
+      <div className="flex items-center justify-between text-[13px] font-semibold text-text-strong">
         <span>Environment</span>
-        <button className="btn btn--ghost" onClick={onRecheck} disabled={loading}>
+        <Button variant="ghost" size="xs" onClick={onRecheck} disabled={loading}>
           {loading ? 'Checking…' : 'Re-check'}
-        </button>
+        </Button>
       </div>
       {detect && (
         <ul className="status">

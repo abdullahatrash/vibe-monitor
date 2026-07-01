@@ -3,9 +3,12 @@
 > You are picking up an in-flight project. Read this top to bottom once, then keep it open.
 > It tells you **what this is**, **how we work**, **what exists**, **what's next**, and **where the
 > authoritative information lives** (in-repo docs + the local reference repos in §4). Last updated
-> 2026-07-01, `main` @ `65c23a5`, **495 tests**. The **design-system epic is SCOPED AND FILED**: grilled →
-> **ADR-0010** + `docs/design-tokens.md` + `docs/design-system-components.md` → **PRD #109** → tracer-bullet
-> issues **#110–#119**. **Start with #110 (token layer)** — see §6/§8. `$`/`@` autocomplete stays paused.
+> 2026-07-01, `main` @ `0197b5a`, **569 tests**. The **design-system epic (PRD #109) is ~half DONE**: its
+> **foundation (#110 tokens, #111 primitives, #112 streamdown spike, #113 shell) and the entire SIDEBAR
+> cluster (#127–#134, #138) shipped**; **REMAINING = #114/#115/#116 conversation · #117 composer · #118 auth ·
+> #119 git panel** (see §6). **`docs/NEXT-SESSION.md` is the copy-paste kickoff for the next session.**
+> Values live in ADR-0010 + `docs/design-tokens.md` + `docs/design-system-components.md` + `docs/streamdown-spike.md`.
+> `$`/`@` autocomplete stays paused.
 
 ---
 
@@ -315,31 +318,33 @@ review round):** the in-flight latch MUST be module-level per-Thread (`sending` 
 
 ## 6. What's next
 
-**The DESIGN-SYSTEM epic is scoped, ADR'd, and filed as issues #110–#119** (parent PRD #109, all
-`ready-for-agent`). Pipeline done: `/grill-with-docs` → **ADR-0010** + `docs/design-tokens.md` (exact token
-values) + `docs/design-system-components.md` (what to lift from shadcn/t3code + how to adapt) → PRD #109 →
-`/to-issues`. **START HERE: issue #110 (token layer)** — no blockers, highest-impact/lowest-risk (the whole
-app repaints toward the design with zero structural change). Slice order + deps:
-- **#110** token layer (—) → **#111** primitives (base-ui+CVA, #110) → **#113** shell (#110,#111)
-- **#112** streamdown spike (#110) → **#114** conversation A / Response+Message+Bubble+scroll **[HITL]**
-  (#111,#112) → **#115** conversation B / tool+reasoning+working (#114) → **#116** conversation C /
-  approval-inline+actions+file-links (#114)
-- **#117** composer (#111,#113) · **#118** auth (#111) · **#119** git panel (#111) — parallel after #110/#111
-Each issue carries `/tdd` build instructions; each is a **behavior-identical restyle** (existing ~495 tests
-MUST stay green) that retires its area's BEM from `styles.css`. Reference `docs/design-system-components.md`
-for the shadcn (`/Users/abdullahatrash/mistral/ui` `bases/base`) + t3code component-adaptation details.
+**The DESIGN-SYSTEM epic (PRD #109) is ~HALF DONE — `docs/NEXT-SESSION.md` is the copy-paste kickoff for the
+next session.** Pipeline was: `/grill-with-docs` → **ADR-0010** + `docs/design-tokens.md` +
+`docs/design-system-components.md` → PRD #109 → `/to-issues` (#110–#119).
 
-**The chosen next intermediate epic (context):** a DESIGN-SYSTEM pass — establish layouts + a component
-library NOW, before the app grows and refactors get expensive.
+**► SHIPPED (all merged to `main`):**
+- **Foundation:** #110 token layer (warm/rounded/soft-orange in `styles.css`) · #111 primitive library
+  (`src/renderer/src/ui/` — base-ui + Tailwind + **CVA**; Button/Menu/Dialog/Popover/Tooltip/Collapsible/Select/
+  ScrollArea/… + `MenuRadioGroup`) · #112 **streamdown ADOPT** verdict (`docs/streamdown-spike.md`) · #113 shell.
+- **Full SIDEBAR cluster** (a follow-up wave beyond the original #110–119): collapsible all-visible project list
+  (#138, base-ui Collapsible, peek-only) · Projects header +new-project/sort (#129) · pin + archive threads
+  (#132/#133 — `ThreadMeta.pinned?`/`archived?` + `thread:set-flags` IPC + `MetadataStore.setThreadFlags`;
+  `orderByPin`/`partitionArchived`) · settings page + account menu (#130, nav-reducer `view` route) · collapsible
+  sidebar (#127) · official SVG logo (#134) · branded **snake loading spinner** · sticky top-nav/bottom-account.
+  Also parallel: #125 persistence hardening (ADR-0011, draft-persist-on-first-prompt).
 
-**► NEXT: Design-system pass (layouts + components).** Goal: lock in a coherent design system (tokens,
-primitives, layout shells) and migrate the per-area UI onto it, on the #61 foundation (Tailwind v4 +
-base-ui + lucide already in place — `docs/adr` / CONTEXT for that stack). This is the user's priority to
-"get out of the way before the system starts to grow and be complex to change." Scope it as its own
-**grill-with-docs → ADR → tracer-bullet slices** (likely: audit current UI + tokens → design-token/theme
-layer → shared primitives (Button/Menu/Input/Panel/Dialog) → per-area migration (composer / sidebar /
-conversation / auth / git panel), area by area, keeping behavior identical). Reference: t3code +
-CodexMonitor UIs (both local), base-ui docs. START by grilling the scope with the user.
+**► REMAINING slices (build order + deps):**
+- **#114** conversation A / Response(=streamdown)+Message+Bubble+autoscroll **[HITL]** (#111,#112 ✓) → **#115**
+  conversation B / tool+reasoning+working (#114) → **#116** conversation C / approval-inline+actions+file-links (#114)
+- **#117** composer (#111,#113 ✓) · **#118** auth (#111 ✓) · **#119** git panel (#111 ✓) — parallel, AFK-able.
+- Recommended: knock out the AFK area slices **#117 → #119 → #118** first, then **#114 → #115 → #116** with the
+  human in the loop. Each is a **behavior-identical restyle** (569 tests MUST stay green) that retires its area's
+  BEM from `styles.css`. **Reference sources for the conversation work** (copy-adapt & OWN, never a dep):
+  `docs/design-system-components.md §2` (THE lift-from guide) · **streamdown** (`docs/streamdown-spike.md`) ·
+  **shadcn/ui** `bases/base/ui/` (`message`/`bubble`/`message-scroller`/`marker`) · **shadcn AI Elements / ai-sdk
+  Elements** (web: `ai-sdk.dev/elements` — Conversation/Message/Response/Reasoning/Tool/Actions patterns; structure
+  only, feed our ACP reducer) · **t3code** `apps/web/src/components/chat/*` + `ChatMarkdown.tsx` · base-ui docs.
+  Full list + how-to-drive-it in **`docs/NEXT-SESSION.md`**.
 
 **Composer-extras — remaining (RESOLVED from the Vibe CLI source `/Users/abdullahatrash/mistral/mistral-vibe`):**
 - **`$` skills — DROP; already covered by `/`.** vibe-acp has NO `$`/`skills/list` surface: skills are

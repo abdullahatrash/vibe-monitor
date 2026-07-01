@@ -53,8 +53,10 @@ import {
 import { ArrowLeft, ArrowRight, Maximize2, PanelLeft, PanelRight, Terminal } from 'lucide-react'
 import { Button } from './ui/button'
 import { IconButton } from './ui/icon-button'
+import { Card } from './ui/card'
 import { Shell, type WorkspaceFlags } from './shell/Shell'
 import { Logo } from './shell/logo'
+import { LogoSnakeSpinner } from './shell/logo-snake-spinner'
 import { heroHeadline } from './shell/hero-headline'
 import { firstRunState, type FirstRunState } from './shell/first-run'
 import { findSelectedThread, initialNavState, navReducer, type NavState } from './shell/nav-reducer'
@@ -1272,37 +1274,39 @@ function SignInPanel({
 
   if (view.kind === 'signed-in') {
     return (
-      <div className="signin signin--done">
-        <div className="signin__title">Signed in — opening your workspace…</div>
-      </div>
+      <SignInCard>
+        <SignInLoading label="Signed in — opening your workspace…" />
+      </SignInCard>
     )
   }
 
   if (view.kind === 'signing-out') {
     return (
-      <div className="signin">
-        <div className="signin__title">Signing out…</div>
-      </div>
+      <SignInCard>
+        <SignInLoading label="Signing out…" />
+      </SignInCard>
     )
   }
 
   if (view.kind === 'signing-in') {
     return (
-      <div className="signin">
-        <div className="signin__title">Signing in…</div>
-        <div className="signin__message">Complete sign-in in your browser, then return here.</div>
-        <button className="btn btn--ghost signin__action" onClick={cancel}>
+      <SignInCard>
+        <SignInLoading label="Signing in…" />
+        <p className="text-[13px] leading-relaxed text-muted">
+          Complete sign-in in your browser, then return here.
+        </p>
+        <Button variant="outline" size="sm" className="self-start" onClick={cancel}>
           Cancel
-        </button>
-      </div>
+        </Button>
+      </SignInCard>
     )
   }
 
   if (view.kind === 'checking') {
     return (
-      <div className="signin">
-        <div className="signin__title">Checking sign-in status…</div>
-      </div>
+      <SignInCard>
+        <SignInLoading label="Checking sign-in status…" />
+      </SignInCard>
     )
   }
 
@@ -1310,18 +1314,41 @@ function SignInPanel({
   // state stays recoverable, plus a re-check that OBSERVES auth state without
   // re-running the browser flow (#79) — for an out-of-band `vibe` CLI sign-in.
   return (
-    <div className="signin">
-      <div className="signin__title">Not signed in to Mistral Vibe</div>
+    <SignInCard>
+      <div className="text-sm font-semibold text-text-strong">Not signed in to Mistral Vibe</div>
       {view.kind === 'sign-in' && view.description && (
-        <div className="signin__message">{view.description}</div>
+        <p className="text-[13px] leading-relaxed text-muted">{view.description}</p>
       )}
-      {view.kind === 'error' && <div className="signin__error">{view.message}</div>}
-      <button className="btn signin__action" onClick={() => void signIn(view.methodId)}>
-        {view.kind === 'error' ? `Retry — ${view.methodName}` : view.methodName}
-      </button>
-      <button className="btn btn--ghost signin__action" onClick={() => void checkStatus()}>
-        Already signed in? Check status
-      </button>
+      {view.kind === 'error' && <p className="text-[13px] leading-relaxed text-bad">{view.message}</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="default" onClick={() => void signIn(view.methodId)}>
+          {view.kind === 'error' ? `Retry — ${view.methodName}` : view.methodName}
+        </Button>
+        <Button variant="ghost" onClick={() => void checkStatus()}>
+          Already signed in? Check status
+        </Button>
+      </div>
+    </SignInCard>
+  )
+}
+
+/** Centered card chrome shared by every {@link SignInPanel} state (sibling of the
+ * connecting/error connect-states). Token surface + rounded card, no legacy BEM. */
+function SignInCard({ children }: { children: ReactNode }): JSX.Element {
+  return <Card className="mx-auto mt-14 w-full max-w-[420px] gap-3">{children}</Card>
+}
+
+/** A branded-spinner + label row for the panel's in-flight states (signing-in /
+ * checking / signing-out / opening). Copy is unchanged; only the look. */
+function SignInLoading({ label }: { label: string }): JSX.Element {
+  return (
+    <div className="flex items-center gap-2.5 text-sm font-semibold text-text-strong">
+      {/* Spinner is decorative here — the visible label carries the accessible name,
+          so hide the spinner's own role=img to avoid a double screen-reader announce. */}
+      <span aria-hidden className="inline-flex">
+        <LogoSnakeSpinner size={16} />
+      </span>
+      <span>{label}</span>
     </div>
   )
 }

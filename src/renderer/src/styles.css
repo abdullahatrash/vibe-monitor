@@ -431,48 +431,6 @@ body {
   margin-top: 4px;
 }
 
-.signin {
-  border: 1px solid var(--accent-tint-border);
-  background: var(--accent-tint);
-  border-radius: var(--radius);
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.signin__title {
-  color: var(--accent-text);
-  font-weight: 600;
-  font-size: 13px;
-}
-
-.signin__message {
-  font-size: 13px;
-  line-height: 1.4;
-  color: var(--muted);
-}
-
-.signin__error {
-  font-size: 13px;
-  line-height: 1.4;
-  color: var(--bad);
-}
-
-.signin--done {
-  border-color: var(--ok-tint-border);
-  background: var(--ok-tint);
-}
-
-.signin--done .signin__title {
-  color: var(--ok);
-}
-
-.signin__action {
-  margin-top: 2px;
-}
-
 /* --- Conversation (TB2) --- */
 
 .conv {

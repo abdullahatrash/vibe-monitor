@@ -2,7 +2,7 @@
 
 > You are picking up an in-flight project. Read this top to bottom once, then keep it open.
 > It tells you **what this is**, **how we work**, **what exists**, **what's next**, and **where the
-> authoritative information lives** (in-repo docs + three local reference repos). Last updated
+> authoritative information lives** (in-repo docs + the local reference repos in §4). Last updated
 > 2026-07-01, `main` @ `65c23a5`, **495 tests**. The **design-system epic is SCOPED AND FILED**: grilled →
 > **ADR-0010** + `docs/design-tokens.md` + `docs/design-system-components.md` → **PRD #109** → tracer-bullet
 > issues **#110–#119**. **Start with #110 (token layer)** — see §6/§8. `$`/`@` autocomplete stays paused.
@@ -138,13 +138,17 @@ repeat — never horizontal "all tests then all code").
 - `docs/opencode-electron-patterns.md` — Electron mechanics (PATH resolution, electron-store, etc.).
 - `docs/t3code-reference.md` — patterns adopted from t3code.
 - `docs/conventions.md` — code conventions.
-- `docs/design/brand.md` — Mistral branding tokens (light mode, orange `--accent #fa500f` for
-  fills/borders only; `--accent-text #c2410c` for orange TEXT (AA-safe); zero border-radius / sharp edges).
-- `docs/adr/0001..0006` — **the load-bearing decisions. Respect them; don't silently contradict.** See §7.
+- **Design system (the active epic — ADR-0010):** `docs/adr/0010-…` (decisions) + `docs/design-tokens.md`
+  (exact token values) + `docs/design-system-components.md` (what to lift from shadcn/t3code + how). ⚠️
+  These **supersede `docs/design/brand.md`** — the design epic REVERSES the old brand (bright `--accent
+  #fa500f` → softer gradient-orange `#cf6a3a`/`#e07a3e`; **zero radius → a rounded scale**). Use
+  `design-tokens.md`, not `brand.md`, for anything visual from now on.
+- `docs/adr/0001..0010` — **the load-bearing decisions. Respect them; don't silently contradict.** See §7.
 
-### The three local reference repos (in `/Users/abdullahatrash/mistral/`)
+### The local reference repos (in `/Users/abdullahatrash/mistral/`)
 These are **cloned, real codebases** — grep them for concrete implementations. They are inspiration,
-not dependencies; right-size their ideas to our thin-orchestrator scope.
+not dependencies; right-size their ideas to our thin-orchestrator scope. Copy-adapt + own in-repo — never
+add them as npm deps.
 
 1. **`CodexMonitor/`** — *the concept we're cloning.* Tauri/**Rust** GUI orchestrator for **Codex**.
    ⚠️ This is also the **session's cwd**, so shell commands reset here. Use it for **what features to
@@ -153,12 +157,20 @@ not dependencies; right-size their ideas to our thin-orchestrator scope.
 2. **`opencode/packages/desktop/`** — *same stack as us* (electron-vite + Bun, but SolidJS). Use it for
    **Electron mechanics**: shell-env PATH resolution, electron-store persistence, window-state,
    electron-updater, electron-log, node-pty terminal, electron-builder packaging.
-3. **`t3code/`** — *a mature multi-agent Effect-TS GUI* (cloned at `/Users/abdullahatrash/mistral/t3code`;
-   ignore its `.repos/` vendored deps and `node_modules`). Our **north star for Thread/Session modeling
-   and UI shell**. Use it for: Thread-vs-Session + resume-cursor, snapshot-then-stream, draft handling
-   (we mirrored its client-only thread-draft model in #58, and #60 mirrors its composer-draft store —
-   `apps/web/src/composerDraftStore.ts`, key `t3code:composer-drafts:v1`, `shouldRemoveDraft` pruning).
-   Most of its multi-provider/CQRS/Effect machinery is **overkill for us** — take patterns, not the stack.
+3. **`t3code/`** — *a mature multi-agent Effect-TS GUI* (`/Users/abdullahatrash/mistral/t3code`; ignore its
+   `.repos/` + `node_modules`). Our **north star for Thread/Session modeling, the UI shell, AND the rich
+   conversation aesthetic** (design-system epic mines its chat: `apps/web/src/components/chat/*` +
+   `ChatMarkdown.tsx` — message/bubble, file-path links, `SimpleWorkEntryRow` tool rows, reasoning, working
+   indicator; see `docs/design-system-components.md`). Its stack matches ours (Tailwind v4 + base-ui + CVA +
+   lucide). Take patterns, not the Effect/CQRS machinery.
+4. **`ui/`** — the **shadcn/ui monorepo** (`/Users/abdullahatrash/mistral/ui`). The **primitive-library
+   source for the design-system epic**: base-ui components under `apps/v4/registry/bases/base/ui/` (the
+   `base` base, NOT `radix`) — Button CVA exemplar + Message/Bubble/MessageScroller. Copy-adapt to our
+   tokens (swap their `cn-*` theme tokens for inline Tailwind). Details in `docs/design-system-components.md`.
+5. **`mistral-vibe/`** — the **cloned Vibe CLI / ACP backend source** (`/Users/abdullahatrash/mistral/mistral-vibe`,
+   package under `vibe/`). Ground truth for **how the agent behaves over ACP** — e.g. `vibe/acp/acp_agent_loop.py`
+   resolved that skills fold into the `available_commands_update` list (`$`≡`/`) and `@path` is expanded
+   server-side via `render_path_prompt`. Read it to verify protocol behavior instead of guessing.
 
 ### Persistent memory (across sessions)
 There is a file-based memory at

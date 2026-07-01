@@ -141,23 +141,29 @@ export function Shell({
           collapsed ? 'w-0 border-r-0' : 'w-[338px] border-r',
         )}
       >
-        <div className="flex h-full w-[338px] flex-none flex-col gap-3 overflow-y-auto p-3">
-          <SidebarHeader />
-          <PrimaryNav canCreateThread={canCreateThread} onNewThread={onNewThread} />
-          <WorkspaceNav
-            workspaces={workspaces}
-            nav={nav}
-            workspaceFlags={workspaceFlags}
-            rows={rows}
-            protectedThreadId={protectedThreadId}
-            opening={opening}
-            onOpenProject={onOpenProject}
-            onSelectThread={onSelectThread}
-            onNewThreadInWorkspace={onNewThreadInWorkspace}
-            onDeleteThread={onDeleteThread}
-            onSetThreadFlags={onSetThreadFlags}
-          />
-          <div className="flex-1" />
+        {/* Three-band sidebar: a PINNED top (logo + primary nav) and a PINNED bottom
+            (account) sandwich the ONLY scroll region — the Projects list — so the nav
+            and account stay put while just the projects scroll. */}
+        <div className="flex h-full w-[338px] flex-none flex-col gap-3 p-3">
+          <div className="flex flex-none flex-col gap-3">
+            <SidebarHeader />
+            <PrimaryNav canCreateThread={canCreateThread} onNewThread={onNewThread} />
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <WorkspaceNav
+              workspaces={workspaces}
+              nav={nav}
+              workspaceFlags={workspaceFlags}
+              rows={rows}
+              protectedThreadId={protectedThreadId}
+              opening={opening}
+              onOpenProject={onOpenProject}
+              onSelectThread={onSelectThread}
+              onNewThreadInWorkspace={onNewThreadInWorkspace}
+              onDeleteThread={onDeleteThread}
+              onSetThreadFlags={onSetThreadFlags}
+            />
+          </div>
           <AccountChip onOpenSettings={onOpenSettings} />
         </div>
       </aside>

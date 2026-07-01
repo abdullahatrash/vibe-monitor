@@ -64,9 +64,9 @@ bridged into Tailwind v4 via `@theme inline`. **Warm neutrals · softer gradient
 Bridge into `@theme` so `rounded-md`/`rounded-2xl` map to these (undo the current all-zero override).
 
 ## Typography
-- **UI stack:** `-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif`
-- **Mono stack:** `'SF Mono', ui-monospace, 'Menlo', monospace` (code, terminal)
-- No webfont loaded — system fonts.
+- **UI stack (`--font-sans`):** `'Geist Variable', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif`
+- **Mono stack (`--font-mono`):** `'Geist Mono Variable', ui-monospace, SFMono-Regular, 'Menlo', monospace` (code, terminal)
+- **Geist (Vercel)** is now the app font — bundled OFFLINE via `@fontsource-variable/geist` + `@fontsource-variable/geist-mono` (imported in `main.tsx`), defined as `--font-sans`/`--font-mono` in `@theme` (so Tailwind `font-sans`/`font-mono` utilities resolve to them too). System fonts remain the fallback if Geist ever fails to load. CSP allows the bundled woff2 via `font-src 'self' data:`.
 
 | Role | size | weight | line-height | tracking |
 |---|---|---|---|---|

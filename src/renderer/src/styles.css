@@ -75,7 +75,7 @@
      generated --spacing (4px-based) already covers this range via `p-*`/`gap-*`
      utilities — intentionally NOT redefining a parallel spacing var scheme here. */
 
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  font-family: var(--font-sans);
 }
 
 /* Bridge the brand tokens into Tailwind v4's theme so utilities resolve to the
@@ -111,6 +111,16 @@
    self-reference against the :root token of the same name (TRAP 1: that
    collision silently resolves to invalid → border-radius falls back to 0). */
 @theme {
+  /* Fonts — Geist (Vercel), bundled OFFLINE via @fontsource-variable (imported in
+     main.tsx; variable weight 100–900). Defined in `@theme` so `font-sans`/`font-mono`
+     utilities resolve to them (the streamdown Response layer #114 uses `font-mono`),
+     and `var(--font-sans)`/`var(--font-mono)` drive the base + `.mono`/code rules.
+     System fonts stay as the fallback if Geist ever fails to load. */
+  --font-sans:
+    'Geist Variable', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui,
+    sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+
   --radius-sm: 7px; /* icon buttons / window controls */
   --radius-md: 10px; /* nav items */
   --radius-lg: 12px; /* pill */
@@ -257,7 +267,7 @@ body {
 
 .hint code,
 .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -676,7 +686,7 @@ body {
 }
 
 .chat-md code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.9em;
   background: var(--accent-tint);
   border: 1px solid var(--border);

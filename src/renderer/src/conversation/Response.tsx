@@ -23,10 +23,16 @@ import { FileChip } from './FileChip'
  *    silently reintroduce `javascript:`-href XSS. As defence-in-depth (so the `a` override
  *    is safe even if that chain changes) we also allow-list the scheme in `a` below.
  *
- * Two `components` overrides:
+ * Three `components` overrides:
  *  - `inlineCode` — resolves the spike's `muted` token collision: streamdown's default
  *    inline code is `bg-muted`, but our `--color-muted` is a text-grey, so we repaint
  *    inline code on `--accent-tint` instead (code BLOCKS use `bg-sidebar`, no collision).
+ *  - `thead` — same collision (#162): streamdown fills the table header row with
+ *    `bg-muted/80`, which our text-grey `--color-muted` renders as ~80% dark warm-grey.
+ *    Repaint the one colliding class onto `bg-sidebar` (the same warm-light container
+ *    surface code BLOCKS use); the `th` cells keep streamdown's default border/padding/
+ *    font-weight untouched. Fixed here, NOT in the token map — `--color-muted` must stay
+ *    a text-grey everywhere else it's used.
  *  - `a` — turns file-path destinations into an orange `FileChip`; other links stay
  *    plain accent-underlined anchors (opened in the system browser).
  */
@@ -54,6 +60,13 @@ export function Response({ text, className }: { text: string; className?: string
         >
           {children}
         </code>
+      ),
+      // Repaint only streamdown's colliding `bg-muted/80` (see header comment, #162);
+      // `data-streamdown="table-header"` kept for parity with streamdown's default markup.
+      thead: ({ className: theadClassName, children }) => (
+        <thead data-streamdown="table-header" className={cn('bg-sidebar', theadClassName)}>
+          {children}
+        </thead>
       ),
       a: ({ href, className: linkClassName, children }) => {
         const link = href ? parseFileLink(href) : null

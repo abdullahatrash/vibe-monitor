@@ -11,6 +11,7 @@ import { AgentControls } from './AgentControls'
 import {
   conversationReducer,
   initialConversationState,
+  type AcpCommand,
   type AssistantItem,
   type ConversationItem,
   type ErrorItem,
@@ -26,6 +27,12 @@ import { eventBelongsToThread } from './event-routing'
 import { replayTranscript } from './replay'
 import { ChatMarkdown } from './ChatMarkdown'
 import { getDraft, setDraft as persistDraft, clearDraft } from './composer-draft-store'
+import {
+  applyCommand,
+  filterCommands,
+  getCommandQuery,
+  moveSelection,
+} from './command-autocomplete'
 
 /** Process-local counter for unique echoed-prompt ids. */
 let promptSeq = 0
@@ -105,6 +112,20 @@ export function Conversation({
   const onBoundRef = useRef(onBound)
   onBoundRef.current = onBound
   const listRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  // Ephemeral `/` slash-command autocomplete state (#95): the open trigger (the
+  // `/`'s index + the query after it) and the highlighted row. Purely renderer-local
+  // — no IPC, no persistence — so a Thread switch (which remounts this view, keyed by
+  // threadId) always starts with the popover closed. `null` = closed.
+  const [commandTrigger, setCommandTrigger] = useState<{ start: number; query: string } | null>(
+    null,
+  )
+  const [commandIndex, setCommandIndex] = useState(0)
+  // Esc-dismiss latch (#95): the `/`-token start the user dismissed. While it holds,
+  // re-deriving the SAME token keeps the popover closed — so Esc stays dismissed as
+  // you keep typing (the escape hatch for sending literal `/text`). Cleared once the
+  // token closes/deletes or a different `/` opens, so a fresh trigger reopens.
+  const dismissedStartRef = useRef<number | null>(null)
   // True once any live event has been folded in: guards the async hydrate from
   // clobbering events that streamed in before the JSONL read resolved.
   const liveSeen = useRef(false)
@@ -246,7 +267,88 @@ export function Conversation({
     dispatch({ type: 'recover' })
   }
 
+  // The `/` autocomplete's live matches (#95): folded from the Vibe-streamed
+  // `availableCommands`, filtered prefix-then-substring by the open query. The
+  // popover shows only with an active trigger AND at least one match; `commandRows`
+  // is empty otherwise so the keyboard handlers are inert. `activeIndex` clamps the
+  // stored highlight in case the match count shrank as the query grew.
+  const commandRows: AcpCommand[] = commandTrigger
+    ? filterCommands(state.availableCommands, commandTrigger.query)
+    : []
+  const showCommands = commandTrigger !== null && commandRows.length > 0
+  const activeIndex = Math.min(commandIndex, commandRows.length - 1)
+
+  // Re-derive the trigger from the composer's value + caret after any edit or caret
+  // move. Reads the live caret so `hello /re` (mid-line) never triggers while `/re`
+  // (line start) does. Resetting the highlight to the top on every re-derive is safe:
+  // list navigation preventDefaults the caret move, so it never re-runs this.
+  function refreshCommandTrigger(value: string, caret: number | null): void {
+    const trigger = caret === null ? null : getCommandQuery(value, caret)
+    if (!trigger || !trigger.active) {
+      // Token gone — drop any dismissal so a later `/` reopens fresh.
+      dismissedStartRef.current = null
+      setCommandTrigger(null)
+      setCommandIndex(0)
+      return
+    }
+    if (dismissedStartRef.current === trigger.start) {
+      // Still the Esc-dismissed token — stay closed as the query grows.
+      setCommandTrigger(null)
+      return
+    }
+    dismissedStartRef.current = null
+    setCommandTrigger({ start: trigger.start, query: trigger.query })
+    setCommandIndex(0)
+  }
+
+  // Accept a completion: splice `/<name> ` in over the `/query` token, keep the
+  // draft + persisted draft (#60) in lockstep, then restore focus and drop the caret
+  // just past the inserted space. The DOM caret is set after commit (rAF) so React's
+  // controlled value doesn't stomp it; the resulting `onSelect` closes the popover.
+  function acceptCommand(command: AcpCommand): void {
+    if (!commandTrigger) return
+    const node = inputRef.current
+    const caret = node ? node.selectionStart : draft.length
+    const next = applyCommand(draft, commandTrigger.start, caret, command.name)
+    setDraft(next.value)
+    persistDraft(window.localStorage, thread.threadId, next.value)
+    setCommandTrigger(null)
+    setCommandIndex(0)
+    requestAnimationFrame(() => {
+      const el = inputRef.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(next.caret, next.caret)
+    })
+  }
+
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>): void {
+    // Popover-open key interception (#95): navigation + accept must win over Enter's
+    // send and Tab's focus move. When closed, every key falls through unchanged.
+    if (showCommands) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setCommandIndex(moveSelection(activeIndex, commandRows.length, 1))
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setCommandIndex(moveSelection(activeIndex, commandRows.length, -1))
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        acceptCommand(commandRows[activeIndex])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        // Latch this token as dismissed so typing more doesn't reopen it (#95).
+        dismissedStartRef.current = commandTrigger?.start ?? null
+        setCommandTrigger(null)
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       void send()
@@ -298,7 +400,34 @@ export function Conversation({
         />
 
         <div className="composer">
+          {showCommands && (
+            <ul className="command-autocomplete" role="listbox" aria-label="Slash commands">
+              {commandRows.map((command, i) => (
+                <li
+                  key={command.name}
+                  role="option"
+                  aria-selected={i === activeIndex}
+                  className={
+                    i === activeIndex
+                      ? 'command-autocomplete__row command-autocomplete__row--active'
+                      : 'command-autocomplete__row'
+                  }
+                  // mousedown (not click) so we accept BEFORE the textarea blurs.
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    acceptCommand(command)
+                  }}
+                >
+                  <span className="command-autocomplete__name">/{command.name}</span>
+                  {command.description && (
+                    <span className="command-autocomplete__desc">{command.description}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
           <textarea
+            ref={inputRef}
             className="composer__input"
             placeholder="Ask Vibe… (Enter to send, Shift+Enter for a newline)"
             value={draft}
@@ -306,7 +435,13 @@ export function Conversation({
               // Write-through: keep React state and the persisted draft (#60) in lockstep.
               setDraft(e.target.value)
               persistDraft(window.localStorage, thread.threadId, e.target.value)
+              // Re-derive the `/` autocomplete trigger from the new value + caret (#95).
+              refreshCommandTrigger(e.target.value, e.target.selectionStart)
             }}
+            // Caret moves (arrows/click) with no edit also open/close the trigger (#95).
+            onSelect={(e) =>
+              refreshCommandTrigger(e.currentTarget.value, e.currentTarget.selectionStart)
+            }
             onKeyDown={onKeyDown}
             rows={2}
           />

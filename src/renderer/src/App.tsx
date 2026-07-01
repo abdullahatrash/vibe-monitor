@@ -307,6 +307,20 @@ export function App(): JSX.Element {
     navDispatch({ type: 'select-thread', workspaceId, threadId })
   }
 
+  /**
+   * Start a new thread in a SPECIFIC project from its sidebar ＋ (#138/#131): the
+   * deliberate "start working here" trigger (folding a project is peek-only and never
+   * connects). If the project is ALREADY connected, mint a draft on its warm agent
+   * (`newThread`); otherwise `selectWorkspace` it — which pins it in nav and
+   * spawns/reuses its agent, landing on a live thread to work in. Reuses the existing
+   * functions; keeps `selectWorkspace` reachable now that the header fold no longer
+   * calls it.
+   */
+  function newThreadInWorkspace(workspaceId: string): void {
+    if (connections[workspaceId]?.status === 'connected') newThread(workspaceId)
+    else selectWorkspace(workspaceId)
+  }
+
   useEffect(() => {
     void runDetect()
     void refreshRecents()
@@ -697,9 +711,9 @@ export function App(): JSX.Element {
         outlet={outlet}
         opening={opening}
         onOpenProject={() => void openProject()}
-        onSelectWorkspace={selectWorkspace}
         onSelectThread={selectThreadInWorkspace}
         onNewThread={() => selectedWs && newThread(selectedWs)}
+        onNewThreadInWorkspace={newThreadInWorkspace}
         onDeleteThread={deleteThread}
       />
     </div>

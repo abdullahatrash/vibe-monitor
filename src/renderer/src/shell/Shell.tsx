@@ -726,24 +726,36 @@ function NavThread({
     setEditing(false)
   }
 
-  // Inline rename: swap the row for an autofocused input. Enter/blur commit, Esc
-  // cancels; the label is preselected so typing replaces it. Not wrapped in NavItem
-  // (a button) so typing/clicking never selects the row or nests a control in a button.
+  // Inline rename: MIRROR the row's layout (same indent + leading dot) and swap only
+  // the label for an autofocused input, so the text stays aligned with sibling rows —
+  // the edit box hugs the text (after the dot), never the empty 42px indent. A plain
+  // div (not NavItem, a <button>) so typing never selects the row or nests a control
+  // in a button. Enter/blur commit, Esc cancels; the label is preselected to replace.
   if (editing) {
     return (
       <li className="relative">
-        <input
-          autoFocus
-          defaultValue={row.thread.title ?? ''}
-          aria-label="Rename thread"
-          onFocus={(e) => e.currentTarget.select()}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') submitRename(e.currentTarget.value)
-            else if (e.key === 'Escape') cancelRename()
-          }}
-          onBlur={(e) => submitRename(e.currentTarget.value)}
-          className="w-full rounded-md border border-accent bg-transparent py-[7px] pr-2 pl-[42px] text-[13.5px] text-text outline-none"
-        />
+        <div className="flex w-full items-center gap-2.5 py-[7px] pr-2 pl-[42px]">
+          <span
+            className={
+              row.live
+                ? 'size-[7px] shrink-0 rounded-full bg-ok'
+                : 'size-[7px] shrink-0 rounded-full bg-border'
+            }
+            aria-hidden
+          />
+          <input
+            autoFocus
+            defaultValue={row.thread.title ?? ''}
+            aria-label="Rename thread"
+            onFocus={(e) => e.currentTarget.select()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submitRename(e.currentTarget.value)
+              else if (e.key === 'Escape') cancelRename()
+            }}
+            onBlur={(e) => submitRename(e.currentTarget.value)}
+            className="min-w-0 flex-1 rounded-sm bg-transparent px-1 text-[13.5px] text-text outline-none ring-1 ring-accent"
+          />
+        </div>
       </li>
     )
   }

@@ -1,7 +1,6 @@
 import { useState, type JSX, type ReactNode } from 'react'
 import {
   Atom,
-  Check,
   ChevronDown,
   Clock,
   Ellipsis,
@@ -14,10 +13,12 @@ import {
 } from 'lucide-react'
 import type { ListMetadataResult, ThreadMeta } from '../../../shared/ipc'
 import type { NavState } from './nav-reducer'
-import { backgroundAttention } from './background-attention'
-import { isThreadDeletable, type UnifiedThreadRow } from './unified-threads'
+import { deriveUnifiedThreads, isThreadDeletable, type UnifiedThreadRow } from './unified-threads'
+import { getOpenProjects, setOpenProjects } from './project-open-store'
 import { getSortOrder, setSortOrder, sortWorkspaces, type WorkspaceSortOrder } from './workspace-sort'
 import { Badge } from '../ui/badge'
+import { cn } from '../lib/utils'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible'
 import { IconButton } from '../ui/icon-button'
 import { Menu, MenuContent, MenuItem, MenuRadioGroup, MenuRadioItem, MenuTrigger } from '../ui/menu'
 import { NavItem } from '../ui/nav-item'
@@ -26,14 +27,19 @@ import { Logo } from './logo'
 import { formatRelativeTime } from './relative-time'
 import { visibleRows } from './show-more'
 
-/** A Workspace's rolled-up live status, for its switcher row. */
+/** A Workspace's rolled-up live status, shown on its collapsible project header. */
 export interface WorkspaceFlags {
   streaming: boolean
   needsAttention: boolean
 }
 
-/** How many thread rows the selected Workspace shows before "Show more" (#113). */
+/** How many thread rows each project shows before "Show more" (#113/#138). */
 const THREAD_CAP = 5
+
+/** A stable empty live-set for a NON-active project's cold-only derivation (no re-alloc). */
+const NO_LIVE_THREAD_IDS: ReadonlySet<string> = new Set()
+/** A stable empty status map for a NON-active project — its rollup lives on the header. */
+const NO_STATUSES = {} as const
 
 /**
  * The persistent two-pane app shell (ADR-0006 decision 1): a left sidebar that
@@ -63,9 +69,9 @@ export function Shell({
   outlet,
   opening,
   onOpenProject,
-  onSelectWorkspace,
   onSelectThread,
   onNewThread,
+  onNewThreadInWorkspace,
   onDeleteThread,
 }: {
   /** Persisted Workspaces (cold metadata) for the switcher rows + display names. */
@@ -88,12 +94,12 @@ export function Shell({
   opening: boolean
   /** Open a project via the OS dialog (the existing `openProject`), from the Projects header +. */
   onOpenProject: () => void
-  /** Select a Workspace — App pins it in nav and connect-or-reuses its warm agent. */
-  onSelectWorkspace: (workspaceId: string) => void
   /** Select a Thread — App pins it in nav and (if live) remembers it as active. */
   onSelectThread: (workspaceId: string, threadId: string) => void
   /** Mint a New-thread draft on the selected Workspace's live agent. */
   onNewThread: () => void
+  /** Start a new thread in a SPECIFIC project (#138 per-project ＋) — connect-if-needed. */
+  onNewThreadInWorkspace: (workspaceId: string) => void
   /** Delete a Thread (TB6) — main tears down any live session, then the list refreshes. */
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
 }): JSX.Element {
@@ -111,8 +117,8 @@ export function Shell({
           protectedThreadId={protectedThreadId}
           opening={opening}
           onOpenProject={onOpenProject}
-          onSelectWorkspace={onSelectWorkspace}
           onSelectThread={onSelectThread}
+          onNewThreadInWorkspace={onNewThreadInWorkspace}
           onDeleteThread={onDeleteThread}
         />
         <div className="flex-1" />
@@ -206,26 +212,27 @@ function AccountChip(): JSX.Element {
 }
 
 /**
- * The sidebar's Projects section (= Workspaces): a **project-switcher dropdown**
- * (#128) over the ACTIVE Workspace's unified Thread list — replacing #113's inline,
- * always-expanded multi-project fold.
+ * The sidebar's Projects section (= Workspaces): an **all-visible collapsible list**
+ * (#138, superseding #128's switcher dropdown). Every Workspace stays VISIBLE as a
+ * row that independently FOLDS its own Thread list (base-ui `Collapsible`); multiple
+ * can be open at once.
  *
- * The switcher TRIGGER shows the active Workspace (folder + name + a chevron); its
- * dropdown (the base-ui `Menu`) lists ALL Workspaces, each with its rolled-up live
- * status (streaming spinner / needs-attention badge) and a check on the current one.
- * Picking one calls `onSelectWorkspace` — the EXISTING selection path (the nav
- * reducer), unchanged; this is a presentation change only.
+ * Folding is **peek-only** — a header row's `CollapsibleTrigger` ONLY toggles the
+ * fold; it NEVER selects or connects the project (no agent is spawned). A project
+ * goes live only by opening one of its Threads (`onSelectThread` — the existing
+ * live/cold-Continue flow, unchanged) or via its per-project ＋ (`onNewThreadInWorkspace`).
  *
- * Background-Workspace visibility (the deferred TB2 finding) is preserved TWO ways:
- * (a) each Workspace row IN the dropdown carries its flags, and (b) a rolled-up
- * indicator on the COLLAPSED trigger ({@link backgroundAttention}) fires when ANY
- * non-active Workspace needs you / is streaming — so a wedged background turn is
- * visible without opening the dropdown.
+ * Each header shows the Workspace's rolled-up live status (streaming spinner /
+ * needs-you badge from `workspaceFlags`) EVEN WHEN FOLDED, so a background permission
+ * prompt is never hidden — which is why the old collapsed-trigger roll-up
+ * (`backgroundAttention`) is gone. The panel lists that project's Threads: the ACTIVE
+ * project uses App's live unified `rows`; every other project derives cold rows from
+ * its own persisted Threads. Each list is capped to {@link THREAD_CAP} with a
+ * "Show more" toggle and the selection-aware pin.
  *
- * Below the switcher, ONLY the active Workspace's unified Thread list (TB3 #48)
- * renders (from `rows`, already scoped to the selection by App), capped to
- * {@link THREAD_CAP} with a "Show more" toggle (renderer-only state — no
- * IPC/persistence) and the selection-aware pin.
+ * The #129 header (new-project ＋ + Recent/Name sort) is kept; the sort now orders the
+ * project LIST. Per-project open state is renderer-only UI, seeded to include the
+ * selected project and persisted best-effort to localStorage (`project-open-store`).
  */
 function WorkspaceNav({
   workspaces,
@@ -235,8 +242,8 @@ function WorkspaceNav({
   protectedThreadId,
   opening,
   onOpenProject,
-  onSelectWorkspace,
   onSelectThread,
+  onNewThreadInWorkspace,
   onDeleteThread,
 }: {
   workspaces: ListMetadataResult
@@ -246,14 +253,13 @@ function WorkspaceNav({
   protectedThreadId: string | null
   opening: boolean
   onOpenProject: () => void
-  onSelectWorkspace: (workspaceId: string) => void
   onSelectThread: (workspaceId: string, threadId: string) => void
+  onNewThreadInWorkspace: (workspaceId: string) => void
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
 }): JSX.Element {
-  const [expandedThreads, setExpandedThreads] = useState(false)
-  // The switcher's DISPLAY-ONLY sort order (#129): renderer-only UI state seeded
-  // from localStorage (default 'recent'), persisted on change. It reorders the
-  // switcher dropdown ONLY — never selection, nav, or the Thread list below.
+  // The DISPLAY-ONLY sort order (#129): renderer-only UI state seeded from
+  // localStorage (default 'recent'), persisted on change. It reorders the project
+  // LIST only — never selection, nav, or the Thread lists.
   const [sortOrder, setSortOrderState] = useState<WorkspaceSortOrder>(() =>
     getSortOrder(window.localStorage),
   )
@@ -261,39 +267,35 @@ function WorkspaceNav({
     setSortOrderState(order)
     setSortOrder(window.localStorage, order)
   }
+  // Which projects are UNFOLDED (#138): controlled, renderer-only UI state. Seeded
+  // from localStorage UNIONED with the currently-selected project so the active one
+  // starts expanded; toggling a fold spawns no agent and never changes selection.
+  const activeId = nav.selectedWorkspaceId
+  const [openIds, setOpenIds] = useState<Set<string>>(
+    () => new Set([...getOpenProjects(window.localStorage), ...(activeId ? [activeId] : [])]),
+  )
+  function toggleOpen(workspaceId: string, open: boolean): void {
+    setOpenIds((prev) => {
+      const next = new Set(prev)
+      if (open) next.add(workspaceId)
+      else next.delete(workspaceId)
+      setOpenProjects(window.localStorage, [...next])
+      return next
+    })
+  }
   // ONE Date.now() per render, injected into the pure formatter at each call site.
   const nowMs = Date.now()
 
-  const activeId = nav.selectedWorkspaceId
-  const activeWorkspace = workspaces.find((w) => w.id === activeId) ?? null
-  // A sorted COPY for the switcher dropdown — the `workspaces` prop is never mutated
-  // and the active/selection logic still keys off ids, so ordering is presentation-only.
+  // A sorted COPY for the list — the `workspaces` prop is never mutated and the
+  // active/selection logic still keys off ids, so ordering is presentation-only.
   const sortedWorkspaces = sortWorkspaces(workspaces, sortOrder)
-  // The roll-up of every NON-active Workspace's status, for the collapsed trigger —
-  // so a background Workspace blocked on a permission is visible without opening.
-  const background = backgroundAttention(workspaceFlags, activeId)
-  // Cap the active Workspace's thread list, PINNING the selected row so opening a
-  // thread that sorts below the cap never hides its (highlighted) row (#113 review).
-  const capped = visibleRows(
-    rows,
-    THREAD_CAP,
-    expandedThreads,
-    (r) => r.thread.id === nav.selectedThreadId,
-  )
-  // What the toggle can still reveal (0 → nothing hidden → no toggle).
-  const hiddenCount = rows.length - capped.length
-  // A permission-blocked thread that sorts BELOW the cap would otherwise have no
-  // always-visible signal (the active Workspace is excluded from the trigger
-  // roll-up), so flag it on the "Show more" control (#128 review).
-  const cappedIds = new Set(capped.map((r) => r.thread.id))
-  const hiddenNeedsAttention = rows.some((r) => !cappedIds.has(r.thread.id) && r.needsAttention)
 
   return (
     <nav className="flex flex-col gap-0.5">
       {/* Projects header row (#129): the label on the left, and on the right a
           new-project + (→ the existing openProject) plus an options "…" menu holding
-          the switcher's display-only sort order. The + stays available even with zero
-          Workspaces, so the first project can still be opened from here. */}
+          the display-only sort order. The + stays available even with zero Workspaces,
+          so the first project can still be opened from here. */}
       <div className="flex items-center justify-between px-3 py-1.5">
         <span className="text-[13px] font-medium text-faint">Projects</span>
         <div className="flex items-center gap-0.5">
@@ -336,64 +338,155 @@ function WorkspaceNav({
           No workspaces yet. Open a project to begin.
         </p>
       ) : (
-        <Menu>
-          <MenuTrigger
-            title={activeWorkspace?.dir}
-            className="flex w-full items-center gap-2.5 rounded-md px-3 py-[7px] text-left text-[15px] text-text-body outline-none transition-colors hover:bg-accent/10 focus-visible:bg-accent/10 data-[popup-open]:bg-accent/10"
-          >
-            <Folder className="size-4 shrink-0 text-muted" aria-hidden />
-            <span className="flex-1 truncate">
-              {activeWorkspace ? activeWorkspace.displayName : 'Select a project'}
-            </span>
-            {/* (b) rolled-up background status on the collapsed trigger (TB2 finding). */}
-            {background.streaming && (
-              <Spinner className="size-3.5 text-accent-text" aria-label="A background project is working" />
-            )}
-            {background.needsAttention && (
-              <Badge variant="destructive" title="A background project needs your attention">
-                needs you
-              </Badge>
-            )}
-            <ChevronDown className="size-4 shrink-0 text-muted" aria-hidden />
-          </MenuTrigger>
-          <MenuContent align="start" className="min-w-[290px]">
-            {sortedWorkspaces.map((w) => {
-              const flags = workspaceFlags[w.id]
-              const isActive = w.id === activeId
-              return (
-                <MenuItem key={w.id} onClick={() => onSelectWorkspace(w.id)} title={w.dir}>
-                  <Folder className="size-4 shrink-0" aria-hidden />
-                  <span className="flex-1 truncate">{w.displayName}</span>
-                  {/* (a) each Workspace's own flags, visible in the open dropdown. */}
-                  {flags?.streaming && <Spinner className="size-3.5" aria-label="streaming" />}
-                  {flags?.needsAttention && (
-                    <Badge variant="destructive" title="A thread needs your attention">
-                      needs you
-                    </Badge>
-                  )}
-                  {isActive && <Check className="size-4 shrink-0" aria-hidden />}
-                </MenuItem>
-              )
-            })}
-          </MenuContent>
-        </Menu>
+        sortedWorkspaces.map((w) => {
+          const isActive = w.id === activeId
+          // The ACTIVE project uses App's live unified rows (cold + live merged); every
+          // other project derives COLD rows from its OWN persisted Threads — no agent,
+          // no live badges (the header rollup covers its background status).
+          const projectRows = isActive
+            ? rows
+            : deriveUnifiedThreads({
+                cold: w.threads,
+                live: [],
+                liveThreadIds: NO_LIVE_THREAD_IDS,
+                statuses: NO_STATUSES,
+              })
+          return (
+            <ProjectRow
+              key={w.id}
+              workspace={w}
+              rows={projectRows}
+              isActive={isActive}
+              open={openIds.has(w.id)}
+              flags={workspaceFlags[w.id]}
+              selectedThreadId={nav.selectedThreadId}
+              protectedThreadId={protectedThreadId}
+              nowMs={nowMs}
+              onToggleOpen={toggleOpen}
+              onNewThread={onNewThreadInWorkspace}
+              onSelectThread={onSelectThread}
+              onDeleteThread={onDeleteThread}
+            />
+          )
+        })
       )}
+    </nav>
+  )
+}
 
-      {/* Only the ACTIVE Workspace's thread list renders below the switcher; `rows` is
-          already scoped to the selection by App. Nothing selected → no list at all. */}
-      {activeWorkspace &&
-        (rows.length > 0 ? (
+/**
+ * One project in the collapsible list (#138): a `Collapsible` whose header is a
+ * `CollapsibleTrigger` (folder + name + rolled-up live flags + a chevron that rotates
+ * on open) with the per-project ＋ new-thread button as a SIBLING (outside the trigger)
+ * so pressing ＋ starts a thread instead of toggling the fold. The panel lists this
+ * project's Threads (capped + "Show more"), or "No threads yet" when empty.
+ *
+ * The header is peek-only: toggling never selects/connects the project. The per-project
+ * "Show more" state is local (keyed by this row's identity via the parent's `key`).
+ */
+function ProjectRow({
+  workspace,
+  rows,
+  isActive,
+  open,
+  flags,
+  selectedThreadId,
+  protectedThreadId,
+  nowMs,
+  onToggleOpen,
+  onNewThread,
+  onSelectThread,
+  onDeleteThread,
+}: {
+  workspace: ListMetadataResult[number]
+  rows: UnifiedThreadRow[]
+  /** Whether this is the selected/active project (its `rows` carry real live flags). */
+  isActive: boolean
+  open: boolean
+  flags: WorkspaceFlags | undefined
+  selectedThreadId: string | null
+  protectedThreadId: string | null
+  nowMs: number
+  onToggleOpen: (workspaceId: string, open: boolean) => void
+  onNewThread: (workspaceId: string) => void
+  onSelectThread: (workspaceId: string, threadId: string) => void
+  onDeleteThread: (thread: ThreadMeta) => Promise<void>
+}): JSX.Element {
+  const [expandedThreads, setExpandedThreads] = useState(false)
+  // Cap this project's list, PINNING the selected row so opening a thread that sorts
+  // below the cap never hides its (highlighted) row (#113 review). Only the active
+  // project has a selected row in its list (thread ids are globally unique).
+  const capped = visibleRows(
+    rows,
+    THREAD_CAP,
+    expandedThreads,
+    (r) => r.thread.id === selectedThreadId,
+  )
+  const hiddenCount = rows.length - capped.length
+  const cappedIds = new Set(capped.map((r) => r.thread.id))
+  const hiddenNeedsAttention = rows.some((r) => !cappedIds.has(r.thread.id) && r.needsAttention)
+
+  return (
+    <Collapsible open={open} onOpenChange={(next) => onToggleOpen(workspace.id, next)}>
+      {/* Header row: the fold trigger + a SIBLING ＋ (outside the trigger button, so
+          clicking ＋ starts a thread rather than toggling the fold). */}
+      <div className="group/proj flex items-center gap-0.5 rounded-md pr-1 transition-colors hover:bg-accent/10">
+        <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-[7px] text-left text-[15px] text-text-body outline-none focus-visible:bg-accent/10">
+          <ChevronDown
+            className={cn(
+              'size-4 shrink-0 text-muted transition-transform',
+              !open && '-rotate-90',
+            )}
+            aria-hidden
+          />
+          <Folder className="size-4 shrink-0 text-muted" aria-hidden />
+          <span className="flex-1 truncate" title={workspace.dir}>
+            {workspace.displayName}
+          </span>
+          {/* Rolled-up live status — visible EVEN WHEN FOLDED (a background permission
+              prompt must not be hidden). */}
+          {flags?.streaming && (
+            <Spinner className="size-3.5 text-accent-text" aria-label="This project is working" />
+          )}
+          {flags?.needsAttention && (
+            <Badge variant="destructive" title="A thread in this project needs your attention">
+              needs you
+            </Badge>
+          )}
+        </CollapsibleTrigger>
+        <IconButton
+          size="icon-xs"
+          aria-label={`New thread in ${workspace.displayName}`}
+          title="New thread"
+          className="opacity-0 focus-visible:opacity-100 group-hover/proj:opacity-100"
+          // "Start working here": mint/land the thread AND unfold the project so the
+          // new thread is visible in the sidebar (not just in the outlet).
+          onClick={() => {
+            onNewThread(workspace.id)
+            onToggleOpen(workspace.id, true)
+          }}
+        >
+          <Plus className="size-4" aria-hidden />
+        </IconButton>
+      </div>
+
+      <CollapsibleContent>
+        {rows.length > 0 ? (
           <ul className="flex flex-col gap-0.5">
             {capped.map((row) => (
               <NavThread
                 key={row.thread.id}
                 row={row}
                 nowMs={nowMs}
-                selected={row.thread.id === nav.selectedThreadId}
-                // Safe delete (TB6 / #48 / #53), decided by the pure gate: a cold row
-                // always; the primary never; any other live row when it is idle.
-                deletable={isThreadDeletable(row, protectedThreadId)}
-                onOpen={() => onSelectThread(activeWorkspace.id, row.thread.id)}
+                selected={row.thread.id === selectedThreadId}
+                // Safe delete (TB6 / #48 / #53): ONLY the active project's rows carry
+                // real live flags (others are peek-cold with live=false), so restrict
+                // delete to the active project — else a background-connected project's
+                // mid-turn thread would look cold-and-deletable and tear its session.
+                // Within the active project the pure gate decides (cold always; the
+                // primary never; any other live row when idle).
+                deletable={isActive && isThreadDeletable(row, protectedThreadId)}
+                onOpen={() => onSelectThread(workspace.id, row.thread.id)}
                 onDelete={onDeleteThread}
               />
             ))}
@@ -417,8 +510,9 @@ function WorkspaceNav({
           </ul>
         ) : (
           <div className="px-3 py-1 pl-[42px] text-[13px] text-muted">No threads yet</div>
-        ))}
-    </nav>
+        )}
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 

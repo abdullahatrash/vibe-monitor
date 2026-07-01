@@ -782,7 +782,13 @@ function NavThread({
             !
           </Badge>
         )}
-        {timestamp && <span className="shrink-0 text-[13px] text-faint">{timestamp}</span>}
+        {/* Hidden on hover so the kebab (absolute, right-1) takes this spot instead of
+            drawing ON TOP of the time; `invisible` keeps the space so nothing reflows. */}
+        {timestamp && (
+          <span className="shrink-0 text-[13px] text-faint group-hover/thread:invisible">
+            {timestamp}
+          </span>
+        )}
       </NavItem>
       {/* Kebab shows on EVERY row now (#132/#133): pin/archive are SAFE metadata ops
           (no session teardown), so they're always available; only Delete stays gated to

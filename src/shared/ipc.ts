@@ -90,6 +90,16 @@ export const IPC = {
    */
   setThreadConfig: 'thread:set-config',
   /**
+   * Renderer -> main: toggle a Thread's persisted per-Thread FLAGS (#132 pin, #133
+   * archive) on its metadata record. ONE channel drives both flags — pin sends
+   * `{threadId, pinned}`, archive sends `{threadId, archived}`; only the passed
+   * field(s) change. These are SAFE metadata ops (no session teardown), so they're
+   * available on every row. Best-effort per ADR-0005: a store failure returns
+   * `{ok:false}` and never breaks the live flow. Flags survive reopen/eviction (they
+   * live in the MetadataStore), so a pinned/archived Thread stays so across launches.
+   */
+  setThreadFlags: 'thread:set-flags',
+  /**
    * Renderer -> main: subscribe to the active Workspace's STREAMED git status
    * (#84, ADR-0008). Ref-counted per `workspaceDir` in main — the first subscribe
    * starts one fs watcher + one background fetch and emits a `snapshot`; later
@@ -547,6 +557,26 @@ export interface SetThreadConfigArgs {
 export type SetThreadConfigResult = { ok: true } | { ok: false; error: string }
 
 /**
+ * Toggle a Thread's persisted per-Thread flags (#132 pin / #133 archive). ONE
+ * payload drives either flag: a pin toggle sends `{threadId, pinned}`, an archive
+ * toggle sends `{threadId, archived}`; each is optional so only the passed field(s)
+ * change on the metadata record (`setThreadFlags` patches, never clears the other).
+ */
+export interface SetThreadFlagsArgs {
+  /** OUR durable Thread id whose flags to patch. */
+  threadId: string
+  pinned?: boolean
+  archived?: boolean
+}
+
+/**
+ * The `setThreadFlags` reply. `{ok:true}` once the flag is persisted; `{ok:false}`
+ * when the best-effort store write failed (ADR-0005 — the renderer keeps the list as
+ * it was and the toggle is a no-op rather than throwing into the live flow).
+ */
+export type SetThreadFlagsResult = { ok: true } | { ok: false }
+
+/**
  * Persisted Workspace metadata (ADR-0005): a project dir the user has opened.
  * The renderer lists these on launch with NO agent spawned and no transcript
  * loaded — opening for content is a later slice (TB3).
@@ -574,6 +604,18 @@ export interface ThreadMeta {
   title: string | null
   createdAt: number
   lastActiveAt: number
+  /**
+   * Pinned to the top of the unified list (#132). Optional/additive — `undefined`
+   * reads as false, so legacy records (and every never-pinned Thread) need no
+   * migration. Toggled via `setThreadFlags`; sorted by `orderByPin`.
+   */
+  pinned?: boolean
+  /**
+   * Archived — hidden from the main list into a collapsible "Archived" section
+   * (#133). Optional/additive like `pinned` (`undefined` = not archived). Toggled
+   * via `setThreadFlags`; split out by `partitionArchived`.
+   */
+  archived?: boolean
 }
 
 /** A Workspace with its Threads nested, both most-recent-first — the cold list. */

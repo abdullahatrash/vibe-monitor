@@ -30,6 +30,8 @@ import {
   type CheckAuthStatusResult,
   type SetThreadConfigArgs,
   type SetThreadConfigResult,
+  type SetThreadFlagsArgs,
+  type SetThreadFlagsResult,
   type SignInArgs,
   type SignInResult,
   type SignOutArgs,
@@ -852,6 +854,32 @@ function registerIpc(): void {
     })
     return { ok: true }
   })
+
+  ipcMain.handle(
+    IPC.setThreadFlags,
+    async (_event, args: SetThreadFlagsArgs): Promise<SetThreadFlagsResult> => {
+      // Toggle a Thread's persisted per-Thread flags (#132 pin / #133 archive) on OUR
+      // metadata record. A SAFE metadata op — no ACP session teardown — so unlike
+      // delete it has no streaming guard. Best-effort per ADR-0005: an absent store or
+      // a failed persist returns `{ok:false}` (never throws into the live flow); the
+      // renderer then leaves the list unchanged. `setThreadFlags` is a no-op for an
+      // unknown id. Persisting the metadata index is not agent activity → no `pool.touch`.
+      if (!metadataStore) return { ok: false }
+      try {
+        await metadataStore.setThreadFlags(args.threadId, {
+          pinned: args.pinned,
+          archived: args.archived,
+        })
+        return { ok: true }
+      } catch (err) {
+        console.error(
+          `[vibe-mistro:metadata] setThreadFlags failed (${args.threadId}): ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        )
+        return { ok: false }
+      }
+    },
+  )
 
   ipcMain.handle(
     IPC.setThreadConfig,

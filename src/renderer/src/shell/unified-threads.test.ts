@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { deriveUnifiedThreads, isThreadDeletable, workspaceFlags, type UnifiedThreadRow } from './unified-threads'
+import {
+  deriveUnifiedThreads,
+  isThreadDeletable,
+  orderByPin,
+  partitionArchived,
+  workspaceFlags,
+  type UnifiedThreadRow,
+} from './unified-threads'
 import type { ThreadStatusMap } from '../conversation/thread-status'
 import type { ThreadMeta } from '../../../shared/ipc'
 
@@ -108,6 +115,86 @@ describe('workspaceFlags (background Workspace roll-up)', () => {
   it('ignores statuses of Threads not in this Workspace live set', () => {
     const statuses: ThreadStatusMap = { other: { streaming: true, needsAttention: true } }
     expect(workspaceFlags(new Set(['a']), statuses)).toEqual({ streaming: false, needsAttention: false })
+  })
+})
+
+describe('orderByPin (#132 pinned-first, stable)', () => {
+  function row(id: string, pinned?: boolean): UnifiedThreadRow {
+    return {
+      thread: { ...thread(id), pinned },
+      live: false,
+      streaming: false,
+      needsAttention: false,
+    }
+  }
+
+  it('returns the same order when nothing is pinned', () => {
+    const rows = [row('a'), row('b'), row('c')]
+    expect(orderByPin(rows).map((r) => r.thread.id)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('keeps order when every row is pinned', () => {
+    const rows = [row('a', true), row('b', true), row('c', true)]
+    expect(orderByPin(rows).map((r) => r.thread.id)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('floats pinned rows to the top, preserving each group order (stable)', () => {
+    // Incoming most-recent-first: a, b(pin), c, d(pin), e. Pinned keep b,d order;
+    // rest keep a,c,e order — appended after.
+    const rows = [row('a'), row('b', true), row('c'), row('d', true), row('e')]
+    expect(orderByPin(rows).map((r) => r.thread.id)).toEqual(['b', 'd', 'a', 'c', 'e'])
+  })
+
+  it('does not mutate its input', () => {
+    const rows = [row('a'), row('b', true)]
+    const snapshot = rows.map((r) => r.thread.id)
+    orderByPin(rows)
+    expect(rows.map((r) => r.thread.id)).toEqual(snapshot)
+  })
+
+  it('handles an empty list', () => {
+    expect(orderByPin([])).toEqual([])
+  })
+})
+
+describe('partitionArchived (#133 split, order-preserving)', () => {
+  function row(id: string, archived?: boolean): UnifiedThreadRow {
+    return {
+      thread: { ...thread(id), archived },
+      live: false,
+      streaming: false,
+      needsAttention: false,
+    }
+  }
+
+  it('puts everything in active when nothing is archived', () => {
+    const { active, archived } = partitionArchived([row('a'), row('b')])
+    expect(active.map((r) => r.thread.id)).toEqual(['a', 'b'])
+    expect(archived).toEqual([])
+  })
+
+  it('splits archived out, preserving both groups order', () => {
+    const rows = [row('a'), row('b', true), row('c'), row('d', true)]
+    const { active, archived } = partitionArchived(rows)
+    expect(active.map((r) => r.thread.id)).toEqual(['a', 'c'])
+    expect(archived.map((r) => r.thread.id)).toEqual(['b', 'd'])
+  })
+
+  it('puts everything in archived when all are archived', () => {
+    const { active, archived } = partitionArchived([row('a', true), row('b', true)])
+    expect(active).toEqual([])
+    expect(archived.map((r) => r.thread.id)).toEqual(['a', 'b'])
+  })
+
+  it('does not mutate its input', () => {
+    const rows = [row('a'), row('b', true)]
+    const snapshot = rows.map((r) => r.thread.id)
+    partitionArchived(rows)
+    expect(rows.map((r) => r.thread.id)).toEqual(snapshot)
+  })
+
+  it('handles an empty list', () => {
+    expect(partitionArchived([])).toEqual({ active: [], archived: [] })
   })
 })
 

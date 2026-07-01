@@ -62,6 +62,41 @@ export function deriveUnifiedThreads(args: {
 }
 
 /**
+ * Stable reorder that floats a Workspace's PINNED rows (#132) to the top while
+ * preserving each group's incoming order — so within the pinned group and within the
+ * rest, the most-recent-first order the caller passed is untouched. Pure: returns a
+ * NEW array (never mutates the input), applied as post-processing over
+ * `deriveUnifiedThreads` (which stays flag-agnostic).
+ */
+export function orderByPin(rows: UnifiedThreadRow[]): UnifiedThreadRow[] {
+  const pinned: UnifiedThreadRow[] = []
+  const rest: UnifiedThreadRow[] = []
+  for (const row of rows) {
+    if (row.thread.pinned) pinned.push(row)
+    else rest.push(row)
+  }
+  return [...pinned, ...rest]
+}
+
+/**
+ * Split a Workspace's rows into `active` (shown in the main list) and `archived`
+ * (#133 — folded into a collapsible "Archived" section), keyed off `thread.archived`.
+ * Both halves preserve the incoming order; pure (no mutation of the input array).
+ */
+export function partitionArchived(rows: UnifiedThreadRow[]): {
+  active: UnifiedThreadRow[]
+  archived: UnifiedThreadRow[]
+} {
+  const active: UnifiedThreadRow[] = []
+  const archived: UnifiedThreadRow[] = []
+  for (const row of rows) {
+    if (row.thread.archived) archived.push(row)
+    else active.push(row)
+  }
+  return { active, archived }
+}
+
+/**
  * Whether a unified row may be deleted (pure — the safe-delete gate, TB6 / #48 /
  * #53). The hazard is tearing a session out from under a mid-turn agent. Now that
  * main pushes real per-Thread `streaming` for ALL live Threads (#53, not just the

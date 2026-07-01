@@ -74,6 +74,10 @@ export interface ThreadInput {
   title?: string | null
   createdAt?: number
   lastActiveAt?: number
+  /** Pin flag (#132) — may be seeded here, but the primary toggle is `setThreadFlags`. */
+  pinned?: boolean
+  /** Archive flag (#133) — may be seeded here, but the primary toggle is `setThreadFlags`. */
+  archived?: boolean
 }
 
 /**
@@ -170,7 +174,9 @@ export class MetadataStore {
       workspaces: (Array.isArray(parsed.workspaces) ? parsed.workspaces : []).filter(
         isWorkspaceRecord,
       ),
-      threads: (Array.isArray(parsed.threads) ? parsed.threads : []).filter(isThreadRecord),
+      threads: (Array.isArray(parsed.threads) ? parsed.threads : [])
+        .filter(isThreadRecord)
+        .map(normalizeThreadFlags),
     }
   }
 
@@ -204,7 +210,11 @@ export class MetadataStore {
   /**
    * Add or update a Thread. A matching `id` re-targets the existing Thread —
    * preserving its `createdAt` while refreshing `lastActiveAt` (and the
-   * `sessionId` resume cursor) — instead of creating a second record.
+   * `sessionId` resume cursor) — instead of creating a second record. The
+   * per-Thread flags (`pinned`/`archived`, #132/#133) are PRESERVED across a
+   * re-target too, so a routine activity-upsert never clears a pin/archive; they
+   * change only when explicitly passed here or (the primary path) via
+   * `setThreadFlags`.
    */
   async upsertThread(input: ThreadInput): Promise<ThreadRecord> {
     const ts = this.now()
@@ -216,10 +226,32 @@ export class MetadataStore {
       title: input.title ?? existing?.title ?? null,
       createdAt: input.createdAt ?? existing?.createdAt ?? ts,
       lastActiveAt: input.lastActiveAt ?? ts,
+      pinned: input.pinned ?? existing?.pinned,
+      archived: input.archived ?? existing?.archived,
     }
     this.state.threads = [record, ...this.state.threads.filter((t) => t.id !== record.id)]
     await this.persist()
     return record
+  }
+
+  /**
+   * Toggle a Thread's per-Thread flags (#132 pin / #133 archive) on its metadata
+   * record, keyed by minted `id`. Patches ONLY the provided flag(s) — the other is
+   * left untouched — and holds the record's list POSITION (a flag change is not
+   * activity, so it does not re-order like an upsert). An unknown id is a no-op
+   * with NO write. Persisted atomically like the upserts; flags round-trip through
+   * `load`, so a pin/archive survives reopen/eviction (ADR-0005).
+   */
+  async setThreadFlags(id: string, flags: { pinned?: boolean; archived?: boolean }): Promise<void> {
+    const existing = this.state.threads.find((t) => t.id === id)
+    if (!existing) return // unknown id — nothing to patch, no disk write
+    const updated: ThreadRecord = {
+      ...existing,
+      ...(flags.pinned !== undefined ? { pinned: flags.pinned } : {}),
+      ...(flags.archived !== undefined ? { archived: flags.archived } : {}),
+    }
+    this.state.threads = this.state.threads.map((t) => (t.id === id ? updated : t))
+    await this.persist()
   }
 
   /**
@@ -305,6 +337,20 @@ function isThreadRecord(value: unknown): value is ThreadRecord {
     typeof t.createdAt === 'number' &&
     typeof t.lastActiveAt === 'number'
   )
+}
+
+/**
+ * Coerce a loaded Thread's optional flags (#132/#133) to strict booleans: a stored
+ * `pinned`/`archived` that isn't literally `true` (a stale non-boolean, or absent)
+ * normalizes to `undefined` (= false). Keeps the in-memory shape honest so the
+ * renderer's `orderByPin`/`partitionArchived` never see a truthy non-boolean.
+ */
+function normalizeThreadFlags(t: ThreadRecord): ThreadRecord {
+  return {
+    ...t,
+    pinned: t.pinned === true ? true : undefined,
+    archived: t.archived === true ? true : undefined,
+  }
 }
 
 /**

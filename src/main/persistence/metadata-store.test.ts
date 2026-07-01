@@ -234,6 +234,105 @@ describe('MetadataStore.deleteThread (TB6 #35)', () => {
   })
 })
 
+describe('MetadataStore.setThreadFlags (#132 pin / #133 archive)', () => {
+  it('patches only the passed flag, leaving the other untouched, and round-trips', async () => {
+    const file = 'flags-roundtrip.json'
+    const store = storeAt(file)
+    await store.load()
+    const ws = await store.upsertWorkspace({ dir: '/proj/flags' })
+    const t = await store.upsertThread({ workspaceId: ws.id, sessionId: 's1' })
+
+    // Pin only: archived stays absent (undefined = false).
+    await store.setThreadFlags(t.id, { pinned: true })
+    let rec = store.snapshot().threads.find((x) => x.id === t.id)
+    expect(rec?.pinned).toBe(true)
+    expect(rec?.archived).toBeUndefined()
+
+    // Archive only: pin is preserved (only the passed field changes).
+    await store.setThreadFlags(t.id, { archived: true })
+    rec = store.snapshot().threads.find((x) => x.id === t.id)
+    expect(rec?.pinned).toBe(true)
+    expect(rec?.archived).toBe(true)
+
+    // Durable across a fresh instance over the SAME file (survives reopen/eviction).
+    const reopened = storeAt(file)
+    await reopened.load()
+    const back = reopened.snapshot().threads.find((x) => x.id === t.id)
+    expect(back?.pinned).toBe(true)
+    expect(back?.archived).toBe(true)
+
+    // Unpin clears just that flag.
+    await reopened.setThreadFlags(t.id, { pinned: false })
+    expect(reopened.snapshot().threads.find((x) => x.id === t.id)?.pinned).toBe(false)
+    expect(reopened.snapshot().threads.find((x) => x.id === t.id)?.archived).toBe(true)
+  })
+
+  it('holds the record list POSITION (a flag toggle is not activity)', async () => {
+    let clock = 1000
+    const store = new MetadataStore({ filePath: join(dir, 'flags-order.json'), now: () => clock })
+    await store.load()
+    const ws = await store.upsertWorkspace({ dir: '/proj/flags-order' })
+    clock = 1100
+    const t1 = await store.upsertThread({ workspaceId: ws.id })
+    clock = 1200
+    const t2 = await store.upsertThread({ workspaceId: ws.id })
+
+    // t2 leads (most recent). Pinning t1 must NOT re-order the stored list.
+    await store.setThreadFlags(t1.id, { pinned: true })
+    expect(store.snapshot().threads.map((t) => t.id)).toEqual([t2.id, t1.id])
+  })
+
+  it('is a no-op for an unknown id (no throw, no write)', async () => {
+    const events: string[] = []
+    const store = new MetadataStore({
+      filePath: join(dir, 'flags-unknown.json'),
+      readFile: async () => {
+        throw new Error('ENOENT')
+      },
+      writeFile: async (path) => {
+        events.push(`write:${path}`)
+      },
+      rename: async () => {},
+    })
+    await store.load()
+    await expect(store.setThreadFlags('no-such-thread', { pinned: true })).resolves.toBeUndefined()
+    expect(events).toEqual([]) // no disk write for an unknown id
+  })
+
+  it('upsertThread PRESERVES pinned/archived across a routine activity re-target', async () => {
+    const store = storeAt('flags-preserve.json')
+    await store.load()
+    const ws = await store.upsertWorkspace({ dir: '/proj/flags-preserve' })
+    const t = await store.upsertThread({ workspaceId: ws.id })
+    await store.setThreadFlags(t.id, { pinned: true, archived: true })
+
+    // A normal activity-upsert (new turn: same id, fresh sessionId) must NOT clear them.
+    const again = await store.upsertThread({ id: t.id, workspaceId: ws.id, sessionId: 's-new' })
+    expect(again.pinned).toBe(true)
+    expect(again.archived).toBe(true)
+  })
+
+  it('coerces a stored non-boolean flag to undefined on load (defensive)', async () => {
+    const file = join(dir, 'flags-coerce.json')
+    writeFileSync(
+      file,
+      JSON.stringify({
+        schemaVersion: METADATA_SCHEMA_VERSION,
+        workspaces: [{ id: 'w1', dir: '/c', displayName: 'c', lastOpenedAt: 1 }],
+        threads: [
+          // pinned is a truthy STRING, archived is a real boolean — only the boolean survives.
+          { id: 't1', workspaceId: 'w1', sessionId: null, title: null, createdAt: 1, lastActiveAt: 1, pinned: 'yes', archived: true },
+        ],
+      }),
+    )
+    const store = new MetadataStore({ filePath: file })
+    await store.load()
+    const rec = store.snapshot().threads.find((t) => t.id === 't1')
+    expect(rec?.pinned).toBeUndefined() // non-boolean coerced away (not truthy-pinned)
+    expect(rec?.archived).toBe(true)
+  })
+})
+
 describe('MetadataStore atomic persist', () => {
   it('writes to a temp file then renames it over the target (crash-safe)', async () => {
     const events: string[] = []

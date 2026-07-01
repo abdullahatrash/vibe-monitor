@@ -1,62 +1,123 @@
 @import 'tailwindcss';
 
 :root {
-  /* Mistral light-mode brand tokens.
+  /* Mistral light-mode brand tokens — final-design values (docs/design-tokens.md).
+     Warm neutral ramp · softer gradient-forward orange · rounded.
      Orange = fills / borders / gradients. --accent-text = orange TEXT (AA-safe). */
-  --bg: #fafaf8;
-  --surface: #ffffff;
+  --bg: #fbfaf8;
+  --sidebar: #f5f3ef;
+  --surface: #fdfcfb;
   --panel: #ffffff;
-  --border: #e7e3dd;
-  --text: #1e1a17;
-  --muted: #6b6a66;
+  --border: #ecdfd3;
+  --border-muted: #eae3da;
 
-  --accent: #fa500f;
-  --accent-text: #c2410c;
-  --accent-grad: linear-gradient(135deg, #ff8a00 0%, #f23005 100%);
-  --on-accent: #1a1100;
+  --text: #1c1c1c;
+  --text-strong: #20201e;
+  --text-body: #33302c;
+  --text-secondary: #524d47;
+  --muted: #6b645d;
+  --placeholder: #a89f95;
+  --faint: #a79f96;
+
+  --accent: #df6f38;
+  --accent-text: #cf6a3a;
+  --accent-emphasis: #e07a3e;
+  --accent-grad: linear-gradient(160deg, #ee9b5b, #df6f38);
+  --accent-grad-logo: linear-gradient(#f6c445 0%, #ef8a3c 50%, #e2452a 100%);
+  --accent-grad-action: linear-gradient(160deg, #ee9b5b, #df6f38);
+  --accent-grad-avatar: linear-gradient(160deg, #ef9f5f, #e07640);
+  /* Ink on the SOLID soft-orange fill (`.btn`, filled menu highlight, git
+     primary buttons). A warm near-black — white on the softer orange is only
+     ~3.25:1 (fails AA), whereas dark ink clears ~5:1 and matches the prior
+     behaviour. The prototype's white on-orange is the send *icon* on the
+     saturated `--accent-grad-action`, wired later (#117) with white directly. */
+  --on-accent: #241a12;
+
+  --active-bg: #ece4da;
+  --accent-shadow: rgba(200, 90, 30, 0.3);
+  /* The one SOLID filled tint (New-chat pill, #113) — distinct from the subtle
+     --accent-tint hover rgba below; do not use this for hover surfaces. */
+  --accent-fill: #f8e0cf;
 
   --ok: #1a7f37;
   --bad: #b42318;
 
-  /* Semantic tints (token-layer rgba; never raw rgba in component rules). */
-  --accent-tint: rgba(250, 80, 15, 0.08);
-  --accent-tint-border: rgba(250, 80, 15, 0.35);
+  /* Semantic tints (token-layer rgba; never raw rgba in component rules).
+     --accent-tint stays a SUBTLE low-alpha wash (hover/surface backgrounds across
+     ~10 existing rules) re-hued to the new soft orange — NOT the doc's solid
+     peach, which lives in --accent-fill above. */
+  --accent-tint: rgba(207, 106, 58, 0.08);
+  --accent-tint-border: rgba(207, 106, 58, 0.3);
   --ok-tint: rgba(26, 127, 55, 0.1);
   --ok-tint-border: rgba(26, 127, 55, 0.35);
   --bad-tint: rgba(180, 35, 24, 0.08);
   --bad-tint-border: rgba(180, 35, 24, 0.35);
 
-  --radius: 0;
+  /* Radius scale (reverses the old --radius: 0). Component-specific radii
+     (sm/md/pill/card/full) are bridged via @theme below; --radius is the
+     plain default the many hand-written `var(--radius)` rules resolve to. */
+  --radius: 9px;
 
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Type scale (docs/design-tokens.md §Typography). Token layer only — later
+     slices wire these into component rules; existing rules are untouched. */
+  --fs-hero: 37px;
+  --fs-workspace-title: 20px;
+  --fs-composer-placeholder: 17px;
+  --fs-nav-label: 15.5px;
+  --fs-body: 15px;
+  --fs-thread-row: 14.5px;
+  --fs-section-header: 13px;
+  --fs-timestamp: 13px;
+  --fs-code: 13px;
+
+  /* Spacing scale (docs/design-tokens.md §Spacing scale): 2·4·6·8·10·12·14·16·
+     18·20·22·24·40·42·44 (micro 2–12; macro 14–24; hero 40–44). Tailwind v4's
+     generated --spacing (4px-based) already covers this range via `p-*`/`gap-*`
+     utilities — intentionally NOT redefining a parallel spacing var scheme here. */
+
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
 }
 
 /* Bridge the brand tokens into Tailwind v4's theme so utilities resolve to the
    SAME variables (the tokens above stay the single source of truth — `@theme
    inline` emits `var(--…)` references rather than copying values). This makes
    `bg-accent`, `text-accent-text`, `border-border`, `text-muted`, etc. paint in
-   brand colours, and the radius scale is pinned to 0 so even `rounded-lg` /
-   `rounded-2xl` stay square — sharp edges can't regress through a utility. */
+   brand colours. */
 @theme inline {
   --color-bg: var(--bg);
+  --color-sidebar: var(--sidebar);
   --color-panel: var(--panel);
   --color-surface: var(--surface);
   --color-border: var(--border);
+  --color-border-muted: var(--border-muted);
   --color-text: var(--text);
+  --color-text-strong: var(--text-strong);
+  --color-text-body: var(--text-body);
+  --color-text-secondary: var(--text-secondary);
   --color-muted: var(--muted);
+  --color-placeholder: var(--placeholder);
+  --color-faint: var(--faint);
   --color-accent: var(--accent);
   --color-accent-text: var(--accent-text);
+  --color-accent-emphasis: var(--accent-emphasis);
   --color-on-accent: var(--on-accent);
   --color-ok: var(--ok);
   --color-bad: var(--bad);
+}
 
-  --radius-xs: 0;
-  --radius-sm: 0;
-  --radius-md: 0;
-  --radius-lg: 0;
-  --radius-xl: 0;
-  --radius-2xl: 0;
-  --radius-3xl: 0;
+/* Radius scale (docs/design-tokens.md §Radius) — reverses the old all-zero
+   pin so `rounded-*` utilities produce real corners. Declared as plain @theme
+   (not @theme inline) so these are literal px values, never a var(--radius-md)
+   self-reference against the :root token of the same name (TRAP 1: that
+   collision silently resolves to invalid → border-radius falls back to 0). */
+@theme {
+  --radius-sm: 7px; /* icon buttons / window controls */
+  --radius-md: 10px; /* nav items */
+  --radius-lg: 12px; /* pill */
+  --radius-xl: 20px; /* composer card / side panels */
+  --radius-2xl: 20px;
+  --radius-3xl: 20px;
+  --radius-full: 9999px; /* circular send button, dots */
 }
 
 * {

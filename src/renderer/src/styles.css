@@ -278,6 +278,48 @@ body {
   }
 }
 
+/* Working-indicator SHIMMER (#115) — port of the vibe CLI's LoadingWidget, which
+   sweeps the Mistral "M" palette (yellow → orange → red) across the status text.
+   Here the same palette rides a background-clip:text gradient that sweeps L→R, so
+   "Working for 12s" shimmers through the brand ramp. Reduced-motion freezes it to a
+   static, legible orange. Palette = CLI MistralColors (constants.py). */
+@keyframes vmShimmer {
+  from {
+    background-position: 200% 50%;
+  }
+  to {
+    background-position: 0% 50%;
+  }
+}
+
+.vm-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    #ffd800,
+    #ffaf00,
+    #ff8205,
+    #fa500f,
+    #e10500,
+    #fa500f,
+    #ff8205,
+    #ffaf00,
+    #ffd800
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: vmShimmer 2.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vm-shimmer {
+    animation: none;
+    background: none;
+    color: var(--accent-text);
+  }
+}
+
 .hint {
   color: var(--muted);
   font-size: 13px;
@@ -496,28 +538,13 @@ body {
   padding: 4px 2px;
 }
 
-.reasoning {
-  border-left: 2px solid var(--border);
-  padding-left: 10px;
-}
-
-.reasoning__summary,
+/* Reasoning is now the Collapsible "thinking" block, styled inline via tokens in
+   Conversation.tsx (#115) — its old `.reasoning*` BEM rules were retired here. */
 .fallback__summary {
   cursor: pointer;
   font-size: 12px;
   color: var(--muted);
   user-select: none;
-}
-
-.reasoning__body {
-  margin-top: 6px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--muted);
-  /* No `white-space: pre-wrap`: this now hosts block markdown via <Response>, which
-     manages its own whitespace — pre-wrap would turn source soft-newlines into hard
-     breaks. (The old .chat-md wrapper normalized this; #115 owns the fuller restyle.) */
-  word-break: break-word;
 }
 
 .fallback {
@@ -534,39 +561,9 @@ body {
   word-break: break-word;
 }
 
-/* --- Tool cards + permission prompt (TB3) --- */
-
-.tool {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 8px 12px;
-  background: var(--panel);
-}
-
-.tool__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.tool__name {
-  flex: 1;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.tool__status {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-}
-
-.tool__path {
-  margin-top: 4px;
-  color: var(--muted);
-  word-break: break-all;
-}
+/* --- Permission prompt (TB3) --- */
+/* The tool row is now the compact design-system ToolRow, styled inline via tokens
+   in Conversation.tsx (#115) — its old `.tool*` BEM rules were retired here. */
 
 .permission {
   border: 1px solid var(--accent-tint-border);

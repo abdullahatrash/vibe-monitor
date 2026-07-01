@@ -16,12 +16,34 @@ import type {
   ThreadModels,
   ThreadReasoningEffort,
 } from '../../../shared/ipc'
-import { ArrowUp, Mic, Plus, Square, X } from 'lucide-react'
+import {
+  ArrowUp,
+  Brain,
+  Check,
+  ChevronDown,
+  Eye,
+  Globe,
+  Loader2,
+  Mic,
+  Move,
+  Plus,
+  Search,
+  Square,
+  SquarePen,
+  Terminal,
+  Trash2,
+  Wrench,
+  X,
+} from 'lucide-react'
 import { AgentControls } from './AgentControls'
 import { Card } from '../ui/card'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible'
 import { IconButton } from '../ui/icon-button'
 import { Textarea } from '../ui/textarea'
 import { cn } from '../lib/utils'
+import { describeToolStatus, type ToolStatusGlyph } from './tool-status'
+import { toolKindIcon, type ToolIconName } from './tool-icon'
+import { formatElapsed } from './working-time'
 import {
   conversationReducer,
   initialConversationState,
@@ -540,13 +562,16 @@ export function Conversation({
   }
 
   const title = state.title ?? thread.title ?? 'Untitled Thread'
+  // The current turn is everything AFTER the last user message; used to scope
+  // reasoning auto-open to the live turn only (#115 review S1).
+  const lastUserIndex = state.items.map((i) => i.kind).lastIndexOf('user')
 
   return (
     <div className="conv">
       <div className="conv__head">
         <span className="dot dot--ok" aria-hidden />
         <span className="conv__title">{title}</span>
-        <span className="badge">{state.isProcessing ? 'thinking…' : 'connected'}</span>
+        <span className="badge">connected</span>
       </div>
 
       <UsageBar state={state} />
@@ -555,9 +580,21 @@ export function Conversation({
         {state.items.length === 0 && (
           <p className="hint">Send a prompt to start the conversation.</p>
         )}
-        {state.items.map((item) => (
-          <Item key={item.id} item={item} onPermission={respondPermission} />
+        {state.items.map((item, idx) => (
+          <Item
+            key={item.id}
+            item={item}
+            // Auto-open reasoning only for the CURRENT turn — items AFTER the last
+            // user message — so sending a new prompt doesn't re-expand the whole
+            // history's "Thinking" blocks (they belong to prior, settled turns).
+            streaming={state.isProcessing && idx > lastUserIndex}
+            onPermission={respondPermission}
+          />
         ))}
+        {/* Working indicator (#115): while a turn is in flight, a self-ticking
+            "Working for …" row after the transcript. It mounts when the turn opens
+            and unmounts on completion, so its timer starts at turn start. */}
+        {state.isProcessing && <WorkingRow />}
       </MessageScroller>
 
       {state.isProcessing && (
@@ -783,16 +820,19 @@ export function UsageBar({ state }: { state: { usage: { used: number; size: numb
 
 export function Item({
   item,
+  streaming,
   onPermission,
 }: {
   item: ConversationItem
+  /** True while this Thread's turn is in flight (#115) — drives reasoning auto-open. */
+  streaming: boolean
   onPermission: (item: PermissionItem, option: PermissionOption) => void
 }): JSX.Element {
   switch (item.kind) {
     case 'user':
       return <UserRow item={item} />
     case 'reasoning':
-      return <ReasoningRow item={item} />
+      return <ReasoningRow item={item} streaming={streaming} />
     case 'assistant':
       return <AssistantRow item={item} />
     case 'tool':
@@ -838,29 +878,189 @@ function AssistantRow({ item }: { item: AssistantItem }): JSX.Element {
   return <Response className="text-[15px] leading-relaxed text-text-body" text={item.text} />
 }
 
-function ReasoningRow({ item }: { item: ReasoningItem }): JSX.Element {
-  // Reasoning container stays as-is (#115 owns its restyle); only its markdown body
-  // now flows through the new Response primitive.
+function ReasoningRow({ item, streaming }: { item: ReasoningItem; streaming: boolean }): JSX.Element {
+  // Reasoning (#115): a Collapsible "thinking" block, auto-open while THIS Thread's
+  // turn streams and collapsed once it settles (ADR-0010). Kept toggleable in
+  // between — the effect only re-syncs `open` when `streaming` itself flips, so a
+  // manual toggle mid-turn isn't fought. Body flows through the Response primitive.
+  const [open, setOpen] = useState(streaming)
+  useEffect(() => setOpen(streaming), [streaming])
   return (
-    <details className="reasoning" open>
-      <summary className="reasoning__summary">Reasoning</summary>
-      <Response className="reasoning__body" text={item.text} />
-    </details>
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className="flex items-center gap-1.5 rounded-md px-0.5 py-0.5 text-[12px] text-muted outline-none transition-colors hover:bg-accent/10 focus-visible:bg-accent/10">
+        <Brain className="size-3.5 shrink-0" aria-hidden />
+        <span className="font-medium">Thinking</span>
+        <ChevronDown
+          className={cn('size-3.5 shrink-0 opacity-70 transition-transform duration-200', open && 'rotate-180')}
+          aria-hidden
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <Response
+          className="mt-1 ms-2 border-s border-border ps-3 text-[13px] leading-relaxed text-muted"
+          text={item.text}
+        />
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
+/** Map a resolved tool-kind icon name (pure `tool-icon.ts`) to a lucide element. */
+function ToolKindIcon({ name, className }: { name: ToolIconName; className?: string }): JSX.Element {
+  switch (name) {
+    case 'eye':
+      return <Eye className={className} aria-hidden />
+    case 'square-pen':
+      return <SquarePen className={className} aria-hidden />
+    case 'terminal':
+      return <Terminal className={className} aria-hidden />
+    case 'globe':
+      return <Globe className={className} aria-hidden />
+    case 'brain':
+      return <Brain className={className} aria-hidden />
+    case 'trash':
+      return <Trash2 className={className} aria-hidden />
+    case 'move':
+      return <Move className={className} aria-hidden />
+    case 'search':
+      return <Search className={className} aria-hidden />
+    case 'wrench':
+      return <Wrench className={className} aria-hidden />
+  }
+}
+
+/** The right-hand status glyph (pure `tool-status.ts` → lucide): spinner while live,
+ *  a muted check when completed, a destructive X on failure. */
+function ToolStatusGlyph({ glyph }: { glyph: ToolStatusGlyph }): JSX.Element {
+  switch (glyph) {
+    case 'check':
+      return <Check className="size-4 text-muted" aria-hidden />
+    case 'x':
+      return <X className="size-4 text-bad" aria-hidden />
+    case 'spinner':
+      return <Loader2 className="size-4 animate-spin text-muted" aria-hidden />
+  }
+}
+
+/** Stringify a raw tool field for the expanded `<pre>` detail. */
+function stringifyToolDetail(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+}
+
+/** The expandable detail body: rawInput / rawOutput / content, or null if none. */
+function toolDetail(item: ToolItem): string | null {
+  const parts: string[] = []
+  if (item.rawInput !== undefined && item.rawInput !== null) parts.push(stringifyToolDetail(item.rawInput))
+  if (item.rawOutput !== undefined && item.rawOutput !== null) parts.push(stringifyToolDetail(item.rawOutput))
+  if (Array.isArray(item.content) && item.content.length > 0) parts.push(stringifyToolDetail(item.content))
+  return parts.length > 0 ? parts.join('\n\n') : null
+}
+
+/** The dimmed inline preview (a touched path, else a short string rawInput),
+ *  suppressed when it merely duplicates the heading. */
+function toolPreview(item: ToolItem, heading: string): string | null {
+  const raw = item.locations.find((l) => l.path)?.path ?? (typeof item.rawInput === 'string' ? item.rawInput : null)
+  if (!raw) return null
+  return raw.trim().toLowerCase() === heading.trim().toLowerCase() ? null : raw
+}
+
 function ToolRow({ item }: { item: ToolItem }): JSX.Element {
-  const done = item.status === 'completed'
-  const label = item.title ?? item.toolKind ?? 'tool'
-  const path = item.locations.find((l) => l.path)?.path
+  // Tool call (#115, adapted from t3code SimpleWorkEntryRow): a compact row —
+  // leading tone-icon (kind→lucide) + heading + dimmed preview + a rotating chevron
+  // (only when there's detail) + a right status glyph (ACP status→display). Clicking
+  // an expandable row toggles an indented `<pre>` of the raw input/output/content.
+  const [expanded, setExpanded] = useState(false)
+  const status = describeToolStatus(item.status)
+  const heading = item.title ?? item.toolKind ?? 'tool'
+  const preview = toolPreview(item, heading)
+  const detail = toolDetail(item)
+  const canExpand = detail !== null
+
+  const toggleProps = canExpand
+    ? {
+        role: 'button' as const,
+        tabIndex: 0,
+        'aria-expanded': expanded,
+        onClick: () => setExpanded((v) => !v),
+        onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            setExpanded((v) => !v)
+          }
+        },
+      }
+    : {}
+
   return (
-    <div className="tool">
-      <div className="tool__head">
-        <span className={done ? 'dot dot--ok' : 'dot dot--pending'} aria-hidden />
-        <span className="tool__name">{label}</span>
-        <span className="tool__status">{item.status}</span>
+    <div
+      className={cn(
+        'flex flex-col rounded-md px-0.5 py-0.5 transition-colors',
+        canExpand && 'cursor-pointer hover:bg-accent/10 focus-visible:bg-accent/10 outline-none',
+      )}
+      {...toggleProps}
+    >
+      <div className="flex items-center gap-1.5 select-none">
+        <span className="flex size-5 shrink-0 items-center justify-center text-muted">
+          <ToolKindIcon name={toolKindIcon(item.toolKind)} className="size-3.5 shrink-0 stroke-[1.8]" />
+        </span>
+        <p className="flex min-w-0 flex-1 items-baseline gap-1.5 text-[13px] leading-5">
+          <span className="min-w-0 shrink truncate font-medium text-text-body">{heading}</span>
+          {preview && <span className="min-w-0 flex-1 truncate text-muted">{preview}</span>}
+        </p>
+        <span className="flex shrink-0 items-center gap-px">
+          {canExpand && (
+            <ChevronDown
+              className={cn(
+                'size-3.5 shrink-0 text-muted opacity-70 transition-transform duration-200',
+                expanded && 'rotate-180',
+              )}
+              aria-hidden
+            />
+          )}
+          <span className="flex size-4 shrink-0 items-center justify-center">
+            <ToolStatusGlyph glyph={status.glyph} />
+          </span>
+        </span>
       </div>
-      {path && <div className="tool__path mono">{path}</div>}
+      {expanded && detail && (
+        <pre
+          className="mt-1 ms-7 max-h-64 cursor-default overflow-auto border-s border-border ps-3 font-mono text-[11px] whitespace-pre-wrap"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {detail}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Working indicator (#115): a self-ticking "Working for 12s" label that SHIMMERS
+ * through the Mistral "M" palette — a web port of the vibe CLI's LoadingWidget (which
+ * sweeps yellow→orange→red across its status text). The `.vm-shimmer` class rides a
+ * background-clip:text gradient (styles.css); the whole label lives in ONE text node
+ * (clip:text doesn't span nested colored children), updated via `setInterval` so the
+ * timer never triggers a React re-render. The row mounts only while a turn is in
+ * flight, so mount ≈ turn start.
+ */
+function WorkingRow(): JSX.Element {
+  const startRef = useRef(Date.now())
+  const textRef = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    const tick = (): void => {
+      if (textRef.current) {
+        textRef.current.textContent = `Working for ${formatElapsed((Date.now() - startRef.current) / 1000)}`
+      }
+    }
+    tick()
+    const id = window.setInterval(tick, 1000)
+    return () => window.clearInterval(id)
+  }, [])
+  return (
+    <div className="flex items-center px-0.5 py-0.5 text-[12px] tabular-nums">
+      <span ref={textRef} className="vm-shimmer font-medium">
+        Working for 0s
+      </span>
     </div>
   )
 }

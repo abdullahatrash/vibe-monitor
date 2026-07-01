@@ -65,7 +65,10 @@ export function ColdThread({
         ) : view.items.length === 0 ? (
           <p className="hint">This thread has no saved conversation yet.</p>
         ) : (
-          view.items.map((item) => <Item key={item.id} item={item} onPermission={noPermission} />)
+          view.items.map((item) => (
+            // Read-only reopened history: no live turn, so reasoning renders collapsed.
+            <Item key={item.id} item={item} streaming={false} onPermission={noPermission} />
+          ))
         )}
       </div>
 

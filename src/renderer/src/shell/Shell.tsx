@@ -35,6 +35,7 @@ import { Menu, MenuContent, MenuItem, MenuRadioGroup, MenuRadioItem, MenuTrigger
 import { NavItem } from '../ui/nav-item'
 import { Spinner } from '../ui/spinner'
 import { Logo } from './logo'
+import { LogoSnakeSpinner } from './logo-snake-spinner'
 import { formatRelativeTime } from './relative-time'
 import { visibleRows } from './show-more'
 
@@ -499,10 +500,12 @@ function ProjectRow({
           <span className="flex-1 truncate" title={workspace.dir}>
             {workspace.displayName}
           </span>
-          {/* Rolled-up live status — visible EVEN WHEN FOLDED (a background permission
-              prompt must not be hidden). */}
-          {flags?.streaming && (
-            <Spinner className="size-3.5 text-accent-text" aria-label="This project is working" />
+          {/* Rolled-up live status. The needs-attention badge stays visible even when
+              FOLDED (a background permission prompt must not be hidden). The streaming
+              snake shows ONLY when FOLDED — expanded, the thread rows carry their own,
+              so this avoids a redundant project-level + thread-level spinner. */}
+          {!open && flags?.streaming && (
+            <LogoSnakeSpinner size={15} label="This project is working" />
           )}
           {flags?.needsAttention && (
             <Badge variant="destructive" title="A thread in this project needs your attention">
@@ -690,9 +693,7 @@ function NavThread({
         />
         {pinned && <Pin className="size-3 shrink-0 text-muted" aria-label="Pinned" />}
         <span className="flex-1 truncate">{threadLabel(row)}</span>
-        {row.streaming && (
-          <Spinner className="size-3.5 text-accent-text" aria-label="Streaming" />
-        )}
+        {row.streaming && <LogoSnakeSpinner size={15} label="Streaming" />}
         {row.needsAttention && (
           <Badge variant="destructive" title="Awaiting your response">
             !

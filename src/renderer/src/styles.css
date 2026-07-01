@@ -221,6 +221,34 @@ body {
   }
 }
 
+/* Branded "snake" loading indicator (LogoSnakeSpinner): each of the M's cells runs
+   this keyframe, phased by a per-cell `animation-delay` along the snake path, so a
+   bright head (0%) with a short fading trail (25%) chases through the mark while the
+   rest sits dim. Respects reduced-motion by freezing to a static, legible M. */
+@keyframes vmSnake {
+  0% {
+    opacity: 1;
+  }
+  25% {
+    opacity: 0.45;
+  }
+  50%,
+  100% {
+    opacity: 0.15;
+  }
+}
+
+.vm-snake-cell {
+  animation: vmSnake 1.1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vm-snake-cell {
+    animation: none;
+    opacity: 0.85;
+  }
+}
+
 .hint {
   color: var(--muted);
   font-size: 13px;

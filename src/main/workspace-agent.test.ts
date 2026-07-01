@@ -1441,3 +1441,100 @@ describe('WorkspaceAgent agent controls (#66, acp-capture §10)', () => {
     expect(info.reasoningEffort).toBeNull()
   })
 })
+
+/**
+ * Eager primary session (ADR-0012): one `session/new` opened at connect, whose
+ * controls seed a Draft's picker and whose session the first prompt reuses.
+ * Consume-once semantics keep a second concurrent Draft minting its own session.
+ */
+describe('WorkspaceAgent primary session (ADR-0012)', () => {
+  const PRIMARY_ID = 'primary-0001'
+
+  /** Drive start() to a ready, signed-in agent WITHOUT opening a Thread. */
+  async function startReady(fake: CapturingFake): Promise<WorkspaceAgent> {
+    const agent = new WorkspaceAgent({ workspaceDir: '/abs/workspace', spawn: () => fake.child })
+    const started = agent.start()
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } }) + '\n')
+    await new Promise((r) => setTimeout(r, 0))
+    fake.feed(
+      JSON.stringify({ jsonrpc: '2.0', id: 2, result: { authenticated: true, authState: 'os_keyring' } }) + '\n',
+    )
+    await started
+    return agent
+  }
+
+  it('opens ONE primary session, exposes its controls, and consumes it exactly once', async () => {
+    const fake = makeCapturingFake()
+    const agent = await startReady(fake)
+
+    // Nothing before the eager open: no controls, nothing to consume.
+    expect(agent.primarySessionControls).toBeNull()
+    expect(agent.consumePrimarySession()).toBeNull()
+
+    const opening = agent.openPrimarySession()
+    // The eager session/new (id 3) — answer with a real Mode control.
+    fake.feed(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 3,
+        result: { sessionId: PRIMARY_ID, modes: { currentModeId: 'default', availableModes: [] } },
+      }) + '\n',
+    )
+    await opening
+
+    // Controls readable from the primary session (seed a Draft's picker pre-prompt).
+    expect(agent.primarySessionControls).toEqual({
+      modes: { currentModeId: 'default', availableModes: [] },
+      models: null,
+      reasoningEffort: null,
+    })
+    // Hosted — so the bound Thread's later prompts reuse it (already-hosted path).
+    expect(agent.hasSession(PRIMARY_ID)).toBe(true)
+
+    // Idempotent: a second openPrimarySession sends NO second session/new.
+    await agent.openPrimarySession()
+    expect(sent(fake).filter((m) => m.method === 'session/new')).toHaveLength(1)
+
+    // Consume once: returns the ThreadInfo, then null on any later claim.
+    expect(agent.consumePrimarySession()?.sessionId).toBe(PRIMARY_ID)
+    expect(agent.consumePrimarySession()).toBeNull()
+
+    // Controls stay readable after consume (learned lists for the connection's life).
+    expect(agent.primarySessionControls).not.toBeNull()
+  })
+
+  it('two concurrent openPrimarySession calls share ONE session/new (ADR-0012, no race)', async () => {
+    const fake = makeCapturingFake()
+    const agent = await startReady(fake)
+
+    // Overlapping connects on the SAME agent (e.g. Workspace double-click): both call
+    // openPrimarySession before either resolves. They must dedupe to one session/new.
+    const first = agent.openPrimarySession()
+    const second = agent.openPrimarySession()
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 3, result: { sessionId: PRIMARY_ID } }) + '\n')
+    await Promise.all([first, second])
+
+    expect(sent(fake).filter((m) => m.method === 'session/new')).toHaveLength(1)
+    expect(agent.hasSession(PRIMARY_ID)).toBe(true)
+    // Exactly one session to consume, then null.
+    expect(agent.consumePrimarySession()?.sessionId).toBe(PRIMARY_ID)
+    expect(agent.consumePrimarySession()).toBeNull()
+  })
+
+  it('drops the primary session on stop() (eviction) — a re-warm re-opens one', async () => {
+    const fake = makeCapturingFake()
+    const agent = await startReady(fake)
+
+    const opening = agent.openPrimarySession()
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: 3, result: { sessionId: PRIMARY_ID } }) + '\n')
+    await opening
+    expect(agent.primarySessionControls).not.toBeNull()
+
+    agent.stop()
+
+    // Torn down with the process (ADR-0012 #6 / ADR-0006): no lingering session.
+    expect(agent.primarySessionControls).toBeNull()
+    expect(agent.consumePrimarySession()).toBeNull()
+    expect(agent.hasSession(PRIMARY_ID)).toBe(false)
+  })
+})

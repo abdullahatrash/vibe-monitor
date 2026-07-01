@@ -9,6 +9,7 @@ import type {
   AuthState,
   PromptImage,
   PromptResult,
+  ThreadAgentControls,
   ThreadInfo,
   ThreadModes,
   ThreadModels,
@@ -28,6 +29,16 @@ import type {
 
 const PROTOCOL_VERSION = 1
 const CLIENT_INFO = { name: 'vibe-mistro', version: '0.0.1' } as const
+
+/**
+ * How long connect will WAIT for the eager primary `session/new` (ADR-0012) before
+ * returning without it. `AcpClient.request` has no timeout of its own, so a live-but-
+ * unresponsive agent would otherwise wedge connect at "Launching…"; this caps that.
+ * The session still resolves in the background and seeds later drafts + the first-
+ * prompt reuse, and the #153 cache covers the picker meanwhile. The handshake replies
+ * in ~1s (acp-capture), so this is generous headroom, not a normal-path wait.
+ */
+const PRIMARY_SESSION_OPEN_TIMEOUT_MS = 5000
 
 export const AUTH_HINT =
   'Run `vibe` to sign in, or `vibe --setup` to configure your Mistral Vibe account.'
@@ -122,6 +133,18 @@ export class WorkspaceAgent extends EventEmitter {
   private readonly openUrl?: (url: string) => void
   /** Threads hosted by this agent, keyed by their ACP `sessionId`. */
   private readonly threads = new Map<string, ThreadInfo>()
+  /**
+   * The Workspace's single primary ACP session (ADR-0012): one `session/new`
+   * opened eagerly at connect so a Draft's picker can read real, account-accurate
+   * control option lists BEFORE its first prompt — and REUSED by that first prompt
+   * (no second `session/new`). In-memory only (NOT persisted — ADR-0011's residue
+   * invariant holds); dropped on teardown (`stop()`), so eviction frees it and a
+   * re-warm re-opens one. `primaryConsumed` gives the reuse consume-once semantics.
+   */
+  private primarySessionValue: ThreadInfo | null = null
+  private primaryConsumed = false
+  /** The single in-flight primary `session/new`, shared by concurrent openers. */
+  private primaryOpening: Promise<void> | null = null
   private initialized = false
   /** Sign-in state detected via `_auth/status` during start(). */
   private authStateValue: AuthState = 'unknown'
@@ -485,6 +508,71 @@ export class WorkspaceAgent extends EventEmitter {
   }
 
   /**
+   * Open the Workspace's single primary ACP session (ADR-0012), if none is open
+   * yet — one `session/new` whose reported controls seed a Draft's picker pre-prompt
+   * and whose session the first prompt REUSES (via `consumePrimarySession`) instead
+   * of minting a second. Idempotent: a no-op once a primary session exists, so the
+   * two connect entry points (Workspace-open, post-sign-in openThread) never open two.
+   * Best-effort at the caller — a failure must not break connect, so callers wrap
+   * this in try/catch and fall back to a null-controls draft.
+   *
+   * Concurrency-safe: overlapping connects on the SAME agent share one in-flight
+   * `session/new` (never mint two — ADR-0012's "exactly one"). And the wait is BOUNDED
+   * by `PRIMARY_SESSION_OPEN_TIMEOUT_MS` so a slow/unresponsive agent can't wedge
+   * connect; a late-resolving session is still stored in the background for later
+   * drafts + the first-prompt reuse.
+   */
+  async openPrimarySession(): Promise<void> {
+    if (this.primarySessionValue) return
+    if (!this.primaryOpening) {
+      this.primaryOpening = this.openThread()
+        .then((info) => {
+          this.primarySessionValue = info
+        })
+        .catch(() => {
+          // Best-effort: leave the value null so a later connect retries the open.
+        })
+        .finally(() => {
+          this.primaryOpening = null
+        })
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const bound = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, PRIMARY_SESSION_OPEN_TIMEOUT_MS)
+    })
+    try {
+      await Promise.race([this.primaryOpening, bound])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  /**
+   * The primary session's agent-controls (#70), for seeding a Draft's / Continue's
+   * connection picker (ADR-0012 #4) — the learned option lists for the Workspace's
+   * lifetime, readable even after the session is consumed by a first prompt. Null
+   * until `openPrimarySession` succeeds (and again after an eviction re-warm, until
+   * it re-opens).
+   */
+  get primarySessionControls(): ThreadAgentControls | null {
+    const s = this.primarySessionValue
+    return s ? { modes: s.modes, models: s.models, reasoningEffort: s.reasoningEffort } : null
+  }
+
+  /**
+   * Claim the unconsumed primary session for a Draft's FIRST prompt (ADR-0012 #2),
+   * marking it consumed so a second concurrent Draft mints its own session instead.
+   * Returns the primary `ThreadInfo` exactly once, then null (none open, or already
+   * claimed). The session stays hosted (`hasSession` stays true), so the bound
+   * Thread's later prompts reuse it via the already-hosted path — no re-mint.
+   */
+  consumePrimarySession(): ThreadInfo | null {
+    if (!this.primarySessionValue || this.primaryConsumed) return null
+    this.primaryConsumed = true
+    return this.primarySessionValue
+  }
+
+  /**
    * Resume a prior Thread's ACP session via `session/load` (TB4 #33, acp-capture
    * §9). Params mirror `session/new` but carry the stored `sessionId`; the success
    * result has NO `sessionId` (the caller already knows the id it loaded), so we
@@ -710,6 +798,11 @@ export class WorkspaceAgent extends EventEmitter {
   stop(): void {
     this.client.stop()
     this.threads.clear()
+    // Drop the primary session with the process (ADR-0012 #6 / ADR-0006): an
+    // idle un-prompted session dies on eviction, and a re-warm re-opens a fresh one.
+    this.primarySessionValue = null
+    this.primaryConsumed = false
+    this.primaryOpening = null
     this.initialized = false
   }
 

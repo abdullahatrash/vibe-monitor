@@ -3,8 +3,9 @@
 > You are picking up an in-flight project. Read this top to bottom once, then keep it open.
 > It tells you **what this is**, **how we work**, **what exists**, **what's next**, and **where the
 > authoritative information lives** (in-repo docs + three local reference repos). Last updated
-> 2026-07-01, `main` @ `d7a2b64`, **468 tests**, **0 open issues** (backlog empty — pick a roadmap item;
-> the **composer-extras** epic is now in flight — slice 1 shipped, see §5/§6).
+> 2026-07-01, `main` @ `6fa1321`, **495 tests**, **0 open issues** (backlog empty). Composer-extras epic
+> is largely shipped (`/` autocomplete, image attachments, queue+interrupt); next up: a **design-system
+> pass** (layouts + components) before complexity grows — see §6. `$`/`@` autocomplete stays paused.
 
 ---
 
@@ -23,9 +24,11 @@
   resilience** (#78 preserve failure reason + RPC code + stderr log; #80 a "Check status" re-query
   recovery — static-verified, live re-check smoke still pending), and the full **git/GitHub epic**
   (ADR-0008: a Changes panel = status #84 + diff #85 + commit #86 + branches #87 + gh-PR surfacing #88;
-  #84-86 live-verified, #87-88 static+unit), and **composer-extras slice 1** — `/` slash-command
-  autocomplete (#95; PR #96 + scroll-fix #97; **live-verified** in `bun run dev`). **Backlog is empty.**
-  The composer-extras epic is in flight (3 sub-features left; see §6). Pick the next slice or a roadmap item.
+  #84-86 live-verified, #87-88 static+unit), and most of the **composer-extras epic**: `/` slash-command
+  autocomplete (#95-97), **image attachments** (paste + picker — #99 spike, #101; wire shape §11), and
+  **queue + interrupt follow-ups** (ADR-0009: #102 spike, #104 Stop/`session/cancel`, #106 queue —
+  **live-verified**; steer dropped as protocol-blocked). **Backlog is empty.** Next: a **design-system
+  pass** (see §6); the last composer sub-feature (`$`/`@` autocomplete) stays paused.
 - **How we work:** PRD → tracer-bullet issues → **per-slice agent team** (implement → independent
   verify → adversarial review → fold fixes → **user merges**). TDD, vertical slices. Details in §3.
 
@@ -274,46 +277,77 @@ sending literal `/text`), mousedown-accept beats blur, rAF caret restore, draft 
 kept in sync. **Live-verified** in `bun run dev`. This slice only INSERTS the `/name ` text — command
 *execution* is deferred. See the `composer-extras-epic` memory + §6 for the remaining sub-features.
 
+**composer-extras — image attachments (#99 spike → #101; acp-capture §11)** — paste + file-picker image
+attach. **Wire-shape trap** (spike-verified): the `session/prompt` image block is
+`{type:"image", data:<BARE base64>, mime_type}` — snake_case **`mime_type`**; the ACP-conventional
+camelCase `mimeType` is silently accepted but the model goes BLIND. Vision is per-model, gated before the
+call → app code **-31008** (only `mistral-medium-3.5` has vision; `devstral-small`/`local` reject). v1 =
+paste + picker ingest; `-31008` → recoverable "switch model" hint (images+text kept on failure); echoed
+thumbnails; NOT persisted to JSONL. Pure `image-attach.ts` (`parseDataUrl`+type-guard). `WorkspaceAgentError`
+now preserves the rpc `code` (was a latent gap). Deferred: drag-drop, HEIC/sips. Probe: `scripts/spike-image-block.ts`.
+
+**composer-extras — queue + interrupt follow-ups (ADR-0009; #102 spike → #104 → #106)** — reshaped from
+"queue-vs-steer" by the spike: **steer is protocol-blocked** (a 2nd `session/prompt` mid-turn → `-32602`
+"Concurrent prompts are not supported yet"; no steer method). `session/cancel` is a NOTIFICATION `{sessionId}`
+→ the in-flight prompt RESOLVES `stopReason:"cancelled"`. **#104 (interrupt):** a `⏹ Stop` button →
+`WorkspaceAgent.cancel` → `session/cancel` notify; rides the existing turn-complete path (no new output).
+**#106 (queue):** compose-while-streaming → Enter enqueues; multi-message per-Thread queue in a
+`useSyncExternalStore` module store (`follow-up-queue.ts`) that SURVIVES the `Conversation` remount
+(`key={threadId}`), renderer-only ephemeral; auto-flush one-per-turn-end. **Serialization gotcha (cost a
+review round):** the in-flight latch MUST be module-level per-Thread (`sending` Set), NOT a per-instance
+`useRef` — a per-instance ref let a remounted Conversation flush into a still-running turn → the exact
+`-32602` the queue prevents. Flush is an effect gated on the LIVE module latch. **Live-verified.** Probe:
+`scripts/spike-cancel-steer.ts`. Deferred: edit-in-place, restart persistence, re-queue-on-flush-failure, steer.
+
 ---
 
 ## 6. What's next
 
-**Backlog is empty (no open issues)** — the Agent-controls, sign-in, and git/GitHub epics are fully
-shipped, and the **composer-extras epic is in flight** (slice 1 `/` autocomplete shipped, #95/#96/#97).
-The next move is the epic's next slice or a fresh roadmap pick.
+**Backlog is empty (no open issues).** The Agent-controls, sign-in, git/GitHub, and most of the
+composer-extras epic are shipped. **The chosen next intermediate epic is a DESIGN-SYSTEM pass** —
+establish layouts + a component library NOW, before the app grows and refactors get expensive.
 
-**Composer-extras — remaining sub-features (own grilled slices; see the `composer-extras-epic` memory
-for the protocol-readiness details).** Each needs groundwork BEFORE code:
-- **Image attachments/paste** — vibe-acp advertises `promptCapabilities.image:true`+`embeddedContext:true`
-  but the image content-block **wire shape is NOT in `docs/acp-capture.md`** (only `{type:text}` seen;
-  errs -31007/-31008 hint at handling) → **spike the block shape first**, then extend `SendPromptArgs`
-  (main+ipc+preload) + composer paste/drop/picker UI.
-- **Queue-vs-steer follow-ups** — `session/cancel` + second-prompt-mid-turn shapes **unverified** in
-  capture; genuine design fork (queue vs steer vs interrupt) → **ADR + cancel/steer spike first**.
-  CodexMonitor does BOTH (persisted default + per-message override key; `turn/start|steer|interrupt`).
-  Today the composer just DISABLES while `isProcessing` — no second prompt is possible yet.
-- **`$` skills / `@` file-path autocomplete** — `$`=skills (CodexMonitor `skills/list`; mechanism NOT in
-  vibe-acp capture — uncertain); `@`=file paths, **blocked on the unbuilt file tree** (below). Command
-  *execution* (running `/name` vs. inserting text) is also deferred — slice 1 only inserts `/name `.
+**► NEXT: Design-system pass (layouts + components).** Goal: lock in a coherent design system (tokens,
+primitives, layout shells) and migrate the per-area UI onto it, on the #61 foundation (Tailwind v4 +
+base-ui + lucide already in place — `docs/adr` / CONTEXT for that stack). This is the user's priority to
+"get out of the way before the system starts to grow and be complex to change." Scope it as its own
+**grill-with-docs → ADR → tracer-bullet slices** (likely: audit current UI + tokens → design-token/theme
+layer → shared primitives (Button/Menu/Input/Panel/Dialog) → per-area migration (composer / sidebar /
+conversation / auth / git panel), area by area, keeping behavior identical). Reference: t3code +
+CodexMonitor UIs (both local), base-ui docs. START by grilling the scope with the user.
+
+**Composer-extras — remaining (RESOLVED from the Vibe CLI source `/Users/abdullahatrash/mistral/mistral-vibe`):**
+- **`$` skills — DROP; already covered by `/`.** vibe-acp has NO `$`/`skills/list` surface: skills are
+  folded into the SAME `available_commands_update` list as slash commands (`_send_available_commands`,
+  `vibe/acp/acp_agent_loop.py:1173`), and a client can't distinguish a skill from a command. So `$` is not
+  a wire concept — the #95 `/` autocomplete already surfaces skills. No work.
+- **`@` file-path autocomplete — NOT blocked on a full file tree** (a lighter slice than we thought). No
+  server path-completion exists (must be client-side), but the agent expands a plain-text `@path` itself
+  via `render_path_prompt` (`acp_agent_loop.py:1608`, resolves vs cwd + inlines the file). So `@` needs
+  only: a **main-side file-listing/index IPC** (renderer has no fs) + a **path-completion popup** (mirror
+  the CLI's `vibe/cli/autocompletion/path_completion.py` + `file_indexer/`), sending the mention as PLAIN
+  TEXT. Can ship on its own or fold into the file-tree epic. Command *execution* (running `/name` vs.
+  inserting text, #95) remains deferred.
 
 **Still-pending verification:** (a) the **sign-in re-check (#80)** has not been smoked live (needs a
 real sign-out → "Check status" → out-of-band `vibe` CLI sign-in → "Check status" lands connected);
 (b) **git branches (#87)** and **gh PR surfacing (#88)** shipped static+unit-verified only — smoke
 them live (branch list/switch/create; PR chip + Create-PR gated on an existing upstream). Git
-status/diff/commit (#84-86), Agent-controls, and composer-extras slice 1 (#95) ARE live-verified. Do
-these smokes when convenient.
+status/diff/commit (#84-86), Agent-controls, and composer-extras `/`+image+queue/interrupt ARE
+live-verified. Do these smokes when convenient.
 
 **Deferred roadmap (no issues yet — propose as a PRD / grill-with-docs → tracer-bullet issues when the
 user picks one up; rough CodexMonitor build order):**
-- **Composer extras (in flight)** — remaining: image attachments/paste, queue-vs-steer, `$`/`@`
-  autocomplete (see the per-sub-feature gates above; `/` autocomplete + model picker + drafts done).
+- **Design-system pass** — the CHOSEN next epic (see ► above): tokens/theme → shared primitives →
+  per-area migration onto the #61 foundation. Subsumes the old "per-area base-ui/Tailwind migration" line.
+- **Composer extras — final piece** — `$` skills DROPPED (already in the `/` list); `@` file-path
+  autocomplete needs a main-side file-listing IPC + a path popup (send `@path` as plain text — agent
+  expands it), shippable on its own or with the file tree. `/`+image+queue/interrupt+model+drafts done.
 - **Git/GitHub follow-ups** (ADR-0008 deferred-tier; v1 = status/diff/commit/branches/gh-PR-surfacing
   shipped) — multi-repo aggregation, a full PR/issue *browser*, "Ask PR", worktree-per-Thread isolation.
-- **File tree + prompt library.**
+- **File tree + prompt library** (also unblocks `@` autocomplete).
 - **Terminal dock** (node-pty — see opencode), then **settings / usage meter / in-app updates /
   packaging** (electron-updater/electron-builder — see opencode), then remote backend (deferred).
-- **Per-area base-ui/Tailwind component migration** onto the #61 foundation (composer/sidebar/
-  conversation/auth).
 Parity target: `docs/codexmonitor-reference.md`.
 
 ---
@@ -336,6 +370,11 @@ Parity target: `docs/codexmonitor-reference.md`.
   in **main** via `child_process` (`git`/`gh`); diffs via **@pierre/diffs** (data contract = raw unified
   patch + `diffHash`); **streamed status** (debounced fs watcher + cached `git fetch`); active-Workspace
   only; v1 ladder = status #84 → diff #85 → commit #86 → branches #87 → gh-PR surfacing #88 (shipped).
+- **0009** — follow-ups: client-side **queue + interrupt**, **steer is protocol-blocked** (spike #102/§12:
+  concurrent `session/prompt` → `-32602`; `session/cancel` is a notification → prompt resolves
+  `stopReason:"cancelled"`). Interrupt = Stop button (#104); queue = compose-while-streaming + auto-flush
+  (#106), serialized via a MODULE-level per-Thread latch (a per-instance ref can't serialize across the
+  `Conversation` remount). Steer deferred pending a vibe steer method.
 
 If a new slice needs to revisit one of these, that's an **HITL** decision — write a new ADR and get the
 user's call; don't just diverge.
@@ -348,11 +387,11 @@ user's call; don't just diverge.
    epic's decomposition + per-sub-feature protocol readiness).
 2. Confirm the baseline: `cd /Users/abdullahatrash/mistral/vibe-mistro` (on `main`), run the gates
    (`export PATH=...nvm...; bun run lint && bun run typecheck && bun run build && bun run test`) →
-   expect **468 tests green**.
+   expect **495 tests green**.
 3. Check the backlog: `GH_HOST=github.com gh issue list --state open` → expect **empty**. The next move
-   is the **composer-extras** epic's next slice (image / queue-vs-steer — each needs a spike/ADR first,
-   §6) or a fresh roadmap pick — propose as a grill-with-docs → PRD → tracer-bullet issues. Verification
-   debt remains: the #80 sign-in re-check and the #87/#88 git slices haven't been smoked live (§6).
+   is the **design-system pass** (the chosen next epic, §6) — START by grilling its scope with the user
+   (grill-with-docs → ADR → tracer-bullet slices). Verification debt remains: the #80 sign-in re-check
+   and the #87/#88 git slices haven't been smoked live (§6).
 4. When the user picks a roadmap item (or says "start <N>"), run the **team loop in §3** — manual
    worktree (real `bun install`, NOT a node_modules symlink — §2), implementer agent, your independent
    verify, adversarial reviewer, fold (targeted `git add`, never `-A`), push, **user merges**, cleanup,

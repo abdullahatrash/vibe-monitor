@@ -377,6 +377,19 @@ export function App(): JSX.Element {
     else selectWorkspace(workspaceId)
   }
 
+  /**
+   * The sidebar's primary "New chat" — always actionable (no longer greyed out until a
+   * project happens to be connected). Targets the selected project, else the most-recent
+   * one (`recents` is most-recent-first); if there are NO projects yet, opens the project
+   * picker. Reuses `newThreadInWorkspace` (connect-if-needed), so a fresh app can start a
+   * chat in one click.
+   */
+  function startNewChat(): void {
+    const target = nav.selectedWorkspaceId ?? recents[0]?.id ?? null
+    if (target) newThreadInWorkspace(target)
+    else void openProject()
+  }
+
   useEffect(() => {
     void runDetect()
     void refreshRecents()
@@ -568,7 +581,6 @@ export function App(): JSX.Element {
   // cold/idle one lists its persisted Threads (clicking replays them, no agent).
   let rows: UnifiedThreadRow[] = []
   let protectedThreadId: string | null = null
-  let canCreateThread = false
   if (selectedWs) {
     const cold = threadsForWorkspace(recents, selectedWs)
     if (selected.status === 'connected') {
@@ -581,7 +593,6 @@ export function App(): JSX.Element {
         statuses,
       })
       protectedThreadId = conn.threadId
-      canCreateThread = true
     } else {
       rows = deriveUnifiedThreads({ cold, live: [], liveThreadIds: NO_LIVE, statuses })
     }
@@ -812,12 +823,11 @@ export function App(): JSX.Element {
         workspaceFlags={wsFlags}
         rows={rows}
         protectedThreadId={protectedThreadId}
-        canCreateThread={canCreateThread}
         outlet={outlet}
         opening={opening}
         onOpenProject={() => void openProject()}
         onSelectThread={selectThreadInWorkspace}
-        onNewThread={() => selectedWs && newThread(selectedWs)}
+        onNewThread={startNewChat}
         onNewThreadInWorkspace={newThreadInWorkspace}
         onDeleteThread={deleteThread}
         onSetThreadFlags={setThreadFlags}

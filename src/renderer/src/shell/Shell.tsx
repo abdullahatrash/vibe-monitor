@@ -91,7 +91,6 @@ export function Shell({
   workspaceFlags,
   rows,
   protectedThreadId,
-  canCreateThread,
   outlet,
   opening,
   onOpenProject,
@@ -115,8 +114,6 @@ export function Shell({
   rows: UnifiedThreadRow[]
   /** The connection's primary Thread (never deletable mid-connection), or null. */
   protectedThreadId: string | null
-  /** Whether New-thread is available (the selected Workspace is connected). */
-  canCreateThread: boolean
   /** The fully-computed conversation outlet (connection views / cold replay). */
   outlet: ReactNode
   /** Whether an Open-project connect is in flight — busies the header's new-project +. */
@@ -211,7 +208,7 @@ export function Shell({
         <div className="flex h-full flex-none flex-col gap-3 p-3" style={{ width }}>
           <div className="flex flex-none flex-col gap-3">
             <SidebarHeader />
-            <PrimaryNav canCreateThread={canCreateThread} onNewThread={onNewThread} />
+            <PrimaryNav busy={opening} onNewThread={onNewThread} />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             <WorkspaceNav
@@ -275,15 +272,17 @@ function SidebarHeader(): JSX.Element {
 
 /**
  * The primary nav: the peach-tinted "New chat" pill (the ONE filled tint,
- * `--accent-fill`) which mints a draft on the selected connected Workspace
- * (`onNewThread`, gated by `canCreateThread` — behavior unchanged from the old
- * "+ New thread"), plus static placeholder rows for Search / Scheduled / Plugins.
+ * `--accent-fill`). It's ALWAYS actionable now — `onNewThread` (App's `startNewChat`)
+ * targets the selected/most-recent project (connect-if-needed) or opens the picker when
+ * there are none — so it's only disabled while a connect is in flight (`busy`). Below it,
+ * Search / Scheduled / Plugins are net-new features (ADR-0010) shown as disabled "Soon"
+ * rows until their own epics land, so they read as intentional rather than broken.
  */
 function PrimaryNav({
-  canCreateThread,
+  busy,
   onNewThread,
 }: {
-  canCreateThread: boolean
+  busy: boolean
   onNewThread: () => void
 }): JSX.Element {
   return (
@@ -291,28 +290,31 @@ function PrimaryNav({
       <button
         type="button"
         onClick={onNewThread}
-        disabled={!canCreateThread}
+        disabled={busy}
         className="flex w-full items-center gap-2.5 rounded-lg bg-[var(--accent-fill)] px-3 py-2 text-left text-[14px] font-semibold text-accent-text outline-none transition-[filter] hover:brightness-[0.98] disabled:pointer-events-none disabled:opacity-50"
       >
         <SquarePen className="size-[18px]" aria-hidden />
         New chat
       </button>
-      {/* placeholder — Search (#future) */}
-      <NavItem>
-        <Search className="size-[18px]" aria-hidden />
-        Search
-      </NavItem>
-      {/* placeholder — Scheduled (#future) */}
-      <NavItem>
-        <Clock className="size-[18px]" aria-hidden />
-        Scheduled
-      </NavItem>
-      {/* placeholder — Plugins (#future) */}
-      <NavItem>
-        <Atom className="size-[18px]" aria-hidden />
-        Plugins
-      </NavItem>
+      <PlaceholderNav icon={<Search className="size-[18px]" aria-hidden />}>Search</PlaceholderNav>
+      <PlaceholderNav icon={<Clock className="size-[18px]" aria-hidden />}>Scheduled</PlaceholderNav>
+      <PlaceholderNav icon={<Atom className="size-[18px]" aria-hidden />}>Plugins</PlaceholderNav>
     </nav>
+  )
+}
+
+/**
+ * A not-yet-built primary-nav entry (Search / Scheduled / Plugins — each its own future
+ * epic, ADR-0010): a disabled `NavItem` with a muted "Soon" tag, so it reads as
+ * intentionally-coming rather than a broken no-op.
+ */
+function PlaceholderNav({ icon, children }: { icon: JSX.Element; children: ReactNode }): JSX.Element {
+  return (
+    <NavItem disabled title="Coming soon" className="cursor-default opacity-60">
+      {icon}
+      <span className="flex-1">{children}</span>
+      <span className="text-[11px] font-medium text-faint">Soon</span>
+    </NavItem>
   )
 }
 

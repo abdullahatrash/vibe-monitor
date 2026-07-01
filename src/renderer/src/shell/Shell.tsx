@@ -1,4 +1,4 @@
-import { useRef, useState, type JSX, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type JSX, type PointerEvent, type ReactNode } from 'react'
 import {
   Archive,
   ArchiveRestore,
@@ -27,6 +27,12 @@ import {
   type UnifiedThreadRow,
 } from './unified-threads'
 import { getOpenProjects, setOpenProjects } from './project-open-store'
+import {
+  clampSidebarWidth,
+  DEFAULT_SIDEBAR_WIDTH,
+  getSidebarWidth,
+  setSidebarWidth,
+} from './sidebar-width-store'
 import { getSortOrder, setSortOrder, sortWorkspaces, type WorkspaceSortOrder } from './workspace-sort'
 import { Badge } from '../ui/badge'
 import { cn } from '../lib/utils'
@@ -132,27 +138,77 @@ export function Shell({
   /** Open the routed Settings page (#130) — from the account chip's menu. */
   onOpenSettings: () => void
 }): JSX.Element {
+  // The sidebar's EXPANDED width (#drag-to-resize): renderer-only UI state, seeded from
+  // localStorage (clamped) and persisted on drag-release. `dragging` disables the
+  // collapse width-transition so the aside tracks the pointer 1:1 with no lag, and
+  // suppresses text selection while the pointer is captured.
+  const [width, setWidth] = useState(() => getSidebarWidth(window.localStorage))
+  const [dragging, setDragging] = useState(false)
+  // The drag origin, captured on pointer-down so the move handler reads no stale state.
+  const dragOrigin = useRef({ startX: 0, startWidth: DEFAULT_SIDEBAR_WIDTH })
+
+  function onHandlePointerDown(e: PointerEvent<HTMLDivElement>): void {
+    e.preventDefault()
+    dragOrigin.current = { startX: e.clientX, startWidth: width }
+    setDragging(true)
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  function onHandlePointerMove(e: PointerEvent<HTMLDivElement>): void {
+    if (!dragging) return
+    const { startX, startWidth } = dragOrigin.current
+    setWidth(clampSidebarWidth(startWidth + (e.clientX - startX)))
+  }
+  function endDrag(e: PointerEvent<HTMLDivElement>): void {
+    if (!dragging) return
+    setDragging(false)
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+    // Persist the settled EXPANDED width (best-effort). Read from state via the setter to
+    // avoid a stale closure — setWidth's identity update returns the current value.
+    setWidth((current) => {
+      setSidebarWidth(window.localStorage, current)
+      return current
+    })
+  }
+  function resetWidth(): void {
+    setWidth(DEFAULT_SIDEBAR_WIDTH)
+    setSidebarWidth(window.localStorage, DEFAULT_SIDEBAR_WIDTH)
+  }
+  // Collapsing unmounts the handle, so a drag in flight would never get its pointerup
+  // (→ `dragging` stuck true: stuck `select-none`, suppressed transition, and — worst —
+  // the re-expanded handle resizing on mere hover off a stale origin). Clear it on collapse.
+  useEffect(() => {
+    if (collapsed) setDragging(false)
+  }, [collapsed])
+
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className={cn('flex min-h-0 flex-1', dragging && 'select-none')}>
       {/* The sidebar stays MOUNTED when collapsed (#127) — its state (open projects,
           scroll, the #138 fold list) survives, so re-expanding is instant. The OUTER
-          <aside> animates only its width (0 ↔ 338px) and clips (`overflow-hidden`); the
-          INNER holds a FIXED 338px width so the content SLIDES under the clip cleanly
-          instead of squishing as the container shrinks. `aria-hidden`/`inert` take the
-          now-hidden controls out of the tab order + a11y tree while collapsed. The
-          <main> outlet is `flex-1`, so it reclaims the freed space automatically. */}
+          <aside> animates only its width (0 ↔ the resized width) and clips
+          (`overflow-hidden`); the INNER holds a FIXED (resized) width so the content
+          SLIDES under the clip cleanly instead of squishing as the container shrinks.
+          `aria-hidden`/`inert` take the now-hidden controls out of the tab order + a11y
+          tree while collapsed. The <main> outlet is `flex-1`, so it reclaims the freed
+          space automatically. The width is inline (dynamic #drag-to-resize); the
+          transition is disabled WHILE DRAGGING so the aside tracks the pointer with no
+          lag, but kept for the collapse animation. */}
       <aside
         aria-hidden={collapsed || undefined}
         inert={collapsed || undefined}
+        style={{ width: collapsed ? 0 : width }}
         className={cn(
           'flex flex-none overflow-hidden border-border bg-sidebar transition-[width] duration-200',
-          collapsed ? 'w-0 border-r-0' : 'w-[338px] border-r',
+          collapsed ? 'border-r-0' : 'border-r',
+          dragging && 'transition-none',
         )}
       >
         {/* Three-band sidebar: a PINNED top (logo + primary nav) and a PINNED bottom
             (account) sandwich the ONLY scroll region — the Projects list — so the nav
-            and account stay put while just the projects scroll. */}
-        <div className="flex h-full w-[338px] flex-none flex-col gap-3 p-3">
+            and account stay put while just the projects scroll. The INNER holds the
+            resized width (not shrinking) so content slides under the clip on collapse. */}
+        <div className="flex h-full flex-none flex-col gap-3 p-3" style={{ width }}>
           <div className="flex flex-none flex-col gap-3">
             <SidebarHeader />
             <PrimaryNav canCreateThread={canCreateThread} onNewThread={onNewThread} />
@@ -176,6 +232,31 @@ export function Shell({
           <AccountChip onOpenSettings={onOpenSettings} />
         </div>
       </aside>
+
+      {/* Resize handle (#drag-to-resize): a SIBLING of the <aside> (so it lives OUTSIDE
+          the aside's `overflow-hidden`/collapse clip) rendered only when expanded — a
+          collapsed sidebar can't be resized. A 0-width relative wrapper on the border
+          carries a WIDER (8px) invisible hit strip (`absolute -left-1 w-2`) with a thin
+          visible line on hover/drag, so the grab target is forgiving but the affordance
+          is a 1px seam. Pointer-capture keeps the drag tracking outside the strip and
+          auto-cleans (no leaked window listener). Double-click resets to the default. */}
+      {!collapsed && (
+        <div className="relative z-10 w-0 flex-none">
+          <div
+            aria-hidden
+            onPointerDown={onHandlePointerDown}
+            onPointerMove={onHandlePointerMove}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+            onDoubleClick={resetWidth}
+            className={cn(
+              'absolute -left-1 top-0 h-full w-2 cursor-col-resize [-webkit-app-region:no-drag]',
+              'after:absolute after:inset-y-0 after:left-1 after:w-px after:bg-transparent after:transition-colors after:content-[""] hover:after:bg-accent/40',
+              dragging && 'after:bg-accent/60',
+            )}
+          />
+        </div>
+      )}
 
       <main className="min-w-0 flex-1 overflow-y-auto p-6">{outlet}</main>
     </div>

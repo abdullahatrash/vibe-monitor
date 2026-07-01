@@ -363,14 +363,20 @@ function draftConnection(
 ): ThreadConnection {
   const threadId = randomUUID()
   transcriptThreads.set(agentId, threadId)
+  // Seed the picker from the Workspace's eager primary session (ADR-0012) so a
+  // fresh draft shows Mode/Model/effort on first paint. `sessionId` stays null —
+  // the draft is still a renderer-only unbound Thread (ADR-0011); the primary
+  // sessionId is a main-side detail its first prompt claims. Null-safe -> today's
+  // all-null behavior when no primary session opened (best-effort failure).
+  const controls = agent.primarySessionControls
   return {
     agentId,
     workspaceDir: agent.workspaceDir,
     sessionId: null,
     title: null,
-    modes: null,
-    models: null,
-    reasoningEffort: null,
+    modes: controls?.modes ?? null,
+    models: controls?.models ?? null,
+    reasoningEffort: controls?.reasoningEffort ?? null,
     threadId,
     workspaceId: workspaceId ?? randomUUID(),
     signOutAvailable: agent.signOutAvailable,
@@ -400,12 +406,18 @@ async function bindThreadSession(
   // prompt (last-write-wins, and only the active Thread prompts at a time).
   transcriptThreads.set(args.agentId, args.threadId)
   if (metadataStore) {
+    // A draft's first prompt (sessionId null) claims the Workspace's eager primary
+    // session (ADR-0012), so it binds to that instead of minting a SECOND
+    // `session/new`; consumed once, so a second concurrent draft mints its own.
+    // Never claimed for a reopened/already-bound Thread (those aren't case (i)).
+    const preopened = args.sessionId === null ? (agent.consumePrimarySession() ?? undefined) : undefined
     const bound = await ensureBoundSession({
       agent,
       store: metadataStore,
       threadId: args.threadId,
       workspaceId: args.workspaceId,
       sessionId: args.sessionId,
+      preopened,
     })
     return { sessionId: bound.sessionId, minted: bound.minted, rebound: bound.rebound, controls: bound.controls }
   }
@@ -458,14 +470,19 @@ function continueConnection(
   const target = resolveContinueTarget(metadataStore, threadId)
   if (!target) return null
   transcriptThreads.set(agentId, target.threadId)
+  // Seed the picker from the Workspace's eager primary session (ADR-0012 #4), closing
+  // the Continue-flow gap ADR-0011 left open: a reopened, not-yet-resumed Thread shows
+  // the Workspace's option lists instead of null controls until its lazy `session/load`
+  // reports its own. Null-safe -> today's all-null when no primary session opened.
+  const controls = agent.primarySessionControls
   return {
     agentId,
     workspaceDir: agent.workspaceDir,
     sessionId: target.sessionId,
     title: target.title,
-    modes: null,
-    models: null,
-    reasoningEffort: null,
+    modes: controls?.modes ?? null,
+    models: controls?.models ?? null,
+    reasoningEffort: controls?.reasoningEffort ?? null,
     threadId: target.threadId,
     workspaceId: target.workspaceId,
     signOutAvailable: agent.signOutAvailable,
@@ -686,6 +703,18 @@ function registerIpc(): void {
         return { ok: false, kind: 'not-signed-in', agentId, workspaceDir: args.workspaceDir, authMethods: agent.authMethods }
       }
 
+      // Open the Workspace's eager primary session (ADR-0012) so a draft's/continue's
+      // picker reads real controls pre-prompt, and the first prompt REUSES it (no
+      // second `session/new`). Best-effort: a `session/new` failure must NOT break
+      // connect — fall back to a null-controls draft (the #153 cache still covers the
+      // picker). Signed-in was just checked, so a -32000 shouldn't happen; catch
+      // defensively anyway. A no-op on a re-select whose agent already opened one.
+      try {
+        await agent.openPrimarySession()
+      } catch {
+        // Swallow: connect proceeds with a null-controls draft/continue connection.
+      }
+
       // Continue from the cold launch list (TB4 #33): connect to the EXISTING
       // Thread (its first prompt drives the lazy `session/load` resume) without
       // opening — and persisting — a throwaway empty Thread. Falls through to a
@@ -714,6 +743,14 @@ function registerIpc(): void {
     if (!agent) return { ok: false, kind: 'error', error: `No active agent for id ${args.agentId}.`, hint: null }
     pool.touch(args.agentId) // landing in a Thread is activity — outrank idle peers (TB5 #50)
     const workspaceId = await recordWorkspaceOpen(agent.workspaceDir)
+    // Open the eager primary session (ADR-0012) for this post-sign-in draft too, so
+    // its picker reads real controls and its first prompt reuses it. Best-effort —
+    // a failure falls back to a null-controls draft. No-op if one is already open.
+    try {
+      await agent.openPrimarySession()
+    } catch {
+      // Swallow: the draft connection is still returned (null-controls fallback).
+    }
     return { ok: true, thread: draftConnection(args.agentId, agent, workspaceId) }
   })
 

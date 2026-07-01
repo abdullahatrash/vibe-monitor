@@ -122,6 +122,65 @@ describe('ensureBoundSession', () => {
     expect(second.sessionId).toBe('sess-1')
   })
 
+  it('reuses a preopened primary session on first prompt — binds it, NO session/new (ADR-0012)', async () => {
+    const store = new MetadataStore({ filePath: join(dir, 'reuse.json') })
+    await store.load()
+    const ws = await store.upsertWorkspace({ dir: '/proj/reuse' })
+    const threadId = randomUUID()
+    const agent = fakeOpener()
+    // The Workspace's eager primary session, opened at connect (its controls seeded
+    // the draft's picker). Its `session/new` already ran — the first prompt reuses it.
+    const preopened: ThreadInfo = {
+      sessionId: 'primary-1',
+      title: 'Primary',
+      modes: { currentModeId: 'default', availableModes: [] },
+      models: null,
+      reasoningEffort: null,
+    }
+
+    const bound = await ensureBoundSession({
+      agent,
+      store,
+      threadId,
+      workspaceId: ws.id,
+      sessionId: null,
+      preopened,
+    })
+
+    expect(agent.calls).toBe(0) // the eager session is reused — no SECOND session/new
+    expect(bound.minted).toBe(true) // this call newly bound the Thread to a session
+    expect(bound.sessionId).toBe('primary-1')
+    // The reused session's controls flow to the renderer's `thread:bound` (#153 cache).
+    expect(bound.controls).toEqual({ modes: preopened.modes, models: null, reasoningEffort: null })
+
+    // Bound onto the SAME Thread id, carrying the primary sessionId as the resume cursor.
+    const threads = store.snapshot().threads
+    expect(threads).toHaveLength(1)
+    expect(threads[0]?.id).toBe(threadId)
+    expect(threads[0]?.sessionId).toBe('primary-1')
+  })
+
+  it('mints a fresh session/new for a draft when NO preopened primary session is supplied', async () => {
+    const store = new MetadataStore({ filePath: join(dir, 'no-preopen.json') })
+    await store.load()
+    const ws = await store.upsertWorkspace({ dir: '/proj/no-preopen' })
+    const agent = fakeOpener()
+
+    // A second concurrent draft (primary already consumed) passes no preopened session.
+    const bound = await ensureBoundSession({
+      agent,
+      store,
+      threadId: randomUUID(),
+      workspaceId: ws.id,
+      sessionId: null,
+      preopened: undefined,
+    })
+
+    expect(agent.calls).toBe(1) // mints its own session
+    expect(bound.minted).toBe(true)
+    expect(bound.sessionId).toBe('sess-1')
+  })
+
   it('binds two drafts under one agent to two distinct sessions (multi-Thread per Workspace)', async () => {
     const store = new MetadataStore({ filePath: join(dir, 'multi.json') })
     await store.load()

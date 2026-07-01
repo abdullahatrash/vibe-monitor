@@ -123,6 +123,12 @@ export interface BoundSession {
  * This is the fix for the reopened-Thread bug: before TB4, case (ii) returned the
  * stored sessionId untouched, so `agent.prompt` threw `No open Thread` because the
  * fresh agent's session map was empty (it never resumed the session).
+ *
+ * `preopened` (ADR-0012) is the Workspace's unconsumed PRIMARY session — opened
+ * eagerly at connect. When a draft (case i) has one, the first prompt BINDS to it
+ * instead of minting a second `session/new` (the eager session IS this Thread's
+ * session). Only case (i) reads it; the caller passes it only for a draft and only
+ * once (it claims it via `consumePrimarySession`).
  */
 export async function ensureBoundSession(args: {
   agent: SessionBinder
@@ -130,9 +136,14 @@ export async function ensureBoundSession(args: {
   threadId: string
   workspaceId: string
   sessionId: string | null
+  preopened?: ThreadInfo
 }): Promise<BoundSession> {
-  // (i) draft: mint a fresh session and bind it.
-  if (!args.sessionId) return mintAndBind(args)
+  // (i) draft: bind the Workspace's unconsumed primary session if one was opened at
+  // connect (ADR-0012 — no second session/new), else mint a fresh one. Either way
+  // the session is bound onto THIS Thread id.
+  if (!args.sessionId) {
+    return args.preopened ? bindThread(args, args.preopened) : mintAndBind(args)
+  }
 
   // (iii) already hosted this run: reuse with no load/new — no fresh result, so no
   // controls to hand the renderer (it keeps whatever it already holds for this Thread).
@@ -163,7 +174,19 @@ async function mintAndBind(args: {
   threadId: string
   workspaceId: string
 }): Promise<BoundSession> {
-  const thread = await args.agent.openThread()
+  return bindThread(args, await args.agent.openThread())
+}
+
+/**
+ * Bind an ALREADY-OPEN session (a fresh `session/new`, or ADR-0012's reused primary
+ * session) onto the Thread id: upsert the record by id (preserving `createdAt`) and
+ * report the bind as `minted` with the session's reported controls. No agent call —
+ * the session/new already ran (at mint or eagerly at connect).
+ */
+async function bindThread(
+  args: { store: ThreadBindStore; threadId: string; workspaceId: string },
+  thread: ThreadInfo,
+): Promise<BoundSession> {
   await args.store.upsertThread({
     id: args.threadId,
     workspaceId: args.workspaceId,

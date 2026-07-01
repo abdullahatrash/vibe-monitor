@@ -753,7 +753,7 @@ function NavThread({
               else if (e.key === 'Escape') cancelRename()
             }}
             onBlur={(e) => submitRename(e.currentTarget.value)}
-            className="min-w-0 flex-1 rounded-sm bg-transparent px-1 text-[13.5px] text-text outline-none ring-1 ring-accent"
+            className="min-w-0 flex-1 rounded-[3px] bg-transparent px-1 text-[13.5px] text-text outline-none ring-1 ring-accent"
           />
         </div>
       </li>

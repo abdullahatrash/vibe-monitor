@@ -988,6 +988,52 @@ body {
   cursor: pointer;
 }
 
+/* --- Follow-up queue rows (#105) --- */
+
+.composer-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.queued {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.queued__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.queued__marker {
+  color: var(--muted);
+}
+
+.queued__remove {
+  flex: none;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
 .composer__attach {
   align-self: flex-end;
 }

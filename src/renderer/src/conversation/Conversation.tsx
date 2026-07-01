@@ -43,6 +43,7 @@ import {
   moveSelection,
 } from './command-autocomplete'
 import { ACCEPTED_IMAGE_TYPES, isAcceptedImageType, parseDataUrl } from './image-attach'
+import { isSending, nextQueueId, useFollowUpQueue } from './follow-up-queue'
 
 /** Process-local counter for unique echoed-prompt ids. */
 let promptSeq = 0
@@ -170,6 +171,11 @@ export function Conversation({
   // clobbering events that streamed in before the JSONL read resolved.
   const liveSeen = useRef(false)
 
+  // The follow-up queue for THIS Thread (#105, ADR-0009): submitting while a turn
+  // streams enqueues here (the queue lives in a module store ABOVE this remount, so
+  // it survives a Thread switch), and every turn-end auto-flushes one message.
+  const followUps = useFollowUpQueue(thread.threadId)
+
   // Hydrate this Thread's saved history from JSONL once (TB5): switching INTO a
   // previously-used Thread shows its conversation before live events resume. A
   // draft (or a fresh Thread) has none, so this is a no-op there.
@@ -272,32 +278,37 @@ export function Conversation({
     setPendingImages((prev) => prev.filter((img) => img.id !== id))
   }
 
-  async function send(): Promise<void> {
-    const text = draft.trim()
-    // Allow a send with images and no text; still block while a turn is streaming.
-    if ((!text && pendingImages.length === 0) || state.isProcessing) return
+  // The actual send of ONE message as a fresh `session/prompt` (#105). Owns the
+  // whole turn lifecycle — echo dispatch, IPC, result handling, and (in `finally`)
+  // `turn-complete` THEN a drain of the next queued message. It NEVER touches
+  // composer state (draft/pendingImages) — clearing is the caller's job — so it can
+  // send a queued message that has no relation to the current composer contents.
+  // The module-level `sending` latch (via `followUps.beginSend`/`endSend`) is held for
+  // the whole call so NO second turn can start for this Thread — across component
+  // instances — while this one is open (a concurrent `session/prompt` would -32602).
+  async function submitPrompt(
+    text: string,
+    images: Array<{ data: string; mimeType: string; previewUrl: string }>,
+  ): Promise<boolean> {
+    followUps.beginSend()
     dispatch({
       type: 'send-prompt',
       id: `user:${promptSeq++}`,
       text,
-      images: pendingImages.map(({ previewUrl }) => ({ previewUrl })),
+      images: images.map(({ previewUrl }) => ({ previewUrl })),
     })
+    let ok = false
     try {
       const result = await window.api.sendPrompt({
         agentId: thread.agentId,
         threadId: thread.threadId,
         workspaceId: thread.workspaceId,
-        sessionId: boundSessionId,
+        sessionId: boundRef.current,
         text,
-        images: pendingImages.map(({ data, mimeType }) => ({ data, mimeType })),
+        images: images.map(({ data, mimeType }) => ({ data, mimeType })),
       })
       if (result.ok) {
-        // The turn was accepted: drop the staged images AND clear the text/draft.
-        // On ANY failure below we KEEP both so the user can retry (e.g. switch to a
-        // vision model) without re-typing or re-attaching (#100).
-        setPendingImages([])
-        setDraft('')
-        clearDraft(window.localStorage, thread.threadId)
+        ok = true
         // Reuse the now-bound session on the next prompt (no second session/new),
         // and lift it so a switch-away-and-back doesn't re-mint. `thread:bound`
         // already set this for a fresh draft; this also covers the no-store path.
@@ -320,10 +331,78 @@ export function Conversation({
         dispatch({ type: 'turn-error', message })
       }
     } finally {
-      // The turn's stopReason resolves sendPrompt; flip back to the user's turn.
+      // The turn's stopReason resolves sendPrompt; flip back to the user's turn and
+      // release the module `sending` latch. Releasing it NOTIFIES, which re-fires the
+      // flush effect below on the CURRENTLY-mounted instance — so it drains the next
+      // queued follow-up (even if THIS instance has since unmounted). We do NOT drain
+      // here directly: a dead instance must not send (its echo would go to a dead
+      // reducer). Flush happens on EVERY turn end — natural OR cancelled (ADR-0009).
       dispatch({ type: 'turn-complete' })
+      followUps.endSend()
+    }
+    return ok
+  }
+
+  // Drain exactly ONE queued follow-up as a fresh turn. Gated on the LIVE module latch
+  // `isSending(threadId)` (not a per-instance ref / the lagging reducer snapshot), so it
+  // NEVER starts a turn while one is already open for this Thread — the strict-
+  // serialization guarantee (vibe-acp -32602) that holds ACROSS the remount, and the
+  // strict-mode double-invoke guard (`beginSend` sets the latch synchronously, so a
+  // second call bails).
+  function flushNext(): void {
+    if (isSending(thread.threadId)) return
+    const head = followUps.dequeueHead()
+    if (head) void submitPrompt(head.text, head.images)
+  }
+
+  // Composer submit (Enter or the Send/Queue button). When a turn is streaming we
+  // ENQUEUE the composer payload and clear the composer (it flushes on the next turn
+  // end); when idle we send immediately, preserving #100's clear-on-success /
+  // keep-on-failure UX (a failed send keeps the text + staged images for retry).
+  async function send(): Promise<void> {
+    const text = draft.trim()
+    const hasContent = text.length > 0 || pendingImages.length > 0
+    if (!hasContent) return
+    const images = pendingImages.map(({ data, mimeType, previewUrl }) => ({
+      data,
+      mimeType,
+      previewUrl,
+    }))
+    if (followUps.sending) {
+      // A turn is live for this Thread (authoritative module latch, not the per-
+      // instance reducer snapshot which lags on a remount) — queue it (protocol forbids
+      // a concurrent prompt) and clear the composer so the user can compose the next
+      // follow-up. It auto-flushes on the next turn end.
+      followUps.enqueue({ id: nextQueueId(), text, images })
+      setDraft('')
+      clearDraft(window.localStorage, thread.threadId)
+      setPendingImages([])
+      return
+    }
+    // Idle: send now. `submitPrompt` echoes text/images by value up front, so we can
+    // clear the composer AFTER, but only on a successful outcome — preserving #100's
+    // clear-on-success / keep-on-failure (a failed send keeps text + staged images
+    // for retry, e.g. switching to a vision model).
+    const ok = await submitPrompt(text, images)
+    if (ok) {
+      setPendingImages([])
+      setDraft('')
+      clearDraft(window.localStorage, thread.threadId)
     }
   }
+
+  // The SOLE auto-flush trigger (#105): re-run whenever this Thread's `sending` latch
+  // or queue changes. `flushNext` self-gates on the live `isSending` latch, so it fires
+  // exactly when a turn ends (latch clears) or the queue gains its first item while idle,
+  // and bails while a turn is open. Because effects run ONLY on the mounted instance, a
+  // turn started by a since-unmounted instance is drained here by the currently-mounted
+  // one (correct reducer/echo) — and a remount with a pre-existing queue flushes on its
+  // first run. This replaces the per-instance ref + one-shot mount effect that couldn't
+  // serialize across the remount (the -32602 hazard).
+  useEffect(() => {
+    flushNext()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followUps.sending, followUps.queued])
 
   // Answer a pending permission request: relay the choice to the agent and mark
   // the prompt resolved so it stops asking (state stays renderer-owned).
@@ -505,6 +584,32 @@ export function Conversation({
           onSetConfig={(axis, value) => onSetConfig?.(axis, value, boundSessionId)}
         />
 
+        {followUps.queued.length > 0 && (
+          // Queued follow-ups (#105, ADR-0009): messages submitted while a turn
+          // streams, auto-flushed one per turn end. Each row shows its text (or a
+          // `📎 N image(s)` label when text-empty; a `📎 N` marker when it has both)
+          // and a ✕ to drop it. Edit-in-place is deferred.
+          <div className="composer-queue">
+            {followUps.queued.map((m) => (
+              <div key={m.id} className="queued">
+                <span className="queued__text">
+                  {m.text ? m.text : `📎 ${m.images.length} image${m.images.length === 1 ? '' : 's'}`}
+                  {m.text && m.images.length > 0 && (
+                    <span className="queued__marker"> 📎 {m.images.length}</span>
+                  )}
+                </span>
+                <button
+                  className="queued__remove"
+                  aria-label="Remove queued message"
+                  onClick={() => followUps.remove(m.id)}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {pendingImages.length > 0 && (
           // Staged-image strip (#100): thumbnails with a ✕ remove, above the composer.
           <div className="composer-attachments">
@@ -585,7 +690,6 @@ export function Conversation({
             aria-label="Attach images"
             title="Attach images"
             onClick={() => fileInputRef.current?.click()}
-            disabled={state.isProcessing}
           >
             📎
           </button>
@@ -607,9 +711,9 @@ export function Conversation({
           <button
             className="btn"
             onClick={() => void send()}
-            disabled={state.isProcessing || (draft.trim().length === 0 && pendingImages.length === 0)}
+            disabled={draft.trim().length === 0 && pendingImages.length === 0}
           >
-            {state.isProcessing ? 'Sending…' : 'Send'}
+            {followUps.sending ? 'Queue' : 'Send'}
           </button>
         </div>
       </div>

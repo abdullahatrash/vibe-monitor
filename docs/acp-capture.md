@@ -415,3 +415,24 @@ image *data* (right shape, bad bytes) is a separate app code **`-31007`**.
 The probe generates a solid-colour PNG in pure Node, sweeps candidate block shapes on an image-capable model, and
 uses the model naming the colour as the true round-trip test. Read-only (`chat` mode); touches only
 `session/*` + `_auth/status` — safe under the house rules.
+
+---
+
+## 12. Turn cancel + concurrent-prompt behavior (captured 2026-07-01 via the queue-vs-steer spike, vibe-acp 2.18.3)
+
+Verifies the two unknowns the "queue-vs-steer follow-ups" feature depends on (both were "unverified" in §"Still to verify" / `vibe-acp-protocol.md`).
+
+**`session/cancel` is a NOTIFICATION (no id, no response), params `{sessionId}`.** Sending it mid-turn makes the in-flight `session/prompt` **resolve** (not reject) with:
+```json
+{"stopReason":"cancelled","usage":{"inputTokens":0,"outputTokens":0,"totalTokens":0},"userMessageId":"…"}
+```
+Streaming stops immediately. So `stopReason` has (at least) two values: **`end_turn`** (natural) and **`cancelled`** (interrupted). Interrupt is fully supported.
+
+**Concurrent prompts are REJECTED.** A second `session/prompt` sent while the first is still streaming fails immediately:
+```
+-32602  "Concurrent prompts are not supported yet, wait for agent loop to finish"
+```
+⇒ There is **NO "steer" / mid-turn injection** on vibe-acp today (no method, and a concurrent prompt hard-errors). A follow-up submitted during a turn must be handled **client-side**: either **queue** it (send as a fresh `session/prompt` once the turn's `stopReason` resolves) or **cancel-first** (`session/cancel`, then send). The wording ("not supported *yet*") suggests steer may arrive later; design for queue+interrupt now, leave room for a steer path.
+
+### Infra — same `node`-not-`bun` gotcha as §9/§10/§11
+`bun build scripts/spike-cancel-steer.ts --target=node --outfile=/tmp/spike-cs.mjs && node /tmp/spike-cs.mjs`. Read-only (`chat` mode — the agent can't touch the workspace); sends only `session/*` + `_auth/status` (no auth/creds/writes). Safe under the house rules.

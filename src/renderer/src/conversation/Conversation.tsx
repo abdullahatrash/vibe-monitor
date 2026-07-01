@@ -16,7 +16,12 @@ import type {
   ThreadModels,
   ThreadReasoningEffort,
 } from '../../../shared/ipc'
+import { ArrowUp, Mic, Plus, Square, X } from 'lucide-react'
 import { AgentControls } from './AgentControls'
+import { Card } from '../ui/card'
+import { IconButton } from '../ui/icon-button'
+import { Textarea } from '../ui/textarea'
+import { cn } from '../lib/utils'
 import {
   conversationReducer,
   initialConversationState,
@@ -570,152 +575,194 @@ export function Conversation({
         </button>
       )}
 
-      <div className="composer-area">
-        {/* Agent controls (#66): Mode / Model / Reasoning effort. Vibe-owned,
-            between-turns only — disabled WHILE a turn streams. A pre-prompt draft
-            (#75) is NOT processing, so its pickers are live: a pick passes the null
-            `boundSessionId` up, and App caches it (no IPC — no session yet) to apply
-            on the first bind. A bound Thread passes its real session for the IPC. */}
-        <AgentControls
-          modes={modes}
-          models={models}
-          reasoningEffort={reasoningEffort}
-          disabled={state.isProcessing}
-          onSetConfig={(axis, value) => onSetConfig?.(axis, value, boundSessionId)}
-        />
-
-        {followUps.queued.length > 0 && (
-          // Queued follow-ups (#105, ADR-0009): messages submitted while a turn
-          // streams, auto-flushed one per turn end. Each row shows its text (or a
-          // `📎 N image(s)` label when text-empty; a `📎 N` marker when it has both)
-          // and a ✕ to drop it. Edit-in-place is deferred.
-          <div className="composer-queue">
-            {followUps.queued.map((m) => (
-              <div key={m.id} className="queued">
-                <span className="queued__text">
-                  {m.text ? m.text : `📎 ${m.images.length} image${m.images.length === 1 ? '' : 's'}`}
-                  {m.text && m.images.length > 0 && (
-                    <span className="queued__marker"> 📎 {m.images.length}</span>
-                  )}
-                </span>
-                <button
-                  className="queued__remove"
-                  aria-label="Remove queued message"
-                  onClick={() => followUps.remove(m.id)}
-                >
-                  ✕
-                </button>
+      <div className="mx-auto w-full max-w-[830px]">
+        <Card className="gap-0 p-0">
+          <div className="flex flex-col px-6 pt-[22px] pb-[14px]">
+            {followUps.queued.length > 0 && (
+              // Queued follow-ups (#105, ADR-0009): messages submitted while a turn
+              // streams, auto-flushed one per turn end. Each row shows its text (or a
+              // `📎 N image(s)` label when text-empty; a `📎 N` marker when it has both)
+              // and a ✕ to drop it. Edit-in-place is deferred.
+              <div className="mb-3 flex flex-col gap-1">
+                {followUps.queued.map((m) => (
+                  <div
+                    key={m.id}
+                    className="flex items-center gap-2 rounded-lg border border-border bg-panel px-2 py-1"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-text">
+                      {m.text
+                        ? m.text
+                        : `📎 ${m.images.length} image${m.images.length === 1 ? '' : 's'}`}
+                      {m.text && m.images.length > 0 && (
+                        <span className="text-muted"> 📎 {m.images.length}</span>
+                      )}
+                    </span>
+                    <IconButton
+                      size="icon-xs"
+                      aria-label="Remove queued message"
+                      onClick={() => followUps.remove(m.id)}
+                    >
+                      <X className="size-3.5" aria-hidden />
+                    </IconButton>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
+            )}
 
-        {pendingImages.length > 0 && (
-          // Staged-image strip (#100): thumbnails with a ✕ remove, above the composer.
-          <div className="composer-attachments">
-            {pendingImages.map((img) => (
-              <div key={img.id} className="attachment">
-                <img className="attachment__thumb" src={img.previewUrl} alt={img.name} />
-                <button
-                  className="attachment__remove"
-                  aria-label={`Remove ${img.name}`}
-                  onClick={() => removeImage(img.id)}
-                >
-                  ✕
-                </button>
+            {pendingImages.length > 0 && (
+              // Staged-image strip (#100): thumbnails with a ✕ remove, above the input.
+              <div className="mb-3 flex flex-wrap gap-2">
+                {pendingImages.map((img) => (
+                  <div key={img.id} className="relative size-14">
+                    <img
+                      className="size-14 rounded-lg border border-border object-cover"
+                      src={img.previewUrl}
+                      alt={img.name}
+                    />
+                    <button
+                      type="button"
+                      aria-label={`Remove ${img.name}`}
+                      onClick={() => removeImage(img.id)}
+                      className="absolute -top-1.5 -right-1.5 inline-flex size-[18px] items-center justify-center rounded-full border border-border bg-panel text-text outline-none"
+                    >
+                      <X className="size-3" aria-hidden />
+                    </button>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
+            )}
 
-        <div className="composer">
-          {showCommands && (
-            <ul className="command-autocomplete" role="listbox" aria-label="Slash commands">
-              {commandRows.map((command, i) => (
-                <li
-                  key={command.name}
-                  ref={i === activeIndex ? activeRowRef : null}
-                  role="option"
-                  aria-selected={i === activeIndex}
-                  className={
-                    i === activeIndex
-                      ? 'command-autocomplete__row command-autocomplete__row--active'
-                      : 'command-autocomplete__row'
+            <div className="relative">
+              {showCommands && (
+                <ul
+                  className="absolute right-0 bottom-full left-0 z-10 mb-2 max-h-56 list-none overflow-y-auto rounded-xl border border-border bg-panel p-1 shadow-lg"
+                  role="listbox"
+                  aria-label="Slash commands"
+                >
+                  {commandRows.map((command, i) => (
+                    <li
+                      key={command.name}
+                      ref={i === activeIndex ? activeRowRef : null}
+                      role="option"
+                      aria-selected={i === activeIndex}
+                      className={cn(
+                        'flex cursor-pointer items-baseline gap-2.5 rounded-lg px-2 py-1.5',
+                        i === activeIndex && 'bg-[var(--accent-tint)]',
+                      )}
+                      // mousedown (not click) so we accept BEFORE the textarea blurs.
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        acceptCommand(command)
+                      }}
+                    >
+                      <span className="text-[13px] font-semibold whitespace-nowrap text-accent-text">
+                        /{command.name}
+                      </span>
+                      {command.description && (
+                        <span className="truncate text-xs text-muted">{command.description}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Textarea
+                ref={inputRef}
+                className="min-h-0 resize-none border-0 bg-transparent p-0 text-[17px] leading-normal focus-visible:border-0"
+                placeholder={
+                  state.items.length === 0 ? 'Ask anything…' : 'Ask for follow-up changes'
+                }
+                value={draft}
+                onChange={(e) => {
+                  // Write-through: keep React state and the persisted draft (#60) in lockstep.
+                  setDraft(e.target.value)
+                  persistDraft(window.localStorage, thread.threadId, e.target.value)
+                  // Re-derive the `/` autocomplete trigger from the new value + caret (#95).
+                  refreshCommandTrigger(e.target.value, e.target.selectionStart)
+                }}
+                // Caret moves (arrows/click) with no edit also open/close the trigger (#95).
+                onSelect={(e) =>
+                  refreshCommandTrigger(e.currentTarget.value, e.currentTarget.selectionStart)
+                }
+                onKeyDown={onKeyDown}
+                onPaste={onPaste}
+                rows={2}
+              />
+            </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={IMAGE_ACCEPT}
+              multiple
+              hidden
+              onChange={onPickFiles}
+            />
+
+            {/* Control row (prototype: 44px gap below the input). Attach + agent
+                controls left; mic + interrupt + gradient send right. */}
+            <div className="mt-[44px] flex items-center gap-3.5">
+              <IconButton
+                size="icon-sm"
+                aria-label="Attach images"
+                title="Attach images"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Plus className="size-5" aria-hidden />
+              </IconButton>
+
+              {/* Agent controls (#66): Mode / Model / Reasoning effort. Vibe-owned,
+                  between-turns only — disabled WHILE a turn streams. A pre-prompt draft
+                  (#75) is NOT processing, so its pickers are live: a pick passes the null
+                  `boundSessionId` up, and App caches it (no IPC — no session yet) to apply
+                  on the first bind. A bound Thread passes its real session for the IPC. */}
+              <AgentControls
+                modes={modes}
+                models={models}
+                reasoningEffort={reasoningEffort}
+                disabled={state.isProcessing}
+                onSetConfig={(axis, value) => onSetConfig?.(axis, value, boundSessionId)}
+              />
+
+              <div className="flex-1" />
+
+              {/* Decorative voice-input affordance from the prototype; not yet wired. */}
+              <Mic className="size-[19px] shrink-0 text-muted" aria-hidden />
+
+              {state.isProcessing && boundSessionId && (
+                // Interrupt the active turn (#103, ADR-0009): fire `session/cancel`. The
+                // turn then resolves `cancelled`, which the existing turn-complete path
+                // flips `isProcessing` off on — no new local state needed here. Gated on
+                // `boundSessionId` so it only shows once there's a turn it can cancel (a
+                // draft's first prompt is pre-bind for its session/new round-trip).
+                <IconButton
+                  size="icon-sm"
+                  variant="stop"
+                  aria-label="Stop turn"
+                  title="Stop"
+                  onClick={() =>
+                    void window.api.cancelTurn({ agentId: thread.agentId, sessionId: boundSessionId })
                   }
-                  // mousedown (not click) so we accept BEFORE the textarea blurs.
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    acceptCommand(command)
-                  }}
                 >
-                  <span className="command-autocomplete__name">/{command.name}</span>
-                  {command.description && (
-                    <span className="command-autocomplete__desc">{command.description}</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-          <textarea
-            ref={inputRef}
-            className="composer__input"
-            placeholder="Ask Vibe… (Enter to send, Shift+Enter for a newline)"
-            value={draft}
-            onChange={(e) => {
-              // Write-through: keep React state and the persisted draft (#60) in lockstep.
-              setDraft(e.target.value)
-              persistDraft(window.localStorage, thread.threadId, e.target.value)
-              // Re-derive the `/` autocomplete trigger from the new value + caret (#95).
-              refreshCommandTrigger(e.target.value, e.target.selectionStart)
-            }}
-            // Caret moves (arrows/click) with no edit also open/close the trigger (#95).
-            onSelect={(e) =>
-              refreshCommandTrigger(e.currentTarget.value, e.currentTarget.selectionStart)
-            }
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            rows={2}
-          />
-          <input
-            ref={fileInputRef}
-            type="file"
-            className="composer__file-input"
-            accept={IMAGE_ACCEPT}
-            multiple
-            hidden
-            onChange={onPickFiles}
-          />
-          <button
-            className="btn btn--ghost composer__attach"
-            aria-label="Attach images"
-            title="Attach images"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            📎
-          </button>
-          {state.isProcessing && boundSessionId && (
-            // Interrupt the active turn (#103, ADR-0009): fire `session/cancel`. The
-            // turn then resolves `cancelled`, which the existing turn-complete path
-            // flips `isProcessing` off on — no new local state needed here. Gated on
-            // `boundSessionId` so it only shows once there's a turn it can cancel (a
-            // draft's first prompt is pre-bind for its session/new round-trip).
-            <button
-              className="btn btn--stop"
-              onClick={() =>
-                void window.api.cancelTurn({ agentId: thread.agentId, sessionId: boundSessionId })
-              }
-            >
-              ⏹ Stop
-            </button>
-          )}
-          <button
-            className="btn"
-            onClick={() => void send()}
-            disabled={draft.trim().length === 0 && pendingImages.length === 0}
-          >
-            {followUps.sending ? 'Queue' : 'Send'}
-          </button>
-        </div>
+                  <Square className="size-4" aria-hidden />
+                </IconButton>
+              )}
+
+              {/* Circular gradient send (prototype: 36px `--accent-grad-action` + glow).
+                  Icon-only; the Queue-vs-Send distinction (#105) is conveyed via the
+                  label/tooltip while a turn streams. */}
+              <button
+                type="button"
+                onClick={() => void send()}
+                disabled={draft.trim().length === 0 && pendingImages.length === 0}
+                aria-label={followUps.sending ? 'Queue message' : 'Send message'}
+                title={followUps.sending ? 'Queue' : 'Send'}
+                className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-white shadow-[0_1px_2px_var(--accent-shadow)] outline-none transition-opacity [background:var(--accent-grad-action)] hover:opacity-90 disabled:cursor-default disabled:opacity-40"
+              >
+                <ArrowUp className="size-5" aria-hidden />
+              </button>
+            </div>
+          </div>
+        </Card>
       </div>
     </div>
   )

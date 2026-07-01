@@ -378,3 +378,40 @@ would silently revert to `default` on every reopen.
 
 ### Infra — same `node`-not-`bun` gotcha as §9
 Run the probe built to a node target: `bun build scripts/spike-config-option.ts --target=node --outfile=/tmp/spike-config.mjs && node /tmp/spike-config.mjs`. `--skip-q2` skips the credit-costing prompt+reload. Safe under the house rules — it touches only `session/*` (no `authenticate`/`_auth`).
+
+---
+
+## 11. Image attachments — `session/prompt` content-block shape (captured 2026-07-01 via the composer-extras image spike, vibe-acp 2.18.3)
+
+`promptCapabilities.image:true` (§1) is real, but the block shape is a **trap**: `session/prompt`
+`prompt[]` accepts a distinct **image content block**, and the field is **`mime_type` (snake_case)** — the
+ACP-conventional camelCase `mimeType` is *silently accepted but blind* (the image never reaches the model).
+
+**USE THIS (verified — model named the image's colour):**
+```json
+{"type":"image","data":"<BARE base64, no data: prefix>","mime_type":"image/png"}
+```
+
+**DO NOT USE — `mimeType` (camelCase):** the request SUCCEEDS (no error, `attachment_counts:{image:1}`) but the
+vision model answers "I cannot see images." Reproduced twice. `data` must be **bare base64** (a `data:` URI in
+either `data` or a `uri` field is rejected `-32602`).
+
+**Full content-block union** (leaked verbatim by a `-32602` pydantic error when probing wrong shapes):
+- `TextContentBlock` — `{type:"text", text}`
+- `ImageContentBlock` — `{type:"image", data, mime_type}` (bare base64)
+- `AudioContentBlock` — `{type:"audio", data, mime_type}` (advertised `audio:false`, so unused)
+- `ResourceContentBlock`/resource_link — `{type:"resource_link", name, uri}`
+- `EmbeddedResourceContentBlock` — `{type:"resource", resource}` (pairs with `embeddedContext:true`)
+
+**Model vision support is per-model, gated BEFORE the model call** — an unsupported model returns app-code
+**`-31008`** ("Model `X` does not support images. Switch model…"), NOT `-32602`. Of this account's models only
+**`mistral-medium-3.5`** ingested the image; **`devstral-small`** and **`local`** → `-31008`. ⇒ the composer
+must **gate/warn on image attach when the current Model isn't vision-capable** (and there's no capability flag
+in `availableModels` — discovered only by attempting, or by a hardcoded allow-list we keep in sync). Invalid
+image *data* (right shape, bad bytes) is a separate app code **`-31007`**.
+
+### Infra — same `node`-not-`bun` gotcha as §9/§10
+`bun build scripts/spike-image-block.ts --target=node --outfile=/tmp/spike-image.mjs && node /tmp/spike-image.mjs`.
+The probe generates a solid-colour PNG in pure Node, sweeps candidate block shapes on an image-capable model, and
+uses the model naming the colour as the true round-trip test. Read-only (`chat` mode); touches only
+`session/*` + `_auth/status` — safe under the house rules.

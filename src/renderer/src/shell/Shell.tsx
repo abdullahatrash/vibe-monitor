@@ -187,7 +187,7 @@ function SidebarHeader(): JSX.Element {
   return (
     <div className="flex items-center gap-2.5 px-1 pt-1">
       <Logo size={30} />
-      <span className="text-[15px] font-semibold tracking-tight text-text-strong">vibe mistro</span>
+      <span className="text-[14.5px] font-semibold tracking-tight text-text-strong">vibe mistro</span>
     </div>
   )
 }
@@ -211,7 +211,7 @@ function PrimaryNav({
         type="button"
         onClick={onNewThread}
         disabled={!canCreateThread}
-        className="flex w-full items-center gap-2.5 rounded-lg bg-[var(--accent-fill)] px-3 py-2 text-left text-[15.5px] font-semibold text-accent-text outline-none transition-[filter] hover:brightness-[0.98] disabled:pointer-events-none disabled:opacity-50"
+        className="flex w-full items-center gap-2.5 rounded-lg bg-[var(--accent-fill)] px-3 py-2 text-left text-[14px] font-semibold text-accent-text outline-none transition-[filter] hover:brightness-[0.98] disabled:pointer-events-none disabled:opacity-50"
       >
         <SquarePen className="size-[18px]" aria-hidden />
         New chat
@@ -508,7 +508,7 @@ function ProjectRow({
       {/* Header row: the fold trigger + a SIBLING ＋ (outside the trigger button, so
           clicking ＋ starts a thread rather than toggling the fold). */}
       <div className="group/proj flex items-center gap-0.5 rounded-md pr-1 transition-colors hover:bg-accent/10">
-        <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-[7px] text-left text-[15px] text-text-body outline-none focus-visible:bg-accent/10">
+        <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-[7px] text-left text-[14px] text-text-body outline-none focus-visible:bg-accent/10">
           <ChevronDown
             className={cn(
               'size-4 shrink-0 text-muted transition-transform',
@@ -742,7 +742,7 @@ function NavThread({
             else if (e.key === 'Escape') cancelRename()
           }}
           onBlur={(e) => submitRename(e.currentTarget.value)}
-          className="w-full rounded-md border border-accent bg-transparent py-[7px] pr-2 pl-[42px] text-[14.5px] text-text outline-none"
+          className="w-full rounded-md border border-accent bg-transparent py-[7px] pr-2 pl-[42px] text-[13.5px] text-text outline-none"
         />
       </li>
     )
@@ -753,7 +753,7 @@ function NavThread({
   const archived = row.thread.archived === true
   return (
     <li className="group/thread relative">
-      <NavItem active={selected} onClick={onOpen} className="py-[7px] pr-2 pl-[42px] text-[14.5px]">
+      <NavItem active={selected} onClick={onOpen} className="py-[7px] pr-2 pl-[42px] text-[13.5px]">
         <span
           className={
             row.live

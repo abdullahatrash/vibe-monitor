@@ -73,12 +73,16 @@ Bridge into `@theme` so `rounded-md`/`rounded-2xl` map to these (undo the curren
 | Hero H1 | 37px | 600 | — | -0.6px |
 | Workspace title | 20px | 600 | — | -0.2px |
 | Composer placeholder | 17px | 400 | — | — |
-| Nav label / New chat | 15.5px | 400 / 600 | — | — |
-| Body / project row / chip | 15px | 400 | 1.25 | — |
-| Thread row / context chip | 14.5px | 400 | — | — |
+| Nav label / New chat | 14px | 400 / 600 | — | — |
+| Body / project row / chip | 14px | 400 | 1.25 | — |
+| Thread row / context chip | 13.5px | 400 | — | — |
 | Section header ("Projects") | 13px | 500 | — | — |
 | Timestamp / plan / small | 13px | 400 | — | — |
 | Code / terminal body | 13px | 400 | 1.7 | — |
+
+> Sidebar rows were **tightened from the prototype** (nav/New-chat 15.5→14, project row 15→14, thread row
+> 14.5→13.5) for a denser, more desktop-app feel — the prototype ran a touch large. Hierarchy preserved
+> (nav ≥ project ≥ thread ≥ meta). Applied in `ui/nav-item.tsx` + `shell/Shell.tsx`.
 
 ## Spacing scale
 `2 · 4 · 6 · 8 · 10 · 12 · 14 · 16 · 18 · 20 · 22 · 24 · 40 · 42 · 44` (micro 2–12; macro 14–24; hero 40–44).

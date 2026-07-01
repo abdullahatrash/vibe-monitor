@@ -35,8 +35,18 @@ import {
 } from './sidebar-width-store'
 import { getSortOrder, setSortOrder, sortWorkspaces, type WorkspaceSortOrder } from './workspace-sort'
 import { Badge } from '../ui/badge'
+import { Button } from '../ui/button'
 import { cn } from '../lib/utils'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible'
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../ui/dialog'
 import { IconButton } from '../ui/icon-button'
 import { Menu, MenuContent, MenuItem, MenuRadioGroup, MenuRadioItem, MenuTrigger } from '../ui/menu'
 import { NavItem } from '../ui/nav-item'
@@ -98,6 +108,7 @@ export function Shell({
   onNewThread,
   onNewThreadInWorkspace,
   onDeleteThread,
+  onRemoveWorkspace,
   onSetThreadFlags,
   onRenameThread,
   onOpenSettings,
@@ -128,6 +139,8 @@ export function Shell({
   onNewThreadInWorkspace: (workspaceId: string) => void
   /** Delete a Thread (TB6) — main tears down any live session, then the list refreshes. */
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
+  /** Remove a Workspace ("Remove project") — main stops its agent + drops our records (no disk delete). */
+  onRemoveWorkspace: (workspaceId: string) => void | Promise<void>
   /** Pin/archive a Thread (#132/#133) — a safe metadata toggle on any row. */
   onSetThreadFlags: SetThreadFlags
   /** Rename a Thread (#) — inline sidebar edit; App persists + syncs vibe-acp if live. */
@@ -222,6 +235,7 @@ export function Shell({
               onSelectThread={onSelectThread}
               onNewThreadInWorkspace={onNewThreadInWorkspace}
               onDeleteThread={onDeleteThread}
+              onRemoveWorkspace={onRemoveWorkspace}
               onSetThreadFlags={onSetThreadFlags}
               onRenameThread={onRenameThread}
             />
@@ -390,6 +404,7 @@ function WorkspaceNav({
   onSelectThread,
   onNewThreadInWorkspace,
   onDeleteThread,
+  onRemoveWorkspace,
   onSetThreadFlags,
   onRenameThread,
 }: {
@@ -403,6 +418,7 @@ function WorkspaceNav({
   onSelectThread: (workspaceId: string, threadId: string) => void
   onNewThreadInWorkspace: (workspaceId: string) => void
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
+  onRemoveWorkspace: (workspaceId: string) => void | Promise<void>
   onSetThreadFlags: SetThreadFlags
   onRenameThread: RenameThread
 }): JSX.Element {
@@ -515,6 +531,7 @@ function WorkspaceNav({
               onNewThread={onNewThreadInWorkspace}
               onSelectThread={onSelectThread}
               onDeleteThread={onDeleteThread}
+              onRemoveWorkspace={onRemoveWorkspace}
               onSetThreadFlags={onSetThreadFlags}
               onRenameThread={onRenameThread}
             />
@@ -548,6 +565,7 @@ function ProjectRow({
   onNewThread,
   onSelectThread,
   onDeleteThread,
+  onRemoveWorkspace,
   onSetThreadFlags,
   onRenameThread,
 }: {
@@ -564,10 +582,14 @@ function ProjectRow({
   onNewThread: (workspaceId: string) => void
   onSelectThread: (workspaceId: string, threadId: string) => void
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
+  onRemoveWorkspace: (workspaceId: string) => void | Promise<void>
   onSetThreadFlags: SetThreadFlags
   onRenameThread: RenameThread
 }): JSX.Element {
   const [expandedThreads, setExpandedThreads] = useState(false)
+  // The "Remove project" confirmation dialog (Codex-style): a destructive, controlled
+  // modal opened from this project's ⋯ menu. Confirming calls `onRemoveWorkspace`.
+  const [confirmRemoveOpen, setConfirmRemoveOpen] = useState(false)
   // Split archived rows out (#133) then float pinned rows to the top of the active
   // list (#132) — both pure post-processing over the derived rows (deriveUnifiedThreads
   // stays flag-agnostic). Archived rows fold into a collapsible section at the bottom.
@@ -630,7 +652,50 @@ function ProjectRow({
         >
           <Plus className="size-4" aria-hidden />
         </IconButton>
+        {/* Per-project ⋯ actions menu (a SIBLING of the trigger, so opening it never
+            toggles the fold). Hover-revealed like the ＋; holds the destructive
+            "Remove project" action, which opens the confirm dialog. */}
+        <Menu>
+          <MenuTrigger
+            aria-label={`${workspace.displayName} project actions`}
+            title="Project actions"
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted opacity-0 outline-none transition-opacity hover:bg-accent/10 hover:text-text focus-visible:opacity-100 group-hover/proj:opacity-100 data-[popup-open]:opacity-100"
+          >
+            <MoreVertical className="size-3.5" aria-hidden />
+          </MenuTrigger>
+          <MenuContent>
+            <MenuItem className="text-bad" onClick={() => setConfirmRemoveOpen(true)}>
+              <Trash2 className="size-3.5" aria-hidden />
+              Remove project
+            </MenuItem>
+          </MenuContent>
+        </Menu>
       </div>
+
+      {/* Confirm dialog for "Remove project" — controlled, destructive. It removes the
+          project from vibe-mistro (our records + its agent), never files on disk. */}
+      <Dialog open={confirmRemoveOpen} onOpenChange={setConfirmRemoveOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Remove {workspace.displayName}?</DialogTitle>
+            <DialogDescription>
+              This removes the project from vibe-mistro. Files on disk will not be deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose render={<Button variant="secondary" />}>Cancel</DialogClose>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setConfirmRemoveOpen(false)
+                void onRemoveWorkspace(workspace.id)
+              }}
+            >
+              Remove
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <CollapsibleContent>
         {mainRows.length > 0 ? (

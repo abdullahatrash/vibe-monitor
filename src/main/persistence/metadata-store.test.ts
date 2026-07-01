@@ -302,6 +302,65 @@ describe('MetadataStore.deleteThread (TB6 #35)', () => {
   })
 })
 
+describe('MetadataStore.removeWorkspace ("Remove project")', () => {
+  it('removes the Workspace + all its Threads and returns their ids', async () => {
+    const file = 'remove-ws.json'
+    const store = storeAt(file)
+    await store.load()
+    const ws = await store.upsertWorkspace({ dir: '/proj/rm' })
+    const t1 = await store.upsertThread({ workspaceId: ws.id, sessionId: 's1' })
+    const t2 = await store.upsertThread({ workspaceId: ws.id, sessionId: 's2' })
+
+    const removed = await store.removeWorkspace(ws.id)
+
+    expect(removed).toEqual(expect.arrayContaining([t1.id, t2.id]))
+    expect(removed).toHaveLength(2)
+    expect(store.snapshot().workspaces).toEqual([])
+    expect(store.snapshot().threads).toEqual([])
+
+    // Durable: a fresh instance over the SAME file must not see the removed records.
+    const reopened = storeAt(file)
+    await reopened.load()
+    expect(reopened.snapshot().workspaces).toEqual([])
+    expect(reopened.snapshot().threads).toEqual([])
+  })
+
+  it('leaves other Workspaces and their Threads intact', async () => {
+    const store = storeAt('remove-ws-siblings.json')
+    await store.load()
+    const drop = await store.upsertWorkspace({ dir: '/proj/drop' })
+    const keep = await store.upsertWorkspace({ dir: '/proj/keep' })
+    const dropThread = await store.upsertThread({ workspaceId: drop.id })
+    const keepThread = await store.upsertThread({ workspaceId: keep.id })
+
+    const removed = await store.removeWorkspace(drop.id)
+
+    expect(removed).toEqual([dropThread.id])
+    expect(store.snapshot().workspaces.map((w) => w.id)).toEqual([keep.id])
+    expect(store.snapshot().threads.map((t) => t.id)).toEqual([keepThread.id])
+  })
+
+  it('is a no-op for an unknown id — returns [] and writes NOTHING', async () => {
+    const writes: string[] = []
+    const store = new MetadataStore({
+      filePath: join(dir, 'remove-ws-unknown.json'),
+      readFile: async () => {
+        throw new Error('ENOENT')
+      },
+      writeFile: async (path) => {
+        writes.push(`write:${path}`)
+      },
+      rename: async () => {},
+    })
+    await store.load()
+    await store.upsertWorkspace({ dir: '/proj/present' })
+    const writesAfterSetup = writes.length
+
+    await expect(store.removeWorkspace('no-such-workspace')).resolves.toEqual([])
+    expect(writes.length).toBe(writesAfterSetup) // unknown id → no disk write
+  })
+})
+
 describe('MetadataStore.setThreadFlags (#132 pin / #133 archive)', () => {
   it('patches only the passed flag, leaving the other untouched, and round-trips', async () => {
     const file = 'flags-roundtrip.json'

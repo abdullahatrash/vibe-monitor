@@ -187,6 +187,36 @@ export function App(): JSX.Element {
   }
 
   /**
+   * Remove a Workspace from the sidebar ("Remove project", Codex-style). Main stops
+   * its warm agent (if any — allowed even mid-turn) and removes OUR records (the
+   * Workspace + Thread metadata + JSONL); it NEVER deletes files on disk. Here we
+   * reconcile local state so the project disappears cleanly:
+   *  - If it was the selected Workspace, clear the nav selection (lands on the empty
+   *    state); leave the selection untouched when removing a non-selected project.
+   *  - Drop its connection and per-Workspace live-state. Both are idempotent: for a
+   *    CONNECTED project main disposed the agent and pushed `agent:evicted`, whose
+   *    handler already dropped the connection by agentId — so `clear` is a no-op then
+   *    (no double-removal), and it covers the cold/unconnected case that evict misses.
+   *  - Drop each removed Thread's persisted composer draft + renderer status, mirroring
+   *    `deleteThread` — so a removed project leaves no orphaned localStorage/status keys.
+   *  - `refreshRecents()` LAST, dropping it from the persisted list the sidebar renders.
+   */
+  async function removeWorkspace(workspaceId: string): Promise<void> {
+    await window.api.removeWorkspace(workspaceId)
+    // Snapshot the removed Workspace's Thread ids from the CURRENT list, before the
+    // refresh drops it, so we can clear their renderer-local residue below.
+    const removedThreadIds = recents.find((w) => w.id === workspaceId)?.threads.map((t) => t.id) ?? []
+    if (nav.selectedWorkspaceId === workspaceId) navDispatch({ type: 'clear' })
+    connDispatch({ type: 'clear', workspaceId })
+    wtDispatch({ type: 'remove-workspace', workspaceId })
+    if (removedThreadIds.length > 0) {
+      setStatuses((prev) => removedThreadIds.reduce((acc, id) => clearThreadStatus(acc, id), prev))
+      for (const id of removedThreadIds) clearDraft(window.localStorage, id)
+    }
+    await refreshRecents()
+  }
+
+  /**
    * Toggle a Thread's persisted per-Thread flags (#132 pin / #133 archive). A SAFE
    * metadata op — no session teardown — so it runs on any row (active or cold-peek).
    * Best-effort in main (ADR-0005); we refresh the recents list so the new flag
@@ -835,6 +865,7 @@ export function App(): JSX.Element {
         onNewThread={startNewChat}
         onNewThreadInWorkspace={newThreadInWorkspace}
         onDeleteThread={deleteThread}
+        onRemoveWorkspace={removeWorkspace}
         onSetThreadFlags={setThreadFlags}
         onRenameThread={renameThread}
         onOpenSettings={() => navDispatch({ type: 'open-settings' })}

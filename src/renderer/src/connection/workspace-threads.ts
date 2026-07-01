@@ -72,6 +72,11 @@ export type WorkspaceThreadsAction =
   // A live Thread was deleted (TB6): drop it from the live set + its bound session
   // + its config entry.
   | { type: 'remove'; workspaceId: string; threadId: string }
+  // A whole Workspace was removed ("Remove project"): drop its ENTIRE live-state
+  // entry (live set, bound sessions, active, config, selection cache). Idempotent —
+  // a Workspace never connected this session has no entry, so this returns the SAME
+  // ref and drives no re-render.
+  | { type: 'remove-workspace'; workspaceId: string }
   // Optimistically reflect a per-Thread agent-control change (#70, ADR-0007): a
   // change emits no notification, so the renderer updates THIS Thread's displayed
   // current value the instant the user picks, then reverts (re-dispatching the prior
@@ -153,6 +158,14 @@ export function workspaceThreadsReducer(
       // `active` is left to the caller: deleting the active Thread is paired with a
       // `select` back to the connection's primary Thread (which is never deletable).
       return { ...state, [action.workspaceId]: { ...cur, live, bound, config, selected } }
+    }
+    case 'remove-workspace': {
+      // Drop the removed Workspace's entire entry. Same-ref discipline: a Workspace
+      // with no live-state (never connected this session) returns the SAME ref.
+      if (!(action.workspaceId in state)) return state
+      const next = { ...state }
+      delete next[action.workspaceId]
+      return next
     }
     case 'set-config': {
       // Optimistic per-Thread update (#70, ADR-0007). Same-ref-on-noop discipline:

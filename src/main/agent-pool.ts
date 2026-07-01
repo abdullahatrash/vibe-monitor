@@ -205,6 +205,16 @@ export class AgentPool<A extends PoolAgent = WorkspaceAgent> {
     return this.byId.get(agentId)?.agent ?? null
   }
 
+  /**
+   * The minted `agentId` currently warm for a Workspace dir, or null when none is
+   * (never selected, evicted, or disposed). A thin reverse-index read used by
+   * "Remove project" to find the warm agent to stop before removing our records —
+   * distinct from `getByWorkspace` in returning just the handle (no agent).
+   */
+  agentIdForWorkspace(workspaceDir: string): string | null {
+    return this.byWorkspace.get(workspaceDir) ?? null
+  }
+
   /** The warm agent + id for a Workspace dir, or null when none is warm. */
   getByWorkspace(workspaceDir: string): PooledAgent<A> | null {
     const agentId = this.byWorkspace.get(workspaceDir)

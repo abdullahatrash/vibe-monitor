@@ -35,6 +35,10 @@
     "tailwindcss": "^4",
     "use-stick-to-bottom": "^1.1.6"
   },
+  "overrides": {
+    "shiki": "3.23.0",
+    "@shikijs/transformers": "3.23.0"
+  },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "^22.10.0",

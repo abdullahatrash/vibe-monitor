@@ -611,6 +611,24 @@ export class WorkspaceAgent extends EventEmitter {
   }
 
   /**
+   * Rename a Thread's session on the vibe-acp side (`_session/set_title`, an EXT
+   * method — leading `_` on the wire, like `_auth/status`). Keeps Vibe's saved-session
+   * metadata (and `session/list`) in sync with a rename we already applied to OUR
+   * store. vibe-acp echoes the change back as a `session_info_update`, which our tee
+   * absorbs (a same-title `setThreadTitle` is a no-op). Best-effort at the caller:
+   * we own the title, so a failure here never blocks the rename. Rejects (mapped +
+   * auth-cached) so the handler can log it.
+   */
+  async setTitle(sessionId: string, title: string): Promise<void> {
+    if (!this.initialized) throw new WorkspaceAgentError('Agent is not initialized; call start() first.')
+    try {
+      await this.client.request('_session/set_title', { sessionId, title })
+    } catch (err) {
+      throw this.mapErrorAndCacheAuth(err)
+    }
+  }
+
+  /**
    * Best-effort close of a hosted Thread's ACP session on delete (TB6 #35). Drops
    * our local handle, then — only if the session is live AND the agent advertised
    * `sessionCapabilities.close` — fires `session/close` and SWALLOWS any failure:

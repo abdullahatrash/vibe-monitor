@@ -196,6 +196,27 @@ export function App(): JSX.Element {
   }
 
   /**
+   * Rename a Thread. Main owns the title in OUR store, and additionally syncs the
+   * vibe-acp side when the Thread is live — so we pass the hosting `agentId` (when its
+   * Workspace is connected) and the Thread's bound `sessionId`; main no-ops the ACP
+   * call for a cold Thread. Refresh the cold list on success so the sidebar re-labels
+   * (the setter holds list position, so the Thread doesn't jump). A `{ok:false}`
+   * (empty title / store failure) leaves the label unchanged.
+   */
+  async function renameThread(thread: ThreadMeta, title: string): Promise<void> {
+    const conn = connections[thread.workspaceId]
+    const agentId = conn ? agentIdOf(conn) : null
+    const result = await window.api.setThreadTitle({
+      threadId: thread.id,
+      title,
+      agentId: agentId ?? undefined,
+      sessionId: thread.sessionId,
+    })
+    if (!result.ok) return
+    await refreshRecents()
+  }
+
+  /**
    * Record a Workspace connect outcome: set its ConnectState and, when connected,
    * (re)seed its per-session live-state with the agent's auto-opened Thread. Pull
    * focus to that Thread when the user is still on this Workspace (`focus`, or the
@@ -762,6 +783,7 @@ export function App(): JSX.Element {
         onNewThreadInWorkspace={newThreadInWorkspace}
         onDeleteThread={deleteThread}
         onSetThreadFlags={setThreadFlags}
+        onRenameThread={renameThread}
         onOpenSettings={() => navDispatch({ type: 'open-settings' })}
       />
     </div>

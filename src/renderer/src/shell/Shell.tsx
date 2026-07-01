@@ -1,4 +1,4 @@
-import { useState, type JSX, type ReactNode } from 'react'
+import { useRef, useState, type JSX, type ReactNode } from 'react'
 import {
   Archive,
   ArchiveRestore,
@@ -8,6 +8,7 @@ import {
   Ellipsis,
   Folder,
   MoreVertical,
+  Pencil,
   Pin,
   PinOff,
   Plus,
@@ -36,6 +37,7 @@ import { NavItem } from '../ui/nav-item'
 import { Spinner } from '../ui/spinner'
 import { Logo } from './logo'
 import { LogoSnakeSpinner } from './logo-snake-spinner'
+import { normalizeRename } from './rename'
 import { formatRelativeTime } from './relative-time'
 import { visibleRows } from './show-more'
 
@@ -47,6 +49,9 @@ export interface WorkspaceFlags {
 
 /** Toggle a Thread's persisted per-Thread flags (#132 pin / #133 archive). */
 type SetThreadFlags = (threadId: string, flags: { pinned?: boolean; archived?: boolean }) => void
+
+/** Rename a Thread (inline sidebar edit) — App persists it + syncs vibe-acp if live. */
+type RenameThread = (thread: ThreadMeta, title: string) => void
 
 /** How many thread rows each project shows before "Show more" (#113/#138). */
 const THREAD_CAP = 5
@@ -89,6 +94,7 @@ export function Shell({
   onNewThreadInWorkspace,
   onDeleteThread,
   onSetThreadFlags,
+  onRenameThread,
   onOpenSettings,
 }: {
   /** Whether the left sidebar is collapsed (#127) — animate its width to 0 (still mounted). */
@@ -121,6 +127,8 @@ export function Shell({
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
   /** Pin/archive a Thread (#132/#133) — a safe metadata toggle on any row. */
   onSetThreadFlags: SetThreadFlags
+  /** Rename a Thread (#) — inline sidebar edit; App persists + syncs vibe-acp if live. */
+  onRenameThread: RenameThread
   /** Open the routed Settings page (#130) — from the account chip's menu. */
   onOpenSettings: () => void
 }): JSX.Element {
@@ -162,6 +170,7 @@ export function Shell({
               onNewThreadInWorkspace={onNewThreadInWorkspace}
               onDeleteThread={onDeleteThread}
               onSetThreadFlags={onSetThreadFlags}
+              onRenameThread={onRenameThread}
             />
           </div>
           <AccountChip onOpenSettings={onOpenSettings} />
@@ -299,6 +308,7 @@ function WorkspaceNav({
   onNewThreadInWorkspace,
   onDeleteThread,
   onSetThreadFlags,
+  onRenameThread,
 }: {
   workspaces: ListMetadataResult
   nav: NavState
@@ -311,6 +321,7 @@ function WorkspaceNav({
   onNewThreadInWorkspace: (workspaceId: string) => void
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
   onSetThreadFlags: SetThreadFlags
+  onRenameThread: RenameThread
 }): JSX.Element {
   // The DISPLAY-ONLY sort order (#129): renderer-only UI state seeded from
   // localStorage (default 'recent'), persisted on change. It reorders the project
@@ -422,6 +433,7 @@ function WorkspaceNav({
               onSelectThread={onSelectThread}
               onDeleteThread={onDeleteThread}
               onSetThreadFlags={onSetThreadFlags}
+              onRenameThread={onRenameThread}
             />
           )
         })
@@ -454,6 +466,7 @@ function ProjectRow({
   onSelectThread,
   onDeleteThread,
   onSetThreadFlags,
+  onRenameThread,
 }: {
   workspace: ListMetadataResult[number]
   rows: UnifiedThreadRow[]
@@ -469,6 +482,7 @@ function ProjectRow({
   onSelectThread: (workspaceId: string, threadId: string) => void
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
   onSetThreadFlags: SetThreadFlags
+  onRenameThread: RenameThread
 }): JSX.Element {
   const [expandedThreads, setExpandedThreads] = useState(false)
   // Split archived rows out (#133) then float pinned rows to the top of the active
@@ -555,6 +569,7 @@ function ProjectRow({
                 onOpen={() => onSelectThread(workspace.id, row.thread.id)}
                 onDelete={onDeleteThread}
                 onSetThreadFlags={onSetThreadFlags}
+                onRename={onRenameThread}
               />
             ))}
             {(expandedThreads || hiddenCount > 0) && (
@@ -593,6 +608,7 @@ function ProjectRow({
             onSelectThread={onSelectThread}
             onDeleteThread={onDeleteThread}
             onSetThreadFlags={onSetThreadFlags}
+            onRenameThread={onRenameThread}
           />
         )}
       </CollapsibleContent>
@@ -616,6 +632,7 @@ function ArchivedSection({
   onSelectThread,
   onDeleteThread,
   onSetThreadFlags,
+  onRenameThread,
 }: {
   rows: UnifiedThreadRow[]
   isActive: boolean
@@ -626,6 +643,7 @@ function ArchivedSection({
   onSelectThread: (workspaceId: string, threadId: string) => void
   onDeleteThread: (thread: ThreadMeta) => Promise<void>
   onSetThreadFlags: SetThreadFlags
+  onRenameThread: RenameThread
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   return (
@@ -650,6 +668,7 @@ function ArchivedSection({
               onOpen={() => onSelectThread(workspaceId, row.thread.id)}
               onDelete={onDeleteThread}
               onSetThreadFlags={onSetThreadFlags}
+              onRename={onRenameThread}
             />
           ))}
         </ul>
@@ -674,6 +693,7 @@ function NavThread({
   onOpen,
   onDelete,
   onSetThreadFlags,
+  onRename,
 }: {
   row: UnifiedThreadRow
   nowMs: number
@@ -682,7 +702,52 @@ function NavThread({
   onOpen: () => void
   onDelete: (thread: ThreadMeta) => Promise<void>
   onSetThreadFlags: SetThreadFlags
+  onRename: RenameThread
 }): JSX.Element {
+  const [editing, setEditing] = useState(false)
+  // Guards the Enter-then-blur double fire: once a submit/cancel settles, later events
+  // on the (unmounting) input no-op. Reset each time a new edit starts.
+  const settledRef = useRef(false)
+
+  function startRename(): void {
+    settledRef.current = false
+    setEditing(true)
+  }
+  function submitRename(raw: string): void {
+    if (settledRef.current) return
+    settledRef.current = true
+    setEditing(false)
+    const next = normalizeRename(raw, row.thread.title)
+    if (next !== null) onRename(row.thread, next)
+  }
+  function cancelRename(): void {
+    if (settledRef.current) return
+    settledRef.current = true
+    setEditing(false)
+  }
+
+  // Inline rename: swap the row for an autofocused input. Enter/blur commit, Esc
+  // cancels; the label is preselected so typing replaces it. Not wrapped in NavItem
+  // (a button) so typing/clicking never selects the row or nests a control in a button.
+  if (editing) {
+    return (
+      <li className="relative">
+        <input
+          autoFocus
+          defaultValue={row.thread.title ?? ''}
+          aria-label="Rename thread"
+          onFocus={(e) => e.currentTarget.select()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submitRename(e.currentTarget.value)
+            else if (e.key === 'Escape') cancelRename()
+          }}
+          onBlur={(e) => submitRename(e.currentTarget.value)}
+          className="w-full rounded-md border border-accent bg-transparent py-[7px] pr-2 pl-[42px] text-[14.5px] text-text outline-none"
+        />
+      </li>
+    )
+  }
+
   const timestamp = formatRelativeTime(row.thread.lastActiveAt, nowMs)
   const pinned = row.thread.pinned === true
   const archived = row.thread.archived === true
@@ -719,6 +784,10 @@ function NavThread({
           <MoreVertical className="size-3.5" aria-hidden />
         </MenuTrigger>
         <MenuContent>
+          <MenuItem onClick={startRename}>
+            <Pencil className="size-3.5" aria-hidden />
+            Rename
+          </MenuItem>
           <MenuItem onClick={() => onSetThreadFlags(row.thread.id, { pinned: !pinned })}>
             {pinned ? <PinOff className="size-3.5" aria-hidden /> : <Pin className="size-3.5" aria-hidden />}
             {pinned ? 'Unpin' : 'Pin'}

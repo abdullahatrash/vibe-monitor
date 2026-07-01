@@ -107,6 +107,11 @@ export const IPC = {
    */
   setThreadFlags: 'thread:set-flags',
   /**
+   * Rename a Thread. Sets the title on OUR metadata record (the source of truth) and,
+   * when the Thread has a live session, also syncs the vibe-acp side (`_session/set_title`).
+   */
+  setThreadTitle: 'thread:set-title',
+  /**
    * Renderer -> main: subscribe to the active Workspace's STREAMED git status
    * (#84, ADR-0008). Ref-counted per `workspaceDir` in main — the first subscribe
    * starts one fs watcher + one background fetch and emits a `snapshot`; later
@@ -592,6 +597,29 @@ export interface SetThreadFlagsArgs {
  * it was and the toggle is a no-op rather than throwing into the live flow).
  */
 export type SetThreadFlagsResult = { ok: true } | { ok: false }
+
+/**
+ * Rename a Thread. `title` is set on OUR metadata record (the owner). `agentId` +
+ * `sessionId` are supplied when the Thread is LIVE, so main can additionally sync the
+ * vibe-acp side (`_session/set_title`); omit both for a cold Thread (store-only rename).
+ */
+export interface SetThreadTitleArgs {
+  /** OUR durable Thread id to rename. */
+  threadId: string
+  /** The new title (trimmed + non-empty-checked in main; an empty title is rejected). */
+  title: string
+  /** The hosting Workspace agent, when the Thread is live — enables the ACP sync. */
+  agentId?: string
+  /** The Thread's bound ACP session, when live — the target of `_session/set_title`. */
+  sessionId?: string | null
+}
+
+/**
+ * The `setThreadTitle` reply. `{ok:true}` once the title is persisted to our store;
+ * `{ok:false}` only on a store failure (or an empty title) — the ACP sync is
+ * best-effort and never flips this to false. On `{ok:false}` the renderer reverts.
+ */
+export type SetThreadTitleResult = { ok: true } | { ok: false }
 
 /**
  * Persisted Workspace metadata (ADR-0005): a project dir the user has opened.

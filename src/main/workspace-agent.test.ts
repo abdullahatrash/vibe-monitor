@@ -763,6 +763,35 @@ async function connect(
   return agent
 }
 
+describe('WorkspaceAgent.setTitle() (rename sync)', () => {
+  it('sends the _session/set_title EXT method with { sessionId, title } and resolves on {}', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connect(fake)
+
+    const renaming = agent.setTitle(SESSION_ID, 'Refactor auth')
+    const req = sent(fake).find((m) => m.method === '_session/set_title')
+    expect(req).toBeDefined()
+    expect(req?.params?.sessionId).toBe(SESSION_ID)
+    expect((req?.params as { title?: string }).title).toBe('Refactor auth')
+
+    // Agent acks with an empty result — the sync resolves (best-effort at the caller).
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: req?.id, result: {} }) + '\n')
+    await expect(renaming).resolves.toBeUndefined()
+  })
+
+  it('maps an error result to a WorkspaceAgentError (so the handler can log it)', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connect(fake)
+
+    const renaming = agent.setTitle(SESSION_ID, 'x').catch((e: unknown) => e)
+    const req = sent(fake).find((m) => m.method === '_session/set_title')
+    fake.feed(
+      JSON.stringify({ jsonrpc: '2.0', id: req?.id, error: { code: -32602, message: 'bad' } }) + '\n',
+    )
+    expect(await renaming).toBeInstanceOf(WorkspaceAgentError)
+  })
+})
+
 describe('WorkspaceAgent.prompt()', () => {
   it('sends session/prompt with the ACP prompt shape and resolves on the turn response', async () => {
     const fake = makeCapturingFake()

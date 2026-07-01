@@ -32,6 +32,8 @@ import {
   type SetThreadConfigResult,
   type SetThreadFlagsArgs,
   type SetThreadFlagsResult,
+  type SetThreadTitleArgs,
+  type SetThreadTitleResult,
   type SignInArgs,
   type SignInResult,
   type SignOutArgs,
@@ -173,24 +175,23 @@ function emitThreadTitle(event: ThreadTitleEvent): void {
  * Persist a Thread's auto-title from a `session_info_update` and push it to the
  * renderer. vibe-acp titles a session from its first prompt and emits the title
  * LAZILY (never in `session/new`), so without this every Thread stays "Untitled".
- * Resolve the Thread by the event's OWN sessionId, upsert the title onto its record
- * (preserving createdAt / sessionId / pin+archive flags), then ping the renderer so
- * the sidebar re-pulls. Best-effort/guarded like the transcript tee: no store, no
- * matching Thread, or a persist failure just skips — the active Thread's header still
- * updates live via the renderer reducer regardless.
+ * Resolve the Thread by the event's OWN sessionId, set the title in place via
+ * `setThreadTitle` (preserves createdAt / sessionId / flags AND holds list position —
+ * a title is not activity), then ping the renderer ONLY if it changed. Using the
+ * non-reordering setter also makes this idempotent, so the echo of our own rename
+ * (§set_title emits a `session_info_update` back) is absorbed silently. Best-effort:
+ * no store, no matching Thread, or a persist failure just skips — the active Thread's
+ * header still updates live via the renderer reducer regardless.
  */
 async function recordThreadTitle(sessionId: string | null, title: string): Promise<void> {
   if (!metadataStore || !sessionId) return
   const threadId = metadataStore.findThreadIdBySessionId(sessionId)
   if (!threadId) return
-  const workspaceId = metadataStore.snapshot().threads.find((t) => t.id === threadId)?.workspaceId
-  if (!workspaceId) return
   try {
-    await metadataStore.upsertThread({ id: threadId, workspaceId, title })
+    if (await metadataStore.setThreadTitle(threadId, title)) emitThreadTitle({ threadId, title })
   } catch {
-    return // a persistence failure is non-fatal — skip the push, keep the live title
+    // a persistence failure is non-fatal — skip the push, keep the live title
   }
-  emitThreadTitle({ threadId, title })
 }
 
 /**
@@ -917,6 +918,46 @@ function registerIpc(): void {
         )
         return { ok: false }
       }
+    },
+  )
+
+  ipcMain.handle(
+    IPC.setThreadTitle,
+    async (_event, args: SetThreadTitleArgs): Promise<SetThreadTitleResult> => {
+      // Rename a Thread. We OWN the title, so the source of truth is OUR store — set it
+      // in place (no reorder, #132/#133 style). When the Thread has a LIVE session, ALSO
+      // sync the vibe-acp side (`_session/set_title`) so its saved metadata + `session/list`
+      // match; that call is best-effort (ADR-0005) — its failure never fails the rename,
+      // and its `session_info_update` echo is absorbed by the idempotent store write. A
+      // cold Thread (no agentId/session) renames on the store alone. `{ok:false}` only on
+      // a store failure, so the renderer reverts just when nothing persisted.
+      if (!metadataStore) return { ok: false }
+      const title = args.title.trim()
+      if (!title) return { ok: false } // never persist an empty title
+      try {
+        await metadataStore.setThreadTitle(args.threadId, title)
+      } catch (err) {
+        console.error(
+          `[vibe-mistro:metadata] setThreadTitle failed (${args.threadId}): ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        )
+        return { ok: false }
+      }
+      if (args.agentId && args.sessionId) {
+        const agent = pool.get(args.agentId)
+        if (agent?.hasSession(args.sessionId)) {
+          pool.touch(args.agentId)
+          try {
+            await agent.setTitle(args.sessionId, title)
+          } catch (err) {
+            console.error(
+              `[vibe-mistro:acp] session/set_title sync failed (${args.threadId}): ` +
+                `${err instanceof Error ? err.message : String(err)}`,
+            )
+          }
+        }
+      }
+      return { ok: true }
     },
   )
 

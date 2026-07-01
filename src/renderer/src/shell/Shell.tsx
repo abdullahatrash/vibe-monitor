@@ -59,6 +59,7 @@ const NO_STATUSES = {} as const
  * badge, and an inline (safe) delete. Selection is the nav reducer's alone.
  */
 export function Shell({
+  collapsed,
   workspaces,
   sidebarTop,
   nav,
@@ -74,6 +75,8 @@ export function Shell({
   onNewThreadInWorkspace,
   onDeleteThread,
 }: {
+  /** Whether the left sidebar is collapsed (#127) — animate its width to 0 (still mounted). */
+  collapsed: boolean
   /** Persisted Workspaces (cold metadata) for the switcher rows + display names. */
   workspaces: ListMetadataResult
   /** App-owned controls pinned above the list (environment status; the gear). */
@@ -105,24 +108,40 @@ export function Shell({
 }): JSX.Element {
   return (
     <div className="flex min-h-0 flex-1">
-      <aside className="flex w-[338px] flex-none flex-col gap-3 overflow-y-auto border-r border-border bg-sidebar p-3">
-        <SidebarHeader />
-        {sidebarTop}
-        <PrimaryNav canCreateThread={canCreateThread} onNewThread={onNewThread} />
-        <WorkspaceNav
-          workspaces={workspaces}
-          nav={nav}
-          workspaceFlags={workspaceFlags}
-          rows={rows}
-          protectedThreadId={protectedThreadId}
-          opening={opening}
-          onOpenProject={onOpenProject}
-          onSelectThread={onSelectThread}
-          onNewThreadInWorkspace={onNewThreadInWorkspace}
-          onDeleteThread={onDeleteThread}
-        />
-        <div className="flex-1" />
-        <AccountChip />
+      {/* The sidebar stays MOUNTED when collapsed (#127) — its state (open projects,
+          scroll, the #138 fold list) survives, so re-expanding is instant. The OUTER
+          <aside> animates only its width (0 ↔ 338px) and clips (`overflow-hidden`); the
+          INNER holds a FIXED 338px width so the content SLIDES under the clip cleanly
+          instead of squishing as the container shrinks. `aria-hidden`/`inert` take the
+          now-hidden controls out of the tab order + a11y tree while collapsed. The
+          <main> outlet is `flex-1`, so it reclaims the freed space automatically. */}
+      <aside
+        aria-hidden={collapsed || undefined}
+        inert={collapsed || undefined}
+        className={cn(
+          'flex flex-none overflow-hidden border-border bg-sidebar transition-[width] duration-200',
+          collapsed ? 'w-0 border-r-0' : 'w-[338px] border-r',
+        )}
+      >
+        <div className="flex h-full w-[338px] flex-none flex-col gap-3 overflow-y-auto p-3">
+          <SidebarHeader />
+          {sidebarTop}
+          <PrimaryNav canCreateThread={canCreateThread} onNewThread={onNewThread} />
+          <WorkspaceNav
+            workspaces={workspaces}
+            nav={nav}
+            workspaceFlags={workspaceFlags}
+            rows={rows}
+            protectedThreadId={protectedThreadId}
+            opening={opening}
+            onOpenProject={onOpenProject}
+            onSelectThread={onSelectThread}
+            onNewThreadInWorkspace={onNewThreadInWorkspace}
+            onDeleteThread={onDeleteThread}
+          />
+          <div className="flex-1" />
+          <AccountChip />
+        </div>
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto p-6">{outlet}</main>

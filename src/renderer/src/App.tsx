@@ -45,7 +45,7 @@ import {
   type ThreadStatusMap,
 } from './conversation/thread-status'
 import { clearDraft } from './conversation/composer-draft-store'
-import { ArrowLeft, ArrowRight, Maximize2, PanelRight, Settings, Terminal } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Maximize2, PanelLeft, PanelRight, Settings, Terminal } from 'lucide-react'
 import { Button } from './ui/button'
 import { IconButton } from './ui/icon-button'
 import { Shell, type WorkspaceFlags } from './shell/Shell'
@@ -53,6 +53,10 @@ import { Logo } from './shell/logo'
 import { heroHeadline } from './shell/hero-headline'
 import { firstRunState, type FirstRunState } from './shell/first-run'
 import { findSelectedThread, initialNavState, navReducer } from './shell/nav-reducer'
+import {
+  getSidebarCollapsed,
+  setSidebarCollapsed as setSidebarCollapsedStore,
+} from './shell/sidebar-collapsed-store'
 import { deriveUnifiedThreads, workspaceFlags, type UnifiedThreadRow } from './shell/unified-threads'
 
 /** A stable empty live-set for Workspaces with no live-state yet (no re-alloc). */
@@ -83,6 +87,20 @@ export function App(): JSX.Element {
   // env check is no longer a permanent top-level card (#49) — it's reachable here,
   // and surfaced prominently in the outlet only when it matters (first-run).
   const [showSettings, setShowSettings] = useState(false)
+  // Whether the left sidebar is collapsed (#127): renderer-only UI chrome, seeded
+  // from localStorage (default expanded) and persisted best-effort on toggle. It
+  // never touches nav/selection/connections — the <aside> stays mounted, its width
+  // just animates to 0 so the outlet reclaims the space.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
+    getSidebarCollapsed(window.localStorage),
+  )
+  function toggleSidebar(): void {
+    setSidebarCollapsed((prev) => {
+      const next = !prev
+      setSidebarCollapsedStore(window.localStorage, next)
+      return next
+    })
+  }
   // Navigation (decision 2): WHICH Workspace/Thread the user is looking at —
   // lifted here so the connect flow (Open project, Continue, sign-in) can drive it.
   const [nav, navDispatch] = useReducer(navReducer, initialNavState)
@@ -685,6 +703,19 @@ export function App(): JSX.Element {
             <ArrowRight className="size-4" aria-hidden />
           </IconButton>
         </div>
+        {/* Sidebar collapse toggle (#127): controls the left sidebar, so it sits in the
+            header's LEFT region. Always visible (the header never hides), usable in both
+            states; opts out of the drag region like every other header control. */}
+        <div className="ml-2 flex items-center [-webkit-app-region:no-drag]">
+          <IconButton
+            size="icon-sm"
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={toggleSidebar}
+          >
+            <PanelLeft className="size-4" aria-hidden />
+          </IconButton>
+        </div>
         <div className="flex-1" />
         {/* placeholder — layout / view modes (#future) */}
         <div className="flex items-center gap-0.5 [-webkit-app-region:no-drag]">
@@ -701,6 +732,7 @@ export function App(): JSX.Element {
       </header>
 
       <Shell
+        collapsed={sidebarCollapsed}
         workspaces={recents}
         sidebarTop={sidebarTop}
         nav={nav}

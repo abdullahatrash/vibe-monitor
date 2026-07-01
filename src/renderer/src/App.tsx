@@ -45,6 +45,11 @@ import {
   type ThreadStatusMap,
 } from './conversation/thread-status'
 import { clearDraft } from './conversation/composer-draft-store'
+import {
+  getWorkspaceControls,
+  setWorkspaceControls,
+  workspaceControlsKey,
+} from './connection/workspace-controls-store'
 import { ArrowLeft, ArrowRight, Maximize2, PanelLeft, PanelRight, Terminal } from 'lucide-react'
 import { Button } from './ui/button'
 import { IconButton } from './ui/icon-button'
@@ -629,8 +634,18 @@ export function App(): JSX.Element {
             // self-corrects. We don't eagerly resume to learn it (#33 defers load to the
             // first prompt); Model isn't trust-relevant (it doesn't gate writes), so the
             // transient pre-prompt mismatch is accepted.
+            // A never-bound draft's connection advertises all-null controls (ADR-0011
+            // opens no session until the first prompt), so before falling back to the
+            // connection we try the per-Workspace cache (#153) — the last bound session's
+            // option lists — so the picker shows immediately instead of after send.
             configFor(workspaceThreads, conn.workspaceId, activeThread.id) ??
-            draftControls(connectionControlsOf(conn), selectedFor(workspaceThreads, conn.workspaceId, activeThread.id))
+            draftControls(
+              getWorkspaceControls(
+                window.localStorage,
+                workspaceControlsKey(conn.workspaceId, conn.workspaceDir),
+              ) ?? connectionControlsOf(conn),
+              selectedFor(workspaceThreads, conn.workspaceId, activeThread.id),
+            )
           }
           onSetConfig={(axis, value, sessionId) => {
             // A real session => the bound IPC path (#70); a null session => a draft
@@ -643,7 +658,16 @@ export function App(): JSX.Element {
             // re-assert the user's cached selection over them (#72) — a resume reports
             // defaults, so this restores a prior non-default Mode/Model/effort.
             wtDispatch({ type: 'bind', workspaceId: conn.workspaceId, threadId: activeThread.id, sessionId, controls })
-            if (controls) reassertAfterResume(conn.workspaceId, conn.agentId, activeThread.id, sessionId, controls)
+            if (controls) {
+              reassertAfterResume(conn.workspaceId, conn.agentId, activeThread.id, sessionId, controls)
+              // Cache the bound session's option lists per Workspace (#153) so the NEXT
+              // never-bound draft here shows the picker before its own first prompt binds.
+              setWorkspaceControls(
+                window.localStorage,
+                workspaceControlsKey(conn.workspaceId, conn.workspaceDir),
+                controls,
+              )
+            }
           }}
           onContinue={() => {
             wtDispatch({ type: 'open', workspaceId: conn.workspaceId, threadId: activeThread.id })

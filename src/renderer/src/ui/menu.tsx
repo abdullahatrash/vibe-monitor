@@ -38,7 +38,7 @@ export function MenuContent({
       <BaseMenu.Positioner sideOffset={sideOffset} align={align}>
         <BaseMenu.Popup
           className={cn(
-            'min-w-32 rounded-md border border-border bg-panel py-1 text-sm text-text shadow-md outline-none',
+            'min-w-32 rounded-md border border-border bg-panel p-1 text-sm text-text shadow-md outline-none',
             className,
           )}
           {...props}
@@ -56,7 +56,7 @@ export function MenuItem({
   return (
     <BaseMenu.Item
       className={cn(
-        'flex cursor-default select-none items-center gap-2 px-3 py-1.5 outline-none',
+        'flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 outline-none',
         'data-[highlighted]:bg-accent data-[highlighted]:text-on-accent',
         className,
       )}
@@ -89,7 +89,7 @@ export function MenuRadioItem({
   return (
     <BaseMenu.RadioItem
       className={cn(
-        'flex cursor-default select-none items-center gap-2 px-3 py-1.5 outline-none',
+        'flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 outline-none',
         'data-[highlighted]:bg-accent data-[highlighted]:text-on-accent',
         className,
       )}

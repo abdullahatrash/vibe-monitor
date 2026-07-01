@@ -766,21 +766,24 @@ export function App(): JSX.Element {
     </>
   )
 
+  // On macOS the window uses `titleBarStyle: 'hiddenInset'` (main/index.ts), so the OS
+  // draws the real traffic lights inset over the top-left of the content. Reserve room
+  // for them instead of drawing our own fake set (which duplicated them into two rows).
+  const isMac = navigator.userAgent.includes('Macintosh')
+
   return (
     <div className="flex h-screen flex-col bg-bg text-text">
-      {/* Window chrome (#113): a draggable top bar. Traffic lights, back/forward, and
-          the top-right layout-mode icons are STATIC placeholders (#future) — styled but
-          non-functional. The bar stays `-webkit-app-region: drag` so the window moves;
-          every interactive control opts back out with `[-webkit-app-region:no-drag]`. */}
-      <header className="flex h-11 flex-none items-center gap-2 border-b border-border px-3 [-webkit-app-region:drag]">
-        {/* placeholder — window traffic lights (#future) */}
-        <div className="flex items-center gap-2 [-webkit-app-region:no-drag]" aria-hidden>
-          <span className="size-3 rounded-full" style={{ backgroundColor: '#ec6a5e' }} />
-          <span className="size-3 rounded-full" style={{ backgroundColor: '#f4bf4f' }} />
-          <span className="size-3 rounded-full" style={{ backgroundColor: '#61c554' }} />
-        </div>
+      {/* Window chrome (#113): a draggable top bar. Back/forward and the top-right
+          layout-mode icons are STATIC placeholders (#future) — styled but non-functional.
+          The bar stays `-webkit-app-region: drag` so the window moves; every interactive
+          control opts back out with `[-webkit-app-region:no-drag]`. On macOS we pad the
+          left edge so the OS traffic lights don't collide with our controls. */}
+      <header
+        className="flex h-11 flex-none items-center gap-2 border-b border-border px-3 [-webkit-app-region:drag]"
+        style={isMac ? { paddingLeft: 78 } : undefined}
+      >
         {/* placeholder — back / forward navigation (#future) */}
-        <div className="ml-2 flex items-center gap-0.5 [-webkit-app-region:no-drag]">
+        <div className="flex items-center gap-0.5 [-webkit-app-region:no-drag]">
           <IconButton size="icon-sm" aria-label="Back" title="Back">
             <ArrowLeft className="size-4" aria-hidden />
           </IconButton>

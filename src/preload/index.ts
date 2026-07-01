@@ -22,6 +22,7 @@ import {
   type GitStatusSubscriptionArgs,
   type ListMetadataResult,
   type ReadTranscriptResult,
+  type RemoveWorkspaceResult,
   type RespondPermissionArgs,
   type OpenThreadArgs,
   type SendPromptArgs,
@@ -68,6 +69,8 @@ const api = {
   listMetadata: (): Promise<ListMetadataResult> => ipcRenderer.invoke(IPC.listMetadata),
   deleteThread: (threadId: string): Promise<DeleteThreadResult> =>
     ipcRenderer.invoke(IPC.deleteThread, threadId),
+  removeWorkspace: (workspaceId: string): Promise<RemoveWorkspaceResult> =>
+    ipcRenderer.invoke(IPC.removeWorkspace, workspaceId),
   getThreadStatuses: (): Promise<ThreadStatusEvent[]> => ipcRenderer.invoke(IPC.getThreadStatuses),
   setThreadConfig: (args: SetThreadConfigArgs): Promise<SetThreadConfigResult> =>
     ipcRenderer.invoke(IPC.setThreadConfig, args),

@@ -105,6 +105,17 @@ describe('AgentPool — lookups', () => {
     expect(pool.getByWorkspace('/proj/unknown')).toBeNull()
   })
 
+  it('resolves the warm agentId for a Workspace dir (null for unknown / after dispose)', () => {
+    const { pool } = makePool()
+    const { agentId } = pool.acquire('/proj/a')
+
+    expect(pool.agentIdForWorkspace('/proj/a')).toBe(agentId)
+    expect(pool.agentIdForWorkspace('/proj/unknown')).toBeNull()
+
+    pool.dispose(agentId)
+    expect(pool.agentIdForWorkspace('/proj/a')).toBeNull()
+  })
+
   it('lists every warm agent (for fan-out like best-effort session close)', () => {
     const { pool } = makePool()
     const a = pool.acquire('/proj/a').agent

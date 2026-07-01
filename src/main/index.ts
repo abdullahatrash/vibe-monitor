@@ -25,6 +25,7 @@ import {
   type RevealPathArgs,
   type OpenThreadArgs,
   type ReadTranscriptResult,
+  type RemoveWorkspaceResult,
   type RespondPermissionArgs,
   type SendPromptArgs,
   type SendPromptResult,
@@ -69,6 +70,7 @@ import { AgentPool } from './agent-pool'
 import { isProtected } from './agent-protection'
 import { controlsOf, ensureBoundSession, resolveContinueTarget } from './thread-binding'
 import { deleteThread } from './persistence/delete-thread'
+import { removeWorkspace } from './persistence/remove-workspace'
 import { permissionRequestIdOf, ThreadStatusTracker, type ThreadStatusChange } from './thread-status'
 import { gitFetch, readGitStatus } from './git/status'
 import { readGitDiff } from './git/diff'
@@ -311,6 +313,20 @@ let transcriptStore: TranscriptStore | null = null
  */
 const transcriptThreads = new Map<string, string>()
 
+/**
+ * Thread ids whose JSONL has been (or is being) removed and must NEVER be re-created
+ * ("Remove project" — a Workspace can be removed MID-TURN). `TranscriptStore.delete`
+ * only drops the tail of the append chain; it can't cancel a tee that arrives AFTER
+ * the unlink — notably the `turn-error` teed from `runPromptTurn`'s catch when the
+ * disposed agent rejects its in-flight prompt (that tee uses `args.threadId` directly,
+ * bypassing the bridge). Without this guard `append` would start a FRESH chain and
+ * re-write a header + line, leaking an orphaned transcript no metadata references.
+ * We tombstone a Workspace's Thread ids BEFORE removal so every such late tee is
+ * suppressed at the choke point below. Thread ids are unique-and-never-reused, so the
+ * set is monotonic and bounded by removals this session — no cleanup needed.
+ */
+const tombstonedThreadIds = new Set<string>()
+
 /** Resolve the Thread id for a chokepoint, or null to skip the tee (best-effort). */
 function threadIdForTee(agentId: string, sessionId?: string | null): string | null {
   return (
@@ -320,11 +336,13 @@ function threadIdForTee(agentId: string, sessionId?: string | null): string | nu
 
 /**
  * Tee one conversation INPUT to the active Thread's JSONL (ADR-0005). Best-effort
- * and fire-and-forget, guarded exactly like `recordWorkspaceOpen`: an absent store or an
- * unresolved Thread id skips the write; the append itself swallows I/O errors.
+ * and fire-and-forget, guarded exactly like `recordWorkspaceOpen`: an absent store, an
+ * unresolved Thread id, or a TOMBSTONED (removed) Thread skips the write; the append
+ * itself swallows I/O errors. The tombstone check is what makes mid-turn "Remove
+ * project" safe — see `tombstonedThreadIds`.
  */
 function teeTranscript(threadId: string | null, entry: TranscriptEntry): void {
-  if (!transcriptStore || !threadId) return
+  if (!transcriptStore || !threadId || tombstonedThreadIds.has(threadId)) return
   void transcriptStore.append(threadId, entry)
 }
 
@@ -935,6 +953,48 @@ function registerIpc(): void {
     })
     return { ok: true }
   })
+
+  ipcMain.handle(
+    IPC.removeWorkspace,
+    async (_event, workspaceId: string): Promise<RemoveWorkspaceResult> => {
+      // Remove a Workspace end-to-end ("Remove project", ADR-0005): stop its warm
+      // agent cleanly (if any — allowed even mid-turn), then remove OUR records — the
+      // Workspace + Thread metadata and their JSONL transcripts. NEVER deletes files
+      // on disk. A thin wrapper: all real logic lives in the pure `removeWorkspace`
+      // orchestrator + `MetadataStore.removeWorkspace`. Best-effort throughout, so a
+      // missing store / cold Workspace just no-ops — never a throw.
+      if (!metadataStore) return { ok: true }
+      const snapshot = metadataStore.snapshot()
+      // Resolve the Workspace dir → its warm agentId (null when cold). The dir is the
+      // pool's key, so a warm agent for this Workspace is found here before removal.
+      const dir = snapshot.workspaces.find((w) => w.id === workspaceId)?.dir
+      const agentId = dir ? pool.agentIdForWorkspace(dir) : null
+      // Tombstone this Workspace's Thread ids BEFORE anything tears down, so a late
+      // tee from the disposed agent's rejected in-flight turn (or a straggling event)
+      // can't re-create a just-deleted JSONL. Safe for a mid-turn removal — see
+      // `tombstonedThreadIds`. Done first: dispose (below) rejects the pending prompt.
+      for (const t of snapshot.threads) {
+        if (t.workspaceId === workspaceId) tombstonedThreadIds.add(t.id)
+      }
+      await removeWorkspace({
+        workspaceId,
+        store: metadataStore,
+        transcript: transcriptStore ?? { delete: () => Promise.resolve() },
+        // When a warm agent hosts this Workspace, stop it via the SAME path the
+        // sweep/stop uses: `pool.dispose` (graceful teardown of hosted sessions) plus
+        // `notifyAgentsEvicted` (clears inFlightTurns + transcript bridge + per-Thread
+        // status AND tells the renderer to drop the now-dead connection). Order mirrors
+        // `stopAgent`/the sweep: dispose the child, then broadcast the eviction cleanup.
+        stopAgent: agentId
+          ? () => {
+              pool.dispose(agentId)
+              notifyAgentsEvicted([agentId])
+            }
+          : undefined,
+      })
+      return { ok: true }
+    },
+  )
 
   ipcMain.handle(
     IPC.setThreadFlags,

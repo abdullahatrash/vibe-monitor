@@ -287,6 +287,27 @@ export class MetadataStore {
   }
 
   /**
+   * Remove a Workspace record AND every Thread under it ("Remove project"). Returns
+   * the removed Thread ids so the caller can drop THEIR JSONL transcripts (best-
+   * effort, ADR-0005) — the store owns only our metadata, not the transcript files.
+   * Idempotent: an unknown id (or an already-removed Workspace with no threads)
+   * matches nothing, returns `[]`, and writes NOTHING — so removing twice never
+   * throws. Persisted atomically like the other mutations, and only when something
+   * actually changed (an unknown-id removal needs no disk write). Files on disk are
+   * never touched here; this is purely our index.
+   */
+  async removeWorkspace(id: string): Promise<string[]> {
+    const removedThreadIds = this.state.threads.filter((t) => t.workspaceId === id).map((t) => t.id)
+    const hadWorkspace = this.state.workspaces.some((w) => w.id === id)
+    // Nothing to do — no record write for an unknown/already-removed Workspace.
+    if (!hadWorkspace && removedThreadIds.length === 0) return []
+    this.state.workspaces = this.state.workspaces.filter((w) => w.id !== id)
+    this.state.threads = this.state.threads.filter((t) => t.workspaceId !== id)
+    await this.persist()
+    return removedThreadIds
+  }
+
+  /**
    * Resolve a Thread's minted `id` from its bound ACP `sessionId` (TB2 transcript
    * routing). Events flow keyed by `sessionId`, but the JSONL is keyed by the
    * minted Thread `id`; this bridges the two. A null/unmatched session is `null`

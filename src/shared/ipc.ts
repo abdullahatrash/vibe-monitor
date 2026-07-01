@@ -81,6 +81,15 @@ export const IPC = {
    */
   deleteThread: 'thread:delete',
   /**
+   * Remove a Workspace (Codex-style "Remove project"): stop/dispose its warm agent
+   * (if any), then remove OUR records — the Workspace metadata entry + every Thread
+   * metadata entry under it + their JSONL transcripts. It NEVER deletes files on
+   * disk (the project directory is untouched). Allowed even mid-turn — the agent is
+   * stopped cleanly. Best-effort per ADR-0005: every step is guarded so the removal
+   * always resolves, and the Workspace vanishes from the next `listMetadata`.
+   */
+  removeWorkspace: 'workspace:remove',
+  /**
    * Renderer -> main: the current NON-default per-Thread statuses (#53), pulled
    * once on mount so a renderer that loads (or dev-reloads) MID-turn re-seeds its
    * status registry instead of waiting for the next flip. Main only pushes on a
@@ -486,6 +495,15 @@ export type SendPromptResult =
  * through just as a turn began; the renderer leaves the row in place.
  */
 export type DeleteThreadResult = { ok: true } | { ok: false; reason: 'streaming' }
+
+/**
+ * The `removeWorkspace` reply. Always `{ ok: true }` — the removal is fully
+ * best-effort (ADR-0005): stopping the agent and dropping our records/transcripts
+ * are each guarded so nothing can reject the live flow, and an unknown/already-gone
+ * Workspace is a harmless no-op. There is no failure signal for the renderer to
+ * branch on; it just refreshes the list.
+ */
+export type RemoveWorkspaceResult = { ok: true }
 
 /**
  * Interrupt a Thread's active turn (#103, ADR-0009). Fired by the Stop button,

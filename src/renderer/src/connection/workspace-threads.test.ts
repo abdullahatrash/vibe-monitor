@@ -183,6 +183,31 @@ describe('workspaceThreadsReducer', () => {
     expect(workspaceThreadsReducer(s, { type: 'remove', workspaceId: 'w1', threadId: 'cold' })).toBe(s)
   })
 
+  it('remove-workspace drops the whole Workspace entry, leaving siblings intact', () => {
+    let s = workspaceThreadsReducer(initialWorkspaceThreads, {
+      type: 'connect',
+      workspaceId: 'w1',
+      threadId: 't1',
+      sessionId: 's1',
+      controls: null,
+    })
+    s = workspaceThreadsReducer(s, { type: 'connect', workspaceId: 'w2', threadId: 't2', sessionId: 's2', controls: null })
+    s = workspaceThreadsReducer(s, { type: 'remove-workspace', workspaceId: 'w1' })
+    expect(workspaceThreadStateFor(s, 'w1')).toBeNull()
+    expect(workspaceThreadStateFor(s, 'w2')).not.toBeNull()
+  })
+
+  it('remove-workspace on an unconnected Workspace returns the same state reference', () => {
+    const s = workspaceThreadsReducer(initialWorkspaceThreads, {
+      type: 'connect',
+      workspaceId: 'w1',
+      threadId: 't1',
+      sessionId: null,
+      controls: null,
+    })
+    expect(workspaceThreadsReducer(s, { type: 'remove-workspace', workspaceId: 'w-none' })).toBe(s)
+  })
+
   it('keeps Workspaces independent (one connect does not disturb another)', () => {
     let s = workspaceThreadsReducer(initialWorkspaceThreads, {
       type: 'connect',

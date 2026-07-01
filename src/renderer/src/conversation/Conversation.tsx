@@ -121,6 +121,9 @@ export function Conversation({
     null,
   )
   const [commandIndex, setCommandIndex] = useState(0)
+  // The highlighted popover row, so ↑/↓ can keep the selection scrolled into the
+  // overflow window (#95).
+  const activeRowRef = useRef<HTMLLIElement>(null)
   // Esc-dismiss latch (#95): the `/`-token start the user dismissed. While it holds,
   // re-deriving the SAME token keeps the popover closed — so Esc stays dismissed as
   // you keep typing (the escape hatch for sending literal `/text`). Cleared once the
@@ -278,6 +281,12 @@ export function Conversation({
   const showCommands = commandTrigger !== null && commandRows.length > 0
   const activeIndex = Math.min(commandIndex, commandRows.length - 1)
 
+  // Keep the highlighted row visible when ↑/↓ walk past the popover's max-height
+  // (#95). `block: 'nearest'` scrolls only the overflow list, not the whole page.
+  useEffect(() => {
+    if (showCommands) activeRowRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [showCommands, activeIndex])
+
   // Re-derive the trigger from the composer's value + caret after any edit or caret
   // move. Reads the live caret so `hello /re` (mid-line) never triggers while `/re`
   // (line start) does. Resetting the highlight to the top on every re-derive is safe:
@@ -405,6 +414,7 @@ export function Conversation({
               {commandRows.map((command, i) => (
                 <li
                   key={command.name}
+                  ref={i === activeIndex ? activeRowRef : null}
                   role="option"
                   aria-selected={i === activeIndex}
                   className={

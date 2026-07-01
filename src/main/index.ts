@@ -549,13 +549,16 @@ async function runPromptTurn(
   // sending it, so it precedes the streamed events it triggers. We hold the
   // Thread id, so no bridge lookup — a draft's first prompt can't misroute to
   // another Thread. Main has no renderer item id, so mint an opaque replay key.
+  // v1 does NOT persist image base64 — the transcript tees text only (#100). Image
+  // attachments live only in the in-memory echo for this session's live view; a
+  // reopen replays the text-only prompt. Intentional for this slice.
   teeTranscript(args.threadId, userPromptEntry(randomUUID(), args.text))
   // On a re-bind (TB4 #33), persist the "context reset" notice right AFTER the
   // user's prompt and BEFORE the turn's events — so a later reopen replays it
   // in the same position the live view rendered it (`thread:bound` -> notice).
   if (rebound) teeTranscript(args.threadId, agentReboundEntry())
   try {
-    const result = await agent.prompt(sessionId, args.text)
+    const result = await agent.prompt(sessionId, args.text, args.images)
     // Tee the clean turn end: this signal lives ONLY in this IPC response
     // (never an `acp:event`), so without it a replay leaves `isProcessing`
     // stuck true. Serialized after the turn's events (TranscriptStore chain).
@@ -572,7 +575,14 @@ async function runPromptTurn(
     }
     const message = err instanceof Error ? err.message : String(err)
     teeTranscript(args.threadId, turnErrorEntry(message))
-    return { ok: false, kind: 'error', error: message }
+    // Carry the JSON-RPC/app code (e.g. -31008 for an unsupported/oversized image,
+    // #100) so the renderer can special-case it rather than show a generic error.
+    return {
+      ok: false,
+      kind: 'error',
+      error: message,
+      code: err instanceof WorkspaceAgentError ? err.code ?? undefined : undefined,
+    }
   }
 }
 

@@ -785,10 +785,49 @@ describe('WorkspaceAgent.prompt()', () => {
     await expect(turn).resolves.toMatchObject({ stopReason: 'end_turn' })
   })
 
+  it('prepends image blocks with snake_case mime_type + bare base64 before the text block (#100)', () => {
+    const fake = makeCapturingFake()
+    return connect(fake).then((agent) => {
+      void agent.prompt(SESSION_ID, 'what is this?', [
+        { data: 'aGVsbG8=', mimeType: 'image/png' },
+        { data: '/9j/4AAQ', mimeType: 'image/jpeg' },
+      ])
+      const promptReq = sent(fake).find((m) => m.method === 'session/prompt')
+      // acp-capture §11: field is snake_case `mime_type` with BARE base64 in `data`
+      // (the ACP-conventional camelCase `mimeType` is silently accepted but leaves
+      // the model blind). Image blocks come BEFORE the text block.
+      expect(promptReq?.params?.prompt).toEqual([
+        { type: 'image', data: 'aGVsbG8=', mime_type: 'image/png' },
+        { type: 'image', data: '/9j/4AAQ', mime_type: 'image/jpeg' },
+        { type: 'text', text: 'what is this?' },
+      ])
+    })
+  })
+
   it('rejects when prompting an unknown sessionId', async () => {
     const fake = makeCapturingFake()
     const agent = await connect(fake)
     await expect(agent.prompt('nope', 'hi')).rejects.toBeInstanceOf(WorkspaceAgentError)
+  })
+
+  it('preserves a non-auth app code (e.g. -31008 images-unsupported) on the error (#100)', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connect(fake)
+
+    const turn = agent.prompt(SESSION_ID, 'what is this?', [{ data: 'aGk=', mimeType: 'image/png' }])
+    const promptReq = sent(fake).find((m) => m.method === 'session/prompt')
+    fake.feed(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: promptReq?.id,
+        error: { code: -31008, message: 'Model `devstral-small` does not support images. Switch model…' },
+      }) + '\n',
+    )
+    const err = await turn.catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(WorkspaceAgentError)
+    // The renderer special-cases this code into a "switch to a vision model" hint.
+    expect((err as WorkspaceAgentError).code).toBe(-31008)
+    expect((err as WorkspaceAgentError).authState).toBeNull()
   })
 
   it('serves an fs/read_text_file server request by replying {content}', async () => {

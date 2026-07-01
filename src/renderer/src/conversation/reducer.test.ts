@@ -149,6 +149,20 @@ describe('conversationReducer (Seam A)', () => {
     expect(state.isProcessing).toBe(false)
   })
 
+  it('echoes image attachments on the sent user item (#100)', () => {
+    const state = conversationReducer(initialConversationState, {
+      type: 'send-prompt',
+      id: 'user:0',
+      text: 'what is in this image?',
+      images: [{ previewUrl: 'data:image/png;base64,aGVsbG8=' }],
+    })
+    expect(state.items[0]).toMatchObject({
+      kind: 'user',
+      text: 'what is in this image?',
+      images: [{ previewUrl: 'data:image/png;base64,aGVsbG8=' }],
+    })
+  })
+
   it('ignores non-session/update payloads (lifecycle, server requests)', () => {
     const before = initialConversationState
     const after = [

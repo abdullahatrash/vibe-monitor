@@ -25,10 +25,17 @@
  * optimistic processing flag (driven by the `session/prompt` response).
  */
 
+/** An image echoed in a sent user turn (#100). `previewUrl` is the full data URL. */
+export interface UserImage {
+  previewUrl: string
+}
+
 export interface UserItem {
   kind: 'user'
   id: string
   text: string
+  /** Image attachments echoed with this turn (#100); absent on replay from JSONL. */
+  images?: UserImage[]
 }
 
 export interface ReasoningItem {
@@ -185,7 +192,7 @@ export const initialConversationState: ConversationState = {
 }
 
 export type ConversationAction =
-  | { type: 'send-prompt'; id: string; text: string }
+  | { type: 'send-prompt'; id: string; text: string; images?: UserImage[] }
   | { type: 'acp-event'; payload: unknown }
   | { type: 'turn-complete' }
   | { type: 'turn-error'; message: string }
@@ -210,7 +217,10 @@ export function conversationReducer(
       return {
         ...state,
         isProcessing: true,
-        items: [...state.items, { kind: 'user', id: action.id, text: action.text }],
+        items: [
+          ...state.items,
+          { kind: 'user', id: action.id, text: action.text, images: action.images },
+        ],
       }
     case 'turn-complete':
       return { ...state, isProcessing: false }

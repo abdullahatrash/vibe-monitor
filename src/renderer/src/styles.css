@@ -943,6 +943,61 @@ body {
   white-space: nowrap;
 }
 
+/* --- Image attachments (#100) --- */
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.attachment {
+  position: relative;
+  width: 56px;
+  height: 56px;
+}
+
+.attachment__thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.attachment__remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  line-height: 1;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.composer__attach {
+  align-self: flex-end;
+}
+
+.msg__images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.msg__image {
+  max-width: 200px;
+  max-height: 200px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
 .composer__input {
   flex: 1;
   resize: vertical;

@@ -1,4 +1,13 @@
-import { useEffect, useReducer, useRef, useState, type JSX, type KeyboardEvent } from 'react'
+import {
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ClipboardEvent,
+  type JSX,
+  type KeyboardEvent,
+} from 'react'
 import type {
   AuthMethod,
   ThreadAgentControls,
@@ -33,9 +42,31 @@ import {
   getCommandQuery,
   moveSelection,
 } from './command-autocomplete'
+import { ACCEPTED_IMAGE_TYPES, isAcceptedImageType, parseDataUrl } from './image-attach'
 
 /** Process-local counter for unique echoed-prompt ids. */
 let promptSeq = 0
+
+/** Process-local counter for unique pending-image ids (not Math.random/Date). */
+let imageSeq = 0
+
+/** The picker's `accept` list — the accepted image mime types, comma-joined. */
+const IMAGE_ACCEPT = ACCEPTED_IMAGE_TYPES.join(',')
+
+/** Vibe's app code for "this model can't ingest images" (acp-capture §11, #100). */
+const IMAGES_UNSUPPORTED_CODE = -31008
+
+/**
+ * An image staged in the composer before send (#100). `data` is BARE base64 (sent
+ * to the agent); `previewUrl` is the full data URL (thumbnail + echoed user turn).
+ */
+interface PendingImage {
+  id: string
+  data: string
+  mimeType: string
+  name: string
+  previewUrl: string
+}
 
 /**
  * The live handle for one Thread hosted on a Workspace agent (TB5). `sessionId`
@@ -102,6 +133,10 @@ export function Conversation({
   // draft fresh, with no stale carry-over (no re-seed effect needed). Reading here
   // must not write, so we only persist on change/send below.
   const [draft, setDraft] = useState(() => getDraft(window.localStorage, thread.threadId))
+  // Images staged in the composer, awaiting send (#100). Renderer-only, ephemeral:
+  // this view remounts on a Thread switch (keyed by threadId), so the strip starts
+  // empty per Thread. Kept on a failed send so the user can retry / switch model.
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   // The session this Thread is bound to — null until a draft's first prompt binds
   // it (via main's `thread:bound`). Seeded from the record; mirrored into a ref so
   // the event subscription reads the LATEST value without re-subscribing (a stale
@@ -113,6 +148,8 @@ export function Conversation({
   onBoundRef.current = onBound
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // The hidden file picker behind the 📎 button (#100).
+  const fileInputRef = useRef<HTMLInputElement>(null)
   // Ephemeral `/` slash-command autocomplete state (#95): the open trigger (the
   // `/`'s index + the query after it) and the highlighted row. Purely renderer-local
   // — no IPC, no persistence — so a Thread switch (which remounts this view, keyed by
@@ -191,13 +228,60 @@ export function Conversation({
     if (list) list.scrollTop = list.scrollHeight
   }, [state.items])
 
+  // Read a pasted/picked image blob to a data URL (DOM: FileReader lives here, not
+  // in the pure module), split it into bare base64 + mime via `parseDataUrl`, and
+  // stage it. Non-accepted types are skipped up front so we don't read junk.
+  function addFile(file: File | Blob, name: string): void {
+    if (!isAcceptedImageType(file.type)) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : ''
+      const parsed = parseDataUrl(dataUrl)
+      if (!parsed) return
+      setPendingImages((prev) => [
+        ...prev,
+        { id: `img:${imageSeq++}`, data: parsed.data, mimeType: parsed.mimeType, name, previewUrl: dataUrl },
+      ])
+    }
+    reader.readAsDataURL(file)
+  }
+
+  // Clipboard paste (#100): stage any pasted image files. `preventDefault` fires
+  // ONLY when at least one image was handled, so a normal text paste is untouched.
+  function onPaste(e: ClipboardEvent<HTMLTextAreaElement>): void {
+    let handled = false
+    for (const item of e.clipboardData.items) {
+      if (item.kind !== 'file' || !isAcceptedImageType(item.type)) continue
+      const file = item.getAsFile()
+      if (!file) continue
+      addFile(file, file.name || 'pasted-image')
+      handled = true
+    }
+    if (handled) e.preventDefault()
+  }
+
+  // File picker (#100): stage each selected image, then reset the input value so
+  // re-picking the SAME file fires `change` again.
+  function onPickFiles(e: ChangeEvent<HTMLInputElement>): void {
+    const files = e.target.files
+    if (files) for (const file of files) addFile(file, file.name)
+    e.target.value = ''
+  }
+
+  function removeImage(id: string): void {
+    setPendingImages((prev) => prev.filter((img) => img.id !== id))
+  }
+
   async function send(): Promise<void> {
     const text = draft.trim()
-    if (!text || state.isProcessing) return
-    setDraft('')
-    // The text is now in the transcript — drop the persisted draft (#60).
-    clearDraft(window.localStorage, thread.threadId)
-    dispatch({ type: 'send-prompt', id: `user:${promptSeq++}`, text })
+    // Allow a send with images and no text; still block while a turn is streaming.
+    if ((!text && pendingImages.length === 0) || state.isProcessing) return
+    dispatch({
+      type: 'send-prompt',
+      id: `user:${promptSeq++}`,
+      text,
+      images: pendingImages.map(({ previewUrl }) => ({ previewUrl })),
+    })
     try {
       const result = await window.api.sendPrompt({
         agentId: thread.agentId,
@@ -205,8 +289,15 @@ export function Conversation({
         workspaceId: thread.workspaceId,
         sessionId: boundSessionId,
         text,
+        images: pendingImages.map(({ data, mimeType }) => ({ data, mimeType })),
       })
       if (result.ok) {
+        // The turn was accepted: drop the staged images AND clear the text/draft.
+        // On ANY failure below we KEEP both so the user can retry (e.g. switch to a
+        // vision model) without re-typing or re-attaching (#100).
+        setPendingImages([])
+        setDraft('')
+        clearDraft(window.localStorage, thread.threadId)
         // Reuse the now-bound session on the next prompt (no second session/new),
         // and lift it so a switch-away-and-back doesn't re-mint. `thread:bound`
         // already set this for a fresh draft; this also covers the no-store path.
@@ -220,7 +311,13 @@ export function Conversation({
         onAuthExpired(result.authMethods)
       } else {
         // Surface a failed turn as a conversation item rather than dropping it.
-        dispatch({ type: 'turn-error', message: result.error })
+        // -31008 (images-unsupported, acp-capture §11) gets an actionable hint —
+        // the staged images are kept above, so switching model + resend just works.
+        const message =
+          result.code === IMAGES_UNSUPPORTED_CODE
+            ? "This model can't see images. Switch to a vision-capable model (e.g. mistral-medium-3.5) and resend."
+            : result.error
+        dispatch({ type: 'turn-error', message })
       }
     } finally {
       // The turn's stopReason resolves sendPrompt; flip back to the user's turn.
@@ -408,6 +505,24 @@ export function Conversation({
           onSetConfig={(axis, value) => onSetConfig?.(axis, value, boundSessionId)}
         />
 
+        {pendingImages.length > 0 && (
+          // Staged-image strip (#100): thumbnails with a ✕ remove, above the composer.
+          <div className="composer-attachments">
+            {pendingImages.map((img) => (
+              <div key={img.id} className="attachment">
+                <img className="attachment__thumb" src={img.previewUrl} alt={img.name} />
+                <button
+                  className="attachment__remove"
+                  aria-label={`Remove ${img.name}`}
+                  onClick={() => removeImage(img.id)}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="composer">
           {showCommands && (
             <ul className="command-autocomplete" role="listbox" aria-label="Slash commands">
@@ -453,12 +568,31 @@ export function Conversation({
               refreshCommandTrigger(e.currentTarget.value, e.currentTarget.selectionStart)
             }
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
             rows={2}
           />
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="composer__file-input"
+            accept={IMAGE_ACCEPT}
+            multiple
+            hidden
+            onChange={onPickFiles}
+          />
+          <button
+            className="btn btn--ghost composer__attach"
+            aria-label="Attach images"
+            title="Attach images"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={state.isProcessing}
+          >
+            📎
+          </button>
           <button
             className="btn"
             onClick={() => void send()}
-            disabled={state.isProcessing || draft.trim().length === 0}
+            disabled={state.isProcessing || (draft.trim().length === 0 && pendingImages.length === 0)}
           >
             {state.isProcessing ? 'Sending…' : 'Send'}
           </button>
@@ -518,7 +652,15 @@ function UserRow({ item }: { item: UserItem }): JSX.Element {
   return (
     <div className="msg msg--user">
       <div className="msg__role">You</div>
-      <div className="msg__body">{item.text}</div>
+      {item.images && item.images.length > 0 && (
+        // Echo the sent attachments in the user bubble (#100).
+        <div className="msg__images">
+          {item.images.map((img, i) => (
+            <img key={i} className="msg__image" src={img.previewUrl} alt="attachment" />
+          ))}
+        </div>
+      )}
+      {item.text && <div className="msg__body">{item.text}</div>}
     </div>
   )
 }

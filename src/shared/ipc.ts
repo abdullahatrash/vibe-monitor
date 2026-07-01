@@ -385,6 +385,18 @@ export interface PromptResult {
   userMessageId?: string
 }
 
+/**
+ * An image attachment on a prompt (#100). Our IPC type uses camelCase `mimeType`;
+ * the ACP snake_case `mime_type` conversion happens ONLY at the ACP boundary in
+ * `workspace-agent.ts` (see acp-capture §11 — the model is blind to camelCase).
+ */
+export interface PromptImage {
+  /** BARE base64 (no data: prefix). */
+  data: string
+  /** e.g. 'image/png'. */
+  mimeType: string
+}
+
 export interface SendPromptArgs {
   /** Id of the Workspace agent (one `vibe-acp` process) hosting the Thread. */
   agentId: string
@@ -400,6 +412,8 @@ export interface SendPromptArgs {
   sessionId: string | null
   /** The user's prompt text. */
   text: string
+  /** Optional image attachments (#100). */
+  images?: PromptImage[]
 }
 
 export type SendPromptResult =
@@ -409,7 +423,9 @@ export type SendPromptResult =
   // Mid-session expiry (-32000): the agent stays alive so the renderer can route
   // to the sign-in panel in place and re-auth on the same agent (no restart).
   | { ok: false; kind: 'not-signed-in'; agentId: string; authMethods: AuthMethod[] }
-  | { ok: false; kind: 'error'; error: string }
+  // `code` carries the JSON-RPC/app error code when known (#100) — e.g. -31008 —
+  // so the renderer can special-case it (an image-too-large / unsupported reason).
+  | { ok: false; kind: 'error'; error: string; code?: number }
 
 /**
  * The `deleteThread` reply (#53). `ok` when the records came down (or there was

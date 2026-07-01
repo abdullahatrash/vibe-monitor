@@ -7,6 +7,7 @@ import { BLOCKING_AUTH_METHOD_ID, DELEGATED_AUTH_METHOD_ID } from '../shared/ipc
 import type {
   AuthMethod,
   AuthState,
+  PromptImage,
   PromptResult,
   ThreadInfo,
   ThreadModes,
@@ -533,7 +534,7 @@ export class WorkspaceAgent extends EventEmitter {
    * channel; per ADR-0001 the renderer reduces them — we only own the turn's
    * lifecycle here. Resolves with `{stopReason, usage, userMessageId}`.
    */
-  async prompt(sessionId: string, text: string): Promise<PromptResult> {
+  async prompt(sessionId: string, text: string, images?: PromptImage[]): Promise<PromptResult> {
     if (!this.initialized) {
       throw new WorkspaceAgentError('Agent is not initialized; call start() first.')
     }
@@ -541,10 +542,19 @@ export class WorkspaceAgent extends EventEmitter {
       throw new WorkspaceAgentError(`No open Thread for sessionId ${sessionId}.`)
     }
 
+    // Image content blocks (#100, acp-capture §11): the field is snake_case
+    // `mime_type` with BARE base64 in `data` (no `data:` URI prefix). The
+    // ACP-conventional camelCase `mimeType` is silently accepted but leaves the
+    // model BLIND to the image, so we MUST emit `mime_type` here. Image blocks go
+    // BEFORE the text block in the `prompt[]` array.
+    const blocks = [
+      ...(images ?? []).map((img) => ({ type: 'image', data: img.data, mime_type: img.mimeType })),
+      { type: 'text', text },
+    ]
     try {
       return await this.client.request<PromptResult>('session/prompt', {
         sessionId,
-        prompt: [{ type: 'text', text }],
+        prompt: blocks,
       })
     } catch (err) {
       throw this.mapErrorAndCacheAuth(err)
@@ -770,7 +780,10 @@ export class WorkspaceAgent extends EventEmitter {
         'not-signed-in',
       )
     }
-    return new WorkspaceAgentError(message)
+    // Preserve the JSON-RPC/app code (the ctor's docstring promises it) so callers
+    // can special-case app errors — e.g. -31008 images-unsupported (#100), which
+    // the renderer turns into a "switch to a vision model" hint.
+    return new WorkspaceAgentError(message, null, null, rpcErrorParts(err).code)
   }
 }
 

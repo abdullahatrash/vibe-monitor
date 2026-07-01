@@ -6,7 +6,7 @@ import { cn } from '../lib/utils'
  * A small brand-styled wrapper over base-ui's Menu primitive. base-ui owns the
  * hard parts — focus management, roving keyboard nav, type-ahead, portalling,
  * outside-click/ESC dismissal — so these components only layer on the Mistral look
- * (square corners via the zero radius scale, `--panel` surface, `--border`, an
+ * (rounded corners from the new radius scale, `--panel` surface, `--border`, an
  * accent hover tint). Compose them like the base parts:
  *
  *   <Menu>
@@ -37,7 +37,7 @@ export function MenuContent({
       <BaseMenu.Positioner sideOffset={sideOffset} align={align}>
         <BaseMenu.Popup
           className={cn(
-            'min-w-32 rounded-none border border-border bg-panel py-1 text-sm text-text shadow-md outline-none',
+            'min-w-32 rounded-md border border-border bg-panel py-1 text-sm text-text shadow-md outline-none',
             className,
           )}
           {...props}

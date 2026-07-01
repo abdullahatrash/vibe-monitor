@@ -3,9 +3,9 @@
 > You are picking up an in-flight project. Read this top to bottom once, then keep it open.
 > It tells you **what this is**, **how we work**, **what exists**, **what's next**, and **where the
 > authoritative information lives** (in-repo docs + three local reference repos). Last updated
-> 2026-07-01, `main` @ `6fa1321`, **495 tests**, **0 open issues** (backlog empty). Composer-extras epic
-> is largely shipped (`/` autocomplete, image attachments, queue+interrupt); next up: a **design-system
-> pass** (layouts + components) before complexity grows — see §6. `$`/`@` autocomplete stays paused.
+> 2026-07-01, `main` @ `65c23a5`, **495 tests**. The **design-system epic is SCOPED AND FILED**: grilled →
+> **ADR-0010** + `docs/design-tokens.md` + `docs/design-system-components.md` → **PRD #109** → tracer-bullet
+> issues **#110–#119**. **Start with #110 (token layer)** — see §6/§8. `$`/`@` autocomplete stays paused.
 
 ---
 
@@ -303,9 +303,22 @@ review round):** the in-flight latch MUST be module-level per-Thread (`sending` 
 
 ## 6. What's next
 
-**Backlog is empty (no open issues).** The Agent-controls, sign-in, git/GitHub, and most of the
-composer-extras epic are shipped. **The chosen next intermediate epic is a DESIGN-SYSTEM pass** —
-establish layouts + a component library NOW, before the app grows and refactors get expensive.
+**The DESIGN-SYSTEM epic is scoped, ADR'd, and filed as issues #110–#119** (parent PRD #109, all
+`ready-for-agent`). Pipeline done: `/grill-with-docs` → **ADR-0010** + `docs/design-tokens.md` (exact token
+values) + `docs/design-system-components.md` (what to lift from shadcn/t3code + how to adapt) → PRD #109 →
+`/to-issues`. **START HERE: issue #110 (token layer)** — no blockers, highest-impact/lowest-risk (the whole
+app repaints toward the design with zero structural change). Slice order + deps:
+- **#110** token layer (—) → **#111** primitives (base-ui+CVA, #110) → **#113** shell (#110,#111)
+- **#112** streamdown spike (#110) → **#114** conversation A / Response+Message+Bubble+scroll **[HITL]**
+  (#111,#112) → **#115** conversation B / tool+reasoning+working (#114) → **#116** conversation C /
+  approval-inline+actions+file-links (#114)
+- **#117** composer (#111,#113) · **#118** auth (#111) · **#119** git panel (#111) — parallel after #110/#111
+Each issue carries `/tdd` build instructions; each is a **behavior-identical restyle** (existing ~495 tests
+MUST stay green) that retires its area's BEM from `styles.css`. Reference `docs/design-system-components.md`
+for the shadcn (`/Users/abdullahatrash/mistral/ui` `bases/base`) + t3code component-adaptation details.
+
+**The chosen next intermediate epic (context):** a DESIGN-SYSTEM pass — establish layouts + a component
+library NOW, before the app grows and refactors get expensive.
 
 **► NEXT: Design-system pass (layouts + components).** Goal: lock in a coherent design system (tokens,
 primitives, layout shells) and migrate the per-area UI onto it, on the #61 foundation (Tailwind v4 +
@@ -375,6 +388,12 @@ Parity target: `docs/codexmonitor-reference.md`.
   `stopReason:"cancelled"`). Interrupt = Stop button (#104); queue = compose-while-streaming + auto-flush
   (#106), serialized via a MODULE-level per-Thread latch (a per-instance ref can't serialize across the
   `Conversation` remount). Steer deferred pending a vibe steer method.
+- **0010** — design-system epic: keep the CSS-vars→`@theme` token hybrid, adopt the prototype values (warm
+  neutrals, rounded radius scale reversing `--radius:0`, softer gradient-orange `#cf6a3a`/`#e07a3e`); a
+  base-ui+Tailwind+**CVA** primitive library under `ui/` copy-adapted from shadcn `bases/base` + t3code,
+  retiring BEM area-by-area; conversation keeps the discriminated-union item+switch (ADR-0001) with reusable
+  inner primitives (Response=streamdown, gated); migrate area-by-area behavior-identical. Values →
+  `docs/design-tokens.md`; adaptation notes → `docs/design-system-components.md`; PRD #109; issues #110–#119.
 
 If a new slice needs to revisit one of these, that's an **HITL** decision — write a new ADR and get the
 user's call; don't just diverge.
@@ -383,14 +402,17 @@ user's call; don't just diverge.
 
 ## 8. First moves for the new agent
 
-1. Read this file, then skim `docs/acp-capture.md` and the `composer-extras-epic` memory (the in-flight
-   epic's decomposition + per-sub-feature protocol readiness).
+1. Read this file, then **ADR-0010** + `docs/design-tokens.md` + `docs/design-system-components.md` (the
+   filed design-system epic), and skim the `composer-extras-epic` memory.
 2. Confirm the baseline: `cd /Users/abdullahatrash/mistral/vibe-mistro` (on `main`), run the gates
    (`export PATH=...nvm...; bun run lint && bun run typecheck && bun run build && bun run test`) →
    expect **495 tests green**.
-3. Check the backlog: `GH_HOST=github.com gh issue list --state open` → expect **empty**. The next move
-   is the **design-system pass** (the chosen next epic, §6) — START by grilling its scope with the user
-   (grill-with-docs → ADR → tracer-bullet slices). Verification debt remains: the #80 sign-in re-check
+3. The next move is the **design-system epic** — it's already filed: `GH_HOST=github.com gh issue list
+   --state open --label ready-for-agent` shows PRD #109 + slices #110–#119 (§6). **Start with #110 (token
+   layer)** — no blockers. Run the **team loop (§3)** per slice: manual worktree (real `bun install`),
+   implementer agent (the issue carries `/tdd`), your independent verify + diff read, adversarial review,
+   fold, push, **user merges**, cleanup, re-run gates on `main`, update memory. Verification debt remains:
+   the #80 sign-in re-check
    and the #87/#88 git slices haven't been smoked live (§6).
 4. When the user picks a roadmap item (or says "start <N>"), run the **team loop in §3** — manual
    worktree (real `bun install`, NOT a node_modules symlink — §2), implementer agent, your independent

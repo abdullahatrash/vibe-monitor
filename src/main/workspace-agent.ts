@@ -2,8 +2,14 @@ import { EventEmitter } from 'node:events'
 import { AcpClient, type SpawnFn } from './acp/client'
 import { handleFsReadTextFile, type ReadTextFn } from './acp/fs-read'
 import { handleFsWriteTextFile, type WriteTextFn } from './acp/fs-write'
-import { classifyAuthError, classifyAuthStatus, extractSignOutAvailable } from './auth/auth-state'
+import {
+  classifyAuthError,
+  classifyAuthStatus,
+  classifyPersistFailure,
+  extractSignOutAvailable,
+} from './auth/auth-state'
 import { BLOCKING_AUTH_METHOD_ID, DELEGATED_AUTH_METHOD_ID } from '../shared/ipc'
+import { INSTALL_HINT } from '../shared/install-guidance'
 import type {
   AuthMethod,
   AuthState,
@@ -42,8 +48,9 @@ const PRIMARY_SESSION_OPEN_TIMEOUT_MS = 5000
 
 export const AUTH_HINT =
   'Run `vibe` to sign in, or `vibe --setup` to configure your Mistral Vibe account.'
-export const SPAWN_HINT =
-  'Install Mistral Vibe and ensure `vibe-acp` is on your PATH, then run `vibe` to sign in.'
+// The canonical install hint (shared/install-guidance) — the same copy the
+// first-run screen and the persistent banner show for the same root cause.
+export const SPAWN_HINT = INSTALL_HINT
 
 /** A failure surfaced to the renderer, optionally with an actionable hint. */
 export class WorkspaceAgentError extends Error {
@@ -383,7 +390,10 @@ export class WorkspaceAgent extends EventEmitter {
    * primary; acp-capture §8). Non-blocking `start` mints a `signInUrl` we open in
    * the system browser; the long-poll `complete` awaits the user finishing and
    * persists the key to Vibe's keyring; we then re-query `_auth/status` to
-   * confirm. Rejects (recoverably) on an expired/unknown attempt (-32602).
+   * confirm. Rejects (recoverably) on an expired/unknown attempt (-32602) — and
+   * on an in-band persist failure: Vibe reports a failed credential save in the
+   * `complete` response's `persistResult` WITHOUT a JSON-RPC error, so ignoring
+   * it would report the vague "did not complete" while nothing was ever saved.
    *
    * Unlike start(), this does NOT race `earlyFailure`; its no-wedge property
    * relies on AcpClient.rejectAllPending firing on `exit`/`stop`, which rejects
@@ -399,14 +409,40 @@ export class WorkspaceAgent extends EventEmitter {
     }
     if (meta.signInUrl) this.openUrl?.(meta.signInUrl)
 
-    await this.client.request('authenticate', {
+    const completed = await this.client.request('authenticate', {
       methodId,
       action: 'complete',
       attemptId: meta.attemptId,
     })
+    // Diagnostic breadcrumbs (main stderr; no credentials — these are status
+    // strings): the browser-says-signed-in-but-app-disagrees failure has hit
+    // live twice, and only the RAW complete/status payloads can decide between
+    // a persist failure, a stale keyring cache, and a contract change.
+    const completedMeta = extractDelegatedMeta(completed, methodId)
+    console.error(
+      `[vibe-mistro:auth] delegated complete: status=${String(completedMeta?.status)} persistResult=${String(completedMeta?.persistResult)}`,
+    )
+    this.assertCredentialPersisted(completed, methodId)
 
     const status = await this.client.request('_auth/status')
+    console.error(`[vibe-mistro:auth] post-sign-in _auth/status: ${JSON.stringify(status)}`)
     return this.applyAuthStatus(status)
+  }
+
+  /**
+   * Fail a sign-in whose `authenticate` response reports an in-band persist
+   * failure (`persistResult` !== "completed" — a save-status string, never a
+   * credential). Without this the browser flow "succeeds", nothing reaches the
+   * keyring, and the user is stranded signed-out with no reason shown.
+   */
+  private assertCredentialPersisted(response: unknown, methodId: string): void {
+    const failure = classifyPersistFailure(extractDelegatedMeta(response, methodId)?.persistResult)
+    if (failure) {
+      throw new WorkspaceAgentError(
+        `Browser sign-in finished, but Vibe could not save the credential (${failure}).`,
+        AUTH_HINT,
+      )
+    }
   }
 
   /**
@@ -414,9 +450,10 @@ export class WorkspaceAgent extends EventEmitter {
    * acp-capture §8) — used when the delegated method is not advertised. A SINGLE
    * `authenticate({methodId})` with NO `action`/`attemptId`: the AGENT opens the
    * browser and the call BLOCKS until the user finishes, then persists the key to
-   * Vibe's keyring. We open no URL (the agent does) and discard the response —
-   * `persistResult` is a credential signal we never read (ADR-0003) — then
-   * re-query `_auth/status` to confirm.
+   * Vibe's keyring. We open no URL (the agent does). The response's
+   * `persistResult` is checked like the delegated path's — it's a save-status
+   * string, not a credential (ADR-0003 holds) — then we re-query `_auth/status`
+   * to confirm.
    *
    * Like `signInDelegated`'s `complete`, this blocking call cannot be cancelled
    * over ACP; its no-wedge property relies on AcpClient.rejectAllPending firing on
@@ -424,7 +461,8 @@ export class WorkspaceAgent extends EventEmitter {
    * Keep that on refactor.
    */
   private async signInBlocking(methodId: string): Promise<AuthState> {
-    await this.client.request('authenticate', { methodId })
+    const completed = await this.client.request('authenticate', { methodId })
+    this.assertCredentialPersisted(completed, methodId)
     const status = await this.client.request('_auth/status')
     return this.applyAuthStatus(status)
   }
@@ -922,13 +960,18 @@ function formatAuthFailure(action: string, detail: string, code: number | null):
 interface DelegatedMeta {
   attemptId?: string
   signInUrl?: string
+  /** Save-status of the credential persist ("completed" or an error detail). */
+  persistResult?: unknown
+  /** Flow status ("completed" on a resolved complete). */
+  status?: unknown
 }
 
 /**
- * Pull the `browser-auth-delegated` payload out of an `authenticate` response.
- * The agent keys its `_meta` by the method id (acp-capture §8): both `start`
- * (`{attemptId, signInUrl, expiresAt}`) and `complete` (`{attemptId, status}`)
- * use this envelope.
+ * Pull the auth payload out of an `authenticate` response. The agent keys its
+ * `_meta` by the method id (acp-capture §8): delegated `start`
+ * (`{attemptId, signInUrl, expiresAt}`), delegated `complete`
+ * (`{attemptId, persistResult, status}`), and blocking `browser-auth`
+ * (`{persistResult, status}`) all use this envelope.
  */
 function extractDelegatedMeta(response: unknown, methodId: string): DelegatedMeta | null {
   const meta = (response as { _meta?: Record<string, unknown> } | null)?._meta

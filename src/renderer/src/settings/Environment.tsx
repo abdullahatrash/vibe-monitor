@@ -1,6 +1,8 @@
 import type { JSX } from 'react'
 import type { VibeDetectResult } from '../../../shared/ipc'
+import { INSTALL_DOCS_URL } from '../../../shared/install-guidance'
 import { Button } from '../ui/button'
+import { CodeText } from '../ui/code-text'
 
 /** The environment check: whether `vibe` / `vibe-acp` are installed + reachable. */
 export function Environment({
@@ -28,7 +30,14 @@ export function Environment({
             <span className="status__label">version</span>
             <span className="status__value">{detect.vibeVersion ?? '—'}</span>
           </li>
-          {detect.error && <li className="status__error">{detect.error}</li>}
+          {detect.error && (
+            <li className="status__error">
+              <CodeText text={detect.error} />{' '}
+              <a className="underline" href={INSTALL_DOCS_URL} target="_blank" rel="noreferrer">
+                Install guide
+              </a>
+            </li>
+          )}
         </ul>
       )}
     </div>

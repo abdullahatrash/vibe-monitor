@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyAuthError, classifyAuthStatus } from './auth-state'
+import { classifyAuthError, classifyAuthStatus, classifyPersistFailure } from './auth-state'
 
 /**
  * Seam 1: the pure auth-state classifier. It maps an ACP failure/outcome to an
@@ -41,5 +41,29 @@ describe('classifyAuthStatus', () => {
     // Defensive: never guess sign-in state from a shape we don't recognize.
     expect(classifyAuthStatus({})).toBe('unknown')
     expect(classifyAuthStatus({ authState: 'os_keyring' })).toBe('unknown')
+  })
+})
+
+describe('classifyPersistFailure', () => {
+  it('passes a completed persist', () => {
+    expect(classifyPersistFailure('completed')).toBeNull()
+  })
+
+  it('surfaces the in-band failure detail (no JSON-RPC error accompanies it)', () => {
+    // The real shapes from vibe/setup/auth/api_key_persistence.py: the browser
+    // flow succeeded but NOTHING was saved (env_var_error) or only the process
+    // env was (save_error) — the exact "browser says signed in, app and terminal
+    // say signed out" stranding this classifier exists to prevent.
+    expect(classifyPersistFailure('env_var_error:MISTRAL_API_KEY')).toBe(
+      'env_var_error:MISTRAL_API_KEY',
+    )
+    expect(classifyPersistFailure('save_error:read-only file system')).toBe(
+      'save_error:read-only file system',
+    )
+  })
+
+  it('does not fail sign-in when the field is absent (older vibe-acp)', () => {
+    expect(classifyPersistFailure(undefined)).toBeNull()
+    expect(classifyPersistFailure(null)).toBeNull()
   })
 })

@@ -380,6 +380,48 @@ describe('WorkspaceAgent — sign in (browser-auth-delegated)', () => {
     expect(agent.authState).toBe('signed-in')
   })
 
+  it('rejects (recoverably) when complete reports an in-band persist failure', async () => {
+    const fake = makeCapturingFake()
+    const agent = await connectSignedOut(fake, () => {})
+
+    const signingIn = agent.signIn(DELEGATED)
+    signingIn.catch(() => {}) // avoid an unhandled rejection before we assert
+
+    await new Promise((r) => setTimeout(r, 0))
+    const startReq = authSent(fake).find((m) => m.params?.action === 'start')
+    fake.feed(JSON.stringify({ jsonrpc: '2.0', id: startReq?.id, result: startResult() }) + '\n')
+
+    await new Promise((r) => setTimeout(r, 0))
+    const completeReq = authSent(fake).find((m) => m.params?.action === 'complete')
+    // Vibe reports a failed credential save IN-BAND: `status:"completed"` with a
+    // persistResult error and NO JSON-RPC error (api_key_persistence.py). The
+    // browser said "signed in" but nothing reached env/keyring — swallowing this
+    // (the pre-fix behavior) strands the user at a vague "did not complete".
+    fake.feed(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: completeReq?.id,
+        result: {
+          _meta: {
+            [DELEGATED]: {
+              attemptId: ATTEMPT_ID,
+              persistResult: 'env_var_error:MISTRAL_API_KEY',
+              status: 'completed',
+            },
+          },
+        },
+      }) + '\n',
+    )
+
+    const err = await signingIn.catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(WorkspaceAgentError)
+    expect((err as WorkspaceAgentError).message).toContain('could not save the credential')
+    expect((err as WorkspaceAgentError).message).toContain('env_var_error:MISTRAL_API_KEY')
+    expect((err as WorkspaceAgentError).hint).toBe(AUTH_HINT)
+    // No _auth/status round-trip after a failed persist — state stays signed-out.
+    expect(agent.authState).toBe('not-signed-in')
+  })
+
   it('rejects (recoverably) when complete fails for an expired/unknown attempt (-32602)', async () => {
     const fake = makeCapturingFake()
     const agent = await connectSignedOut(fake, () => {})

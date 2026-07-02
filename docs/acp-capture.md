@@ -250,6 +250,13 @@ authenticate(method_id, **kwargs) -> AuthenticateResponse
    attempt by `attemptId`); `complete` requires that `attemptId` (else `InvalidRequestError`), calls
    `complete_attempt()` (blocks until the browser flow resolves), then persists to the keyring. So `start`
    is cheap/non-blocking and `complete` is the long-poll — orchestrate accordingly.
+
+   ⚠️ **`persistResult` carries failures IN-BAND** (`api_key_persistence.py`, source-read 2026-07-02): a
+   failed credential save does NOT raise — `complete` still resolves with `status:"completed"` and
+   `persistResult` set to an error detail (`"env_var_error:<env key>"` = nothing was saved anywhere;
+   `"save_error:<err>"` = keyring AND env-file both failed, only the agent process's env holds the key).
+   A client that ignores `persistResult` reports sign-in success while `_auth/status` (and every other
+   `vibe` process) stays signed out. Check it (`classifyPersistFailure`, `assertCredentialPersisted`).
    **This delegated mode is the right fit for vibe-mistro** (we open the URL via the system opener,
    show progress, stay non-blocking) — it mirrors CodexMonitor's `login/start → open authUrl → complete`,
    and is the **primary** path per ADR-0003 (blocking `browser-auth` is the fallback).

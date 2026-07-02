@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { VibeDetectResult } from '../shared/ipc'
+import { INSTALL_HINT } from '../shared/install-guidance'
 import { getShellEnv } from './shell-env'
 
 const execFileAsync = promisify(execFile)
@@ -47,12 +48,12 @@ export async function detectVibe(): Promise<VibeDetectResult> {
       }
     }
 
+    // Specific first sentence + the ONE canonical install hint (shared/install-guidance)
+    // — the same copy every missing-CLI surface shows (first-run screen, banner, spawn error).
     if (!result.vibeFound) {
-      result.error =
-        'Mistral Vibe CLI not found. Install it and ensure `vibe` is on your PATH (see https://docs.mistral.ai/vibe/code/cli/install-setup).'
+      result.error = `Mistral Vibe CLI not found. ${INSTALL_HINT}`
     } else if (!result.vibeAcpFound) {
-      result.error =
-        '`vibe` was found but `vibe-acp` is not on PATH. The ACP server is required to drive Vibe from this app.'
+      result.error = `\`vibe\` was found but \`vibe-acp\` is not on PATH. ${INSTALL_HINT}`
     }
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err)

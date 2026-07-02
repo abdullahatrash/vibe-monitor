@@ -131,7 +131,7 @@ export function FilesSurface({
       // virtualized and measures its scroll container, so a content-height (≈0) container renders
       // ZERO rows (the header/search still show). `flex-1` fills the column's height; `min-h-0`
       // lets it shrink below content so the inner tree can scroll. (Matches t3code's FileBrowserPanel.)
-      className="flex min-h-0 w-80 flex-1 flex-col border-l border-border bg-panel text-text"
+      className="flex min-h-0 flex-1 flex-col text-text"
     >
       <div className="flex items-center gap-2 border-b border-border-muted px-3 py-2.5">
         <button

@@ -87,7 +87,7 @@ export function FilePreview({
   const crumbs = breadcrumbSegments(relativePath)
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col self-stretch border-l border-border bg-panel text-text">
+    <div className="flex min-h-0 flex-1 flex-col text-text">
       <div className="flex items-center gap-2 border-b border-border-muted px-3 py-2">
         {/* Read-only, non-interactive breadcrumb of the file's path. */}
         <nav aria-label="File path" className="flex min-w-0 flex-1 items-center gap-1 text-[11px] text-muted">

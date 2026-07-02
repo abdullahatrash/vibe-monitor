@@ -15,7 +15,7 @@ import { DiffView } from './DiffView'
  * the Workspace's STREAMED git status while it is the ACTIVE one (`isActive`), holds the
  * latest snapshot, and renders the branch header + changed-files list. Clicking a file
  * opens its working-tree diff (#85): the panel has two modes —
- *  - LIST: the narrow (`w-80`) file list + branch header (the #84 view).
+ *  - LIST: the file list + branch header (the #84 view), filling the SurfacePanel shell.
  *  - DIFF: a WIDER (`flex-1`) view of the selected file's diff (`DiffView`), with a
  *    "← Changes" back button. A diff needs width, so the panel widens rather than
  *    cramming a side-by-side into 80px.
@@ -122,7 +122,7 @@ export function ChangesPanel({
   // must never strand the user with no way back to the card stack.
   if (!status || !status.isRepo) {
     return (
-      <aside className="flex w-80 shrink-0 flex-col self-stretch border-l border-border bg-panel text-text">
+      <aside className="flex min-h-0 flex-1 flex-col text-text">
         <ReviewHeader onCollapse={onCollapse} onRefresh={refresh} />
         <p className="px-3 py-3 text-[13px] text-muted">
           {!status ? 'Loading changes…' : 'Not a Git repository.'}
@@ -169,7 +169,7 @@ export function ChangesPanel({
   const selected = isActive && selectedPath ? view.files.find((f) => f.path === selectedPath) : undefined
   if (selected) {
     return (
-      <aside className="flex min-h-0 flex-1 shrink-0 flex-col self-stretch border-l border-border bg-panel text-text">
+      <aside className="flex min-h-0 flex-1 flex-col text-text">
         <DiffWorkerProvider>
           <DiffView
             workspaceDir={workspaceDir}
@@ -187,7 +187,9 @@ export function ChangesPanel({
   }
 
   return (
-    <aside className="w-80 shrink-0 border-l border-border bg-panel text-text">
+    // The SHELL (SurfacePanel) owns the panel's width + border-l chrome now; this fills
+    // it and scrolls internally — the shell column is viewport-height, not <main>-scrolled.
+    <aside className="flex min-h-0 flex-1 flex-col overflow-y-auto text-text">
       <ReviewHeader count={view.fileCount} onCollapse={onCollapse} onRefresh={refresh} />
 
       {/* Environment (#119) — a STATIC placeholder gesturing at the mockup's fuller

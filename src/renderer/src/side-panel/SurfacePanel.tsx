@@ -1,5 +1,5 @@
-import { useEffect, type JSX, type ReactNode } from 'react'
-import { FileDiff, FileText, Files, Globe, SquareTerminal, X } from 'lucide-react'
+import { useEffect, useRef, useState, type JSX, type PointerEvent, type ReactNode } from 'react'
+import { FileDiff, FileText, Files, Globe, Plus, SquareTerminal, X } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { useMediaQuery } from '../lib/use-media-query'
 import {
@@ -7,6 +7,10 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuTrigger,
   Sheet,
   SheetPopup,
 } from '../ui'
@@ -29,6 +33,12 @@ import {
   type SingletonKind,
   type Surface,
 } from './side-panel-store'
+import {
+  clampPanelWidth,
+  DEFAULT_PANEL_WIDTH,
+  getPanelWidth,
+  setPanelWidth,
+} from './panel-width-store'
 
 /** Windows this narrow present the panel as a slide-over Sheet (t3code's 980px break). */
 const NARROW_QUERY = '(max-width: 980px)'
@@ -41,11 +51,14 @@ const NARROW_QUERY = '(max-width: 980px)'
  * CARDS (its empty state). Review re-homes the git Changes panel behavior-identical
  * (#84–#88, ADR-0008); Files is the searchable tree (#188); Terminal/Browser are inert.
  *
- * Presentation is DUAL: inline beside the conversation on wide windows, and inside a Sheet
- * (right-edge slide-over, dimmed/blurred backdrop, Esc/outside-click closes) on narrow ones
- * — the SAME `PanelBody` feeds both. Rendered by `ConnectedWorkspace` for the active/
- * connected Workspace only. Stays MOUNTED even while closed so the ⌘P/⌃⇧G listener stays
- * live (a matched chord toggles the Surface, opening a closed panel).
+ * Presentation is DUAL: inline beside the conversation on wide windows — a full-height,
+ * flush, `border-l`-separated column (t3code's editor-panel chrome) whose width is
+ * DRAG-RESIZABLE on its left edge (`panel-width-store`: default 540, min 360, max 70% of
+ * the viewport, persisted per-window) — and inside a Sheet (right-edge slide-over, dimmed/
+ * blurred backdrop, Esc/outside-click closes) on narrow ones; the SAME `PanelBody` feeds
+ * both. Rendered by `ConnectedWorkspace` for the active/connected Workspace only. Stays
+ * MOUNTED even while closed so the ⌘P/⌃⇧G listener stays live (a matched chord toggles
+ * the Surface, opening a closed panel).
  */
 export function SurfacePanel({
   workspaceId,
@@ -102,6 +115,7 @@ export function SurfacePanel({
   // closed narrow Sheet renders its empty shell.
   const body = panel.isOpen ? (
     <PanelBody
+      mode={narrow ? 'sheet' : 'inline'}
       workspaceId={workspaceId}
       workspaceDir={workspaceDir}
       agentId={agentId}
@@ -131,11 +145,16 @@ export function SurfacePanel({
 }
 
 /**
- * The panel's content, shared across both presentations: the tab strip + active Surface
- * when ≥1 Surface is open, or the launcher cards (empty state) when none is. A fixed-width
- * (`w-80`) column; the active Surface brings its own header + border/bg (frozen chrome).
+ * The panel's content, shared across both presentations: the full-height SHELL (t3code's
+ * `PreviewPanelShell`) holding either the tab strip + active Surface (≥1 Surface open) or
+ * the centered launcher grid (zero open). Inline, the shell is a flush `border-l` column
+ * at the drag-resizable width (left-edge handle: pointer-captured drag, clamp to the
+ * viewport-relative range, persist on release, double-click resets — the sidebar's
+ * #drag-to-resize pattern mirrored). In a Sheet the popup owns width + chrome, so the
+ * shell just fills it (no handle, no border).
  */
 function PanelBody({
+  mode,
   workspaceId,
   workspaceDir,
   agentId,
@@ -144,6 +163,7 @@ function PanelBody({
   busy,
   panel,
 }: {
+  mode: 'inline' | 'sheet'
   workspaceId: string
   workspaceDir: string
   agentId: string
@@ -152,58 +172,123 @@ function PanelBody({
   busy: boolean
   panel: ReturnType<typeof useWorkspacePanel>
 }): JSX.Element {
-  if (panel.surfaces.length === 0) {
-    return <LauncherCards onOpen={(kind) => openWorkspaceSurface(workspaceId, kind)} />
+  const inline = mode === 'inline'
+  const [width, setWidth] = useState(() => getPanelWidth(window.localStorage, window.innerWidth))
+  const [dragging, setDragging] = useState(false)
+  const dragOrigin = useRef<{ x: number; width: number } | null>(null)
+
+  function onHandlePointerDown(e: PointerEvent<HTMLDivElement>): void {
+    dragOrigin.current = { x: e.clientX, width }
+    setDragging(true)
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  function onHandlePointerMove(e: PointerEvent<HTMLDivElement>): void {
+    const origin = dragOrigin.current
+    if (!origin) return
+    // The handle rides the panel's LEFT edge: dragging left (negative clientX delta)
+    // grows the panel. Clamped live so the drag can never overshoot the range.
+    setWidth(clampPanelWidth(origin.width + (origin.x - e.clientX), window.innerWidth))
+  }
+  function endDrag(e: PointerEvent<HTMLDivElement>): void {
+    if (!dragOrigin.current) return
+    dragOrigin.current = null
+    setDragging(false)
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+    // Persist the settled width (best-effort). Read from state via the setter to avoid
+    // a stale closure — setWidth's identity update returns the current value.
+    setWidth((current) => {
+      setPanelWidth(window.localStorage, current, window.innerWidth)
+      return current
+    })
+  }
+  function resetWidth(): void {
+    const fallback = clampPanelWidth(DEFAULT_PANEL_WIDTH, window.innerWidth)
+    setWidth(fallback)
+    setPanelWidth(window.localStorage, fallback, window.innerWidth)
   }
 
   const active = panel.surfaces.find((s) => s.id === panel.activeSurfaceId) ?? null
 
   return (
-    <div className="flex min-h-0 w-80 shrink-0 flex-col self-stretch">
-      <SurfaceTabStrip
-        surfaces={panel.surfaces}
-        activeSurfaceId={panel.activeSurfaceId}
-        onActivate={(id) => activateWorkspaceSurface(workspaceId, id)}
-        onClose={(id) => closeWorkspaceSurface(workspaceId, id)}
-        onCloseOthers={(id) => closeOtherWorkspaceSurfaces(workspaceId, id)}
-        onCloseToRight={(id) => closeWorkspaceSurfacesToRight(workspaceId, id)}
-        onCloseAll={() => closeAllWorkspaceSurfaces(workspaceId)}
-      />
-      <div className="flex min-h-0 flex-1 flex-col">
-        {active?.kind === 'review' && (
-          <ChangesPanel
-            workspaceDir={workspaceDir}
-            isActive={isActive}
-            busy={busy}
-            onCollapse={() => closeWorkspaceSurface(workspaceId, 'review')}
+    <aside
+      aria-label="Side panel"
+      style={inline ? { width } : undefined}
+      className={cn(
+        'relative flex h-full min-h-0 flex-col bg-panel text-text',
+        inline ? 'shrink-0 self-stretch border-l border-border' : 'w-full',
+        dragging && 'select-none',
+      )}
+    >
+      {/* Resize handle (inline only): an 8px invisible hit strip straddling the left
+          border, its visible affordance a 1px seam that lights on hover/drag. */}
+      {inline && (
+        <div
+          aria-hidden
+          onPointerDown={onHandlePointerDown}
+          onPointerMove={onHandlePointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onDoubleClick={resetWidth}
+          className={cn(
+            'absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize select-none [-webkit-app-region:no-drag]',
+            'after:absolute after:inset-y-0 after:left-1 after:w-px after:bg-transparent after:transition-colors after:content-[""] hover:after:bg-accent/40',
+            dragging && 'after:bg-accent/60',
+          )}
+        />
+      )}
+      {panel.surfaces.length === 0 ? (
+        <LauncherGrid onOpen={(kind) => openWorkspaceSurface(workspaceId, kind)} />
+      ) : (
+        <>
+          <SurfaceTabStrip
+            surfaces={panel.surfaces}
+            activeSurfaceId={panel.activeSurfaceId}
+            onActivate={(id) => activateWorkspaceSurface(workspaceId, id)}
+            onClose={(id) => closeWorkspaceSurface(workspaceId, id)}
+            onCloseOthers={(id) => closeOtherWorkspaceSurfaces(workspaceId, id)}
+            onCloseToRight={(id) => closeWorkspaceSurfacesToRight(workspaceId, id)}
+            onCloseAll={() => closeAllWorkspaceSurfaces(workspaceId)}
+            onOpen={(kind) => openWorkspaceSurface(workspaceId, kind)}
           />
-        )}
-        {active?.kind === 'files' && (
-          // The Files Surface tree (#188). It only mounts here — when `files` is the ACTIVE
-          // tab and the panel is open — and focuses its own search on mount, so ⌘P (which
-          // opens/activates Files via the store) and a Files card/tab click both land in a
-          // search-focused tree (ADR-0013 decision 1), with no per-trigger plumbing.
-          // Selecting a file opens a panel-level `file:` Surface (a preview tab) via the
-          // store — dedupes on the path, so re-selecting an open file just re-activates it.
-          <FilesSurface
-            onCollapse={() => closeWorkspaceSurface(workspaceId, 'files')}
-            agentId={agentId}
-            onOpenFile={(relativePath) => openWorkspaceFileSurface(workspaceId, relativePath)}
-          />
-        )}
-        {active?.kind === 'file' && (
-          // A read-only file preview tab (#189): fetches the confined `files:read` and renders
-          // the highlighted content (or a binary/too-large/error notice), keyed by the path so a
-          // tab switch remounts a fresh fetch.
-          <FilePreview
-            key={active.id}
-            agentId={agentId}
-            relativePath={active.relativePath}
-            activeThreadId={activeThreadId}
-          />
-        )}
-      </div>
-    </div>
+          <div className="flex min-h-0 flex-1 flex-col">
+            {active?.kind === 'review' && (
+              <ChangesPanel
+                workspaceDir={workspaceDir}
+                isActive={isActive}
+                busy={busy}
+                onCollapse={() => closeWorkspaceSurface(workspaceId, 'review')}
+              />
+            )}
+            {active?.kind === 'files' && (
+              // The Files Surface tree (#188). It only mounts here — when `files` is the ACTIVE
+              // tab and the panel is open — and focuses its own search on mount, so ⌘P (which
+              // opens/activates Files via the store) and a Files card/tab click both land in a
+              // search-focused tree (ADR-0013 decision 1), with no per-trigger plumbing.
+              // Selecting a file opens a panel-level `file:` Surface (a preview tab) via the
+              // store — dedupes on the path, so re-selecting an open file just re-activates it.
+              <FilesSurface
+                onCollapse={() => closeWorkspaceSurface(workspaceId, 'files')}
+                agentId={agentId}
+                onOpenFile={(relativePath) => openWorkspaceFileSurface(workspaceId, relativePath)}
+              />
+            )}
+            {active?.kind === 'file' && (
+              // A read-only file preview tab (#189): fetches the confined `files:read` and renders
+              // the highlighted content (or a binary/too-large/error notice), keyed by the path so a
+              // tab switch remounts a fresh fetch.
+              <FilePreview
+                key={active.id}
+                agentId={agentId}
+                relativePath={active.relativePath}
+                activeThreadId={activeThreadId}
+              />
+            )}
+          </div>
+        </>
+      )}
+    </aside>
   )
 }
 
@@ -226,8 +311,10 @@ function surfaceMeta(surface: Surface): { icon: ReactNode; label: string } {
 /**
  * The tab strip across the panel top (t3code `RightPanelTabs`): one tab per open Surface —
  * kind icon + label + a close ×, the active tab visually distinct. Clicking a tab activates
- * it; right-click opens a context menu (Close / Close others / Close to the right). A
- * `tablist` / `tab` a11y contract with `aria-selected` on the active tab.
+ * it; MIDDLE-click closes it (t3code's aux-click); right-click opens a context menu (Close /
+ * Close others / Close to the right / Close all). A trailing "+" menu (t3code's add-surface
+ * button) opens another Surface without going back through the launcher. A `tablist` /
+ * `tab` a11y contract with `aria-selected` on the active tab.
  */
 function SurfaceTabStrip({
   surfaces,
@@ -237,6 +324,7 @@ function SurfaceTabStrip({
   onCloseOthers,
   onCloseToRight,
   onCloseAll,
+  onOpen,
 }: {
   surfaces: Surface[]
   activeSurfaceId: string | null
@@ -245,12 +333,13 @@ function SurfaceTabStrip({
   onCloseOthers: (id: string) => void
   onCloseToRight: (id: string) => void
   onCloseAll: () => void
+  onOpen: (kind: SingletonKind) => void
 }): JSX.Element {
   return (
     <div
       role="tablist"
       aria-label="Open surfaces"
-      className="flex w-80 shrink-0 items-center gap-1 overflow-x-auto border-b border-l border-border bg-panel px-2 py-1.5"
+      className="flex w-full shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-panel px-2 py-1.5"
     >
       {surfaces.map((surface, index) => {
         const active = surface.id === activeSurfaceId
@@ -258,6 +347,10 @@ function SurfaceTabStrip({
         return (
           <ContextMenu key={surface.id}>
             <ContextMenuTrigger
+              onAuxClick={(e) => {
+                // Middle-click closes the tab (t3code parity); right-click is the menu's.
+                if (e.button === 1) onClose(surface.id)
+              }}
               className={cn(
                 'group flex h-7 min-w-0 max-w-40 shrink-0 items-center gap-1.5 rounded-md pl-2 pr-1 text-[13px] transition-colors',
                 '[&_svg]:size-3.5 [&_svg]:shrink-0',
@@ -305,6 +398,31 @@ function SurfaceTabStrip({
           </ContextMenu>
         )
       })}
+      {/* Add-surface "+" (t3code): opens/activates a Surface directly from the strip.
+          The store dedupes singletons, so picking an already-open kind just activates it. */}
+      <Menu>
+        <MenuTrigger
+          aria-label="Open a surface"
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted outline-none transition-colors hover:bg-accent/10 hover:text-text-strong focus-visible:bg-accent/10"
+        >
+          <Plus className="size-4" aria-hidden />
+        </MenuTrigger>
+        <MenuContent align="start">
+          {CARDS.map((card) => (
+            <MenuItem
+              key={card.label}
+              disabled={!card.live}
+              onClick={card.live ? () => onOpen(card.target as SingletonKind) : undefined}
+            >
+              <span className="flex items-center gap-2 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted">
+                {card.icon}
+                {card.label}
+                {!card.live && <span className="text-[11px] font-medium text-faint">Soon</span>}
+              </span>
+            </MenuItem>
+          ))}
+        </MenuContent>
+      </Menu>
     </div>
   )
 }
@@ -314,6 +432,7 @@ interface CardDef {
   /** The live Surface it opens, or a reserved slot with no Surface kind yet. */
   target: SingletonKind | 'terminal' | 'browser'
   label: string
+  description: string
   icon: ReactNode
   /** The keyboard-shortcut hint (aspirational chrome for the inert Browser card). */
   hint?: string
@@ -321,33 +440,65 @@ interface CardDef {
 }
 
 const CARDS: readonly CardDef[] = [
-  { target: 'review', label: 'Review', icon: <FileDiff aria-hidden />, hint: '⌃⇧G', live: true },
-  { target: 'terminal', label: 'Terminal', icon: <SquareTerminal aria-hidden />, live: false },
-  { target: 'browser', label: 'Browser', icon: <Globe aria-hidden />, hint: '⌘T', live: false },
-  { target: 'files', label: 'Files', icon: <Files aria-hidden />, hint: '⌘P', live: true },
+  {
+    target: 'review',
+    label: 'Review',
+    description: 'Inspect and commit working-tree changes.',
+    icon: <FileDiff aria-hidden />,
+    hint: '⌃⇧G',
+    live: true,
+  },
+  {
+    target: 'terminal',
+    label: 'Terminal',
+    description: 'Run commands in the Workspace.',
+    icon: <SquareTerminal aria-hidden />,
+    live: false,
+  },
+  {
+    target: 'browser',
+    label: 'Browser',
+    description: 'Preview a local dev server.',
+    icon: <Globe aria-hidden />,
+    hint: '⌘T',
+    live: false,
+  },
+  {
+    target: 'files',
+    label: 'Files',
+    description: 'Browse and preview Workspace files.',
+    icon: <Files aria-hidden />,
+    hint: '⌘P',
+    live: true,
+  },
 ]
 
 /**
- * The launcher-card EMPTY STATE (panel open, zero Surfaces): full-width rounded launcher
- * rows on the panel background, top-aligned (leading icon + label, trailing shortcut hint).
- * Live cards open their Surface; the inert Terminal/Browser cards are disabled + tagged
- * "Soon" (the sidebar PlaceholderNav precedent). Opening one replaces the cards with the
- * tab strip; closing the last tab returns here.
+ * The launcher EMPTY STATE (panel open, zero Surfaces) — t3code's `RightPanelEmptyState`:
+ * a centered "Open a surface" heading over a 2-column grid of cards (leading icon, label +
+ * shortcut hint, a short description). Live cards open their Surface; the inert Terminal/
+ * Browser cards are disabled + tagged "Soon" (the sidebar PlaceholderNav precedent).
+ * Opening one replaces the grid with the tab strip; closing the last tab returns here.
  */
-function LauncherCards({ onOpen }: { onOpen: (kind: SingletonKind) => void }): JSX.Element {
+function LauncherGrid({ onOpen }: { onOpen: (kind: SingletonKind) => void }): JSX.Element {
   return (
-    <aside
-      aria-label="Side panel"
-      className="flex w-80 shrink-0 flex-col gap-2 self-stretch border-l border-border bg-panel p-3 text-text"
-    >
-      {CARDS.map((card) => (
-        <LauncherCard
-          key={card.label}
-          card={card}
-          onClick={card.live ? () => onOpen(card.target as SingletonKind) : undefined}
-        />
-      ))}
-    </aside>
+    <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
+      <div className="w-full max-w-xl">
+        <div className="mb-5 text-center">
+          <h3 className="text-sm font-medium text-text-strong">Open a surface</h3>
+          <p className="mt-1 text-xs text-muted">Choose what to show in the side panel.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {CARDS.map((card) => (
+            <LauncherCard
+              key={card.label}
+              card={card}
+              onClick={card.live ? () => onOpen(card.target as SingletonKind) : undefined}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -366,19 +517,22 @@ function LauncherCard({ card, onClick }: { card: CardDef; onClick?: () => void }
       aria-disabled={inert || undefined}
       title={inert ? 'Coming soon' : card.label}
       className={cn(
-        'flex w-full items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2.5 text-left text-[14px] text-text outline-none transition-colors',
-        '[&_svg]:size-[18px] [&_svg]:shrink-0 [&_svg]:text-muted',
+        'flex min-h-28 w-full flex-col items-start rounded-lg border border-border bg-surface p-4 text-left outline-none transition-colors',
+        '[&_svg]:size-5 [&_svg]:shrink-0 [&_svg]:text-muted',
         inert
-          ? 'cursor-default opacity-60'
+          ? 'cursor-default opacity-50'
           : 'hover:bg-accent/10 focus-visible:bg-accent/10 [&_svg]:hover:text-text-strong',
       )}
     >
-      {card.icon}
-      <span className="min-w-0 flex-1 truncate font-medium">{card.label}</span>
-      {card.hint && (
-        <kbd className="shrink-0 rounded-md px-1 text-[11px] font-medium tabular-nums text-faint">{card.hint}</kbd>
-      )}
-      {inert && <span className="shrink-0 text-[11px] font-medium text-faint">Soon</span>}
+      <span className="mb-3">{card.icon}</span>
+      <span className="flex w-full items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{card.label}</span>
+        {card.hint && (
+          <kbd className="shrink-0 rounded-md text-[11px] font-medium tabular-nums text-faint">{card.hint}</kbd>
+        )}
+        {inert && <span className="shrink-0 text-[11px] font-medium text-faint">Soon</span>}
+      </span>
+      <span className="mt-1 text-xs leading-relaxed text-muted">{card.description}</span>
     </button>
   )
 }

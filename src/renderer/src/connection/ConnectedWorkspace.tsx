@@ -82,10 +82,11 @@ export function ConnectedWorkspace({
   return (
     // h-full on the row + chat column completes the height chain from <main> down to
     // `.conv` (100%): the transcript scrolls internally and the Composer pins to the
-    // bottom. `items-start` stays so the SurfacePanel keeps floating at its content
-    // height — the explicit h-full on the chat column overrides start-alignment sizing.
-    <div className="flex h-full min-h-0 flex-1 items-start gap-4">
-      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3">
+    // bottom. The row is FULL-BLEED (t3code): the chat column carries the p-6 that
+    // <main> used to, and the panel sits flush against it — its border-l is the only
+    // separator — stretching the full height to the window edges.
+    <div className="flex h-full min-h-0 flex-1">
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3 p-6">
         {isLive ? (
           <Conversation
             key={activeThread.id}

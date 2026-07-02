@@ -526,6 +526,9 @@ export function App(): JSX.Element {
   // sidebar gear used to toggle. It swaps the conversation/cold/empty outlet WITHOUT
   // unmounting the connected Workspaces — they stay mounted-but-hidden so a background
   // turn keeps streaming, and closing Settings returns to exactly the same view.
+  // <main> is full-bleed now (the side panel reaches the window edges, t3code-style),
+  // so each NON-connected view re-adds the old p-6 breathing room via a wrapper here;
+  // the connected view spends it inside its chat column (ConnectedWorkspace) instead.
   const inSettings = nav.view === 'settings'
   const outlet = (
     <>
@@ -541,7 +544,8 @@ export function App(): JSX.Element {
         )
       })}
       {inSettings ? (
-        <SettingsView
+        <div className="p-6">
+          <SettingsView
           detect={detect}
           loading={loading}
           onRecheck={() => void runDetect()}
@@ -571,32 +575,36 @@ export function App(): JSX.Element {
             navDispatch({ type: 'close-settings' })
           }}
         />
+        </div>
       ) : selected.status === 'connected' ? null : ( // connected: rendered (visible) in the keep-mounted map above
-        selected.status !== 'idle' ? (
-          <TransientOutlet
-            connect={selected}
-            onContinueToThread={(agentId) => void continueToThread(selectedWs ?? '', agentId)}
-            onRetry={() => selectedWs && void connectWorkspace(selectedWs)}
-          />
-        ) : (
-          <ColdOutlet
-            recents={recents}
-            nav={nav}
-            onClose={() => navDispatch({ type: 'clear' })}
-            onContinue={(thread) => void continueColdThread(thread)}
-            empty={
-              <EmptyState
-                state={firstRunState(detect, recents)}
-                detect={detect}
-                loading={loading}
-                opening={opening}
-                workspaceName={selectedWorkspaceName}
-                onRecheck={() => void runDetect()}
-                onOpenProject={() => void openProject()}
-              />
-            }
-          />
-        )
+        // h-full so a cold Thread's `.conv` (height: 100%) keeps its internal scroll.
+        <div className="h-full p-6">
+          {selected.status !== 'idle' ? (
+            <TransientOutlet
+              connect={selected}
+              onContinueToThread={(agentId) => void continueToThread(selectedWs ?? '', agentId)}
+              onRetry={() => selectedWs && void connectWorkspace(selectedWs)}
+            />
+          ) : (
+            <ColdOutlet
+              recents={recents}
+              nav={nav}
+              onClose={() => navDispatch({ type: 'clear' })}
+              onContinue={(thread) => void continueColdThread(thread)}
+              empty={
+                <EmptyState
+                  state={firstRunState(detect, recents)}
+                  detect={detect}
+                  loading={loading}
+                  opening={opening}
+                  workspaceName={selectedWorkspaceName}
+                  onRecheck={() => void runDetect()}
+                  onOpenProject={() => void openProject()}
+                />
+              }
+            />
+          )}
+        </div>
       )}
     </>
   )

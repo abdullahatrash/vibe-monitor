@@ -189,7 +189,10 @@ export function Shell({
         </div>
       )}
 
-      <main className="min-w-0 flex-1 overflow-y-auto p-6">{outlet}</main>
+      {/* Full-bleed (t3code): the side panel must reach the window edges, so the
+          padding lives in each outlet view (the chat column / the p-6 wrappers in
+          App's outlet), not here. */}
+      <main className="min-w-0 flex-1 overflow-y-auto">{outlet}</main>
     </div>
   )
 }

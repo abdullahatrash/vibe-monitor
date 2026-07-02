@@ -485,6 +485,19 @@ async function runPromptTurn(
     return { ok: false, kind: 'error', error: err instanceof Error ? err.message : String(err) }
   }
 
+  // A prompt is Thread ACTIVITY: bump the persisted `lastActiveAt` so the sidebar's
+  // timestamp + order reflect the last prompt, not the first bind. Without this a
+  // continued Thread (successful resume) or any later prompt on an already-hosted
+  // session never re-wrote the store — the record kept its bind-time timestamp
+  // forever. Best-effort + fire-and-forget (ADR-0005): a persist failure logs and
+  // never gates the turn.
+  void deps.store.touchThread(args.threadId).catch((err) => {
+    console.error(
+      `[vibe-mistro:metadata] touchThread failed (${args.threadId}): ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    )
+  })
+
   // Tee the user's prompt (the conversation INPUT) to THIS Thread's log before
   // sending it, so it precedes the streamed events it triggers. We hold the
   // Thread id, so no bridge lookup — a draft's first prompt can't misroute to

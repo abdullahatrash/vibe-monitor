@@ -235,6 +235,23 @@ export class MetadataStore {
   }
 
   /**
+   * Bump a Thread's `lastActiveAt` to now. A PROMPT is activity, so `runPromptTurn`
+   * touches its Thread once per turn — `upsertThread` only runs on a BIND (draft
+   * mint / re-bind), so a successful resume (`session/load`) or any later prompt on
+   * an already-hosted session never wrote the store, and a continued Thread kept
+   * its old timestamp forever. An unknown id is a no-op with NO disk write. The
+   * in-memory array position is left alone — `snapshot()`/`groupThreadsByWorkspace`
+   * sort by `lastActiveAt`, so the bump re-heads the derived order automatically.
+   */
+  async touchThread(id: string): Promise<void> {
+    const existing = this.state.threads.find((t) => t.id === id)
+    if (!existing) return // unknown id — nothing to touch, no disk write
+    const updated: ThreadRecord = { ...existing, lastActiveAt: this.now() }
+    this.state.threads = this.state.threads.map((t) => (t.id === id ? updated : t))
+    await this.persist()
+  }
+
+  /**
    * Toggle a Thread's per-Thread flags (#132 pin / #133 archive) on its metadata
    * record, keyed by minted `id`. Patches ONLY the provided flag(s) — the other is
    * left untouched — and holds the record's list POSITION (a flag change is not

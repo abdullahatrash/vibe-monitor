@@ -93,6 +93,40 @@ describe('MetadataStore round-trip', () => {
     expect(ids).toEqual([t1.id, t2.id]) // t1 now most-recent
   })
 
+  it('touchThread bumps lastActiveAt (a prompt is activity) and re-heads the derived order', async () => {
+    let clock = 1000
+    const store = new MetadataStore({ filePath: join(dir, 'touch-thread.json'), now: () => clock })
+    await store.load()
+    const ws = await store.upsertWorkspace({ dir: '/proj/touch' })
+    clock = 1100
+    const t1 = await store.upsertThread({ workspaceId: ws.id, sessionId: 's1', title: 'old' })
+    clock = 1200
+    const t2 = await store.upsertThread({ workspaceId: ws.id, sessionId: 's2' })
+
+    // Prompting the OLDER thread again (a resume — no upsert runs) touches it.
+    clock = 1300
+    await store.touchThread(t1.id)
+
+    const t1After = store.snapshot().threads.find((t) => t.id === t1.id)
+    expect(t1After?.lastActiveAt).toBe(1300)
+    expect(t1After?.createdAt).toBe(1100) // creation time preserved
+    expect(t1After?.title).toBe('old') // everything else untouched
+    expect(t1After?.sessionId).toBe('s1')
+    // Derived order re-heads: t1 (1300) now ahead of t2 (1200).
+    expect(store.snapshot().threads.map((t) => t.id)).toEqual([t1.id, t2.id])
+    // Survives a reload (persisted, not just in-memory).
+    const reopened = new MetadataStore({ filePath: join(dir, 'touch-thread.json') })
+    await reopened.load()
+    expect(reopened.snapshot().threads.find((t) => t.id === t1.id)?.lastActiveAt).toBe(1300)
+  })
+
+  it('touchThread is a no-op for an unknown id (no record, no disk write)', async () => {
+    const store = storeAt('touch-unknown.json')
+    await store.load()
+    await expect(store.touchThread('nope')).resolves.toBeUndefined()
+    expect(store.snapshot().threads).toEqual([])
+  })
+
   it('setThreadTitle renames in place: sets title, holds position, does NOT bump lastActiveAt', async () => {
     let clock = 1000
     const store = new MetadataStore({ filePath: join(dir, 'set-title.json'), now: () => clock })

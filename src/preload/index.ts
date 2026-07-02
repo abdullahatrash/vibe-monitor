@@ -51,6 +51,20 @@ import {
   type VibeDetectResult,
 } from '../shared/ipc'
 
+/**
+ * One streaming-subscription bridge: wrap `ipcRenderer.on(channel)` as an
+ * add-listener that returns its own unsubscribe (the `on`+unsubscribe IPC shape).
+ * Every `on*` below is this helper at a specific channel + payload type — identical
+ * plumbing, so it lives once here.
+ */
+function subscribe<T>(channel: string): (listener: (event: T) => void) => () => void {
+  return (listener) => {
+    const handler = (_e: unknown, payload: T): void => listener(payload)
+    ipcRenderer.on(channel, handler)
+    return () => ipcRenderer.removeListener(channel, handler)
+  }
+}
+
 const api = {
   detectVibe: (): Promise<VibeDetectResult> => ipcRenderer.invoke(IPC.detectVibe),
   openWorkspaceDialog: (): Promise<string | null> => ipcRenderer.invoke(IPC.openWorkspaceDialog),
@@ -103,36 +117,12 @@ const api = {
   revealPath: (args: RevealPathArgs): Promise<void> => ipcRenderer.invoke(IPC.revealPath, args),
   filesList: (args: FilesListArgs): Promise<FilesListResult> => ipcRenderer.invoke(IPC.filesList, args),
   filesRead: (args: FilesReadArgs): Promise<FilesReadResult> => ipcRenderer.invoke(IPC.filesRead, args),
-  onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {
-    const handler = (_e: unknown, payload: AcpEvent): void => listener(payload)
-    ipcRenderer.on(IPC.acpEvent, handler)
-    return () => ipcRenderer.removeListener(IPC.acpEvent, handler)
-  },
-  onThreadBound: (listener: (event: ThreadBoundEvent) => void): (() => void) => {
-    const handler = (_e: unknown, payload: ThreadBoundEvent): void => listener(payload)
-    ipcRenderer.on(IPC.threadBound, handler)
-    return () => ipcRenderer.removeListener(IPC.threadBound, handler)
-  },
-  onThreadStatus: (listener: (event: ThreadStatusEvent) => void): (() => void) => {
-    const handler = (_e: unknown, payload: ThreadStatusEvent): void => listener(payload)
-    ipcRenderer.on(IPC.threadStatus, handler)
-    return () => ipcRenderer.removeListener(IPC.threadStatus, handler)
-  },
-  onThreadTitle: (listener: (event: ThreadTitleEvent) => void): (() => void) => {
-    const handler = (_e: unknown, payload: ThreadTitleEvent): void => listener(payload)
-    ipcRenderer.on(IPC.threadTitle, handler)
-    return () => ipcRenderer.removeListener(IPC.threadTitle, handler)
-  },
-  onAgentEvicted: (listener: (event: AgentEvictedEvent) => void): (() => void) => {
-    const handler = (_e: unknown, payload: AgentEvictedEvent): void => listener(payload)
-    ipcRenderer.on(IPC.agentEvicted, handler)
-    return () => ipcRenderer.removeListener(IPC.agentEvicted, handler)
-  },
-  onGitStatus: (listener: (event: GitStatusEvent) => void): (() => void) => {
-    const handler = (_e: unknown, payload: GitStatusEvent): void => listener(payload)
-    ipcRenderer.on(IPC.gitStatus, handler)
-    return () => ipcRenderer.removeListener(IPC.gitStatus, handler)
-  },
+  onAcpEvent: subscribe<AcpEvent>(IPC.acpEvent),
+  onThreadBound: subscribe<ThreadBoundEvent>(IPC.threadBound),
+  onThreadStatus: subscribe<ThreadStatusEvent>(IPC.threadStatus),
+  onThreadTitle: subscribe<ThreadTitleEvent>(IPC.threadTitle),
+  onAgentEvicted: subscribe<AgentEvictedEvent>(IPC.agentEvicted),
+  onGitStatus: subscribe<GitStatusEvent>(IPC.gitStatus),
 }
 
 export type VibeMistroApi = typeof api

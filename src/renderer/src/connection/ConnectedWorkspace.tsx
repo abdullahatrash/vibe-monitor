@@ -8,7 +8,7 @@ import type {
 } from '../../../shared/ipc'
 import { ColdThread } from '../conversation/ColdThread'
 import { Conversation } from '../conversation/Conversation'
-import { ChangesPanel } from '../git/ChangesPanel'
+import { SurfacePanel } from '../side-panel/SurfacePanel'
 
 /**
  * A connected Workspace's conversation OUTLET (ADR-0006, TB3 #48). It no longer
@@ -103,9 +103,15 @@ export function ConnectedWorkspace({
           <ColdThread key={activeThread.id} thread={activeThread} onClose={onCloseCold} onContinue={onContinue} />
         )}
       </div>
-      {/* Streamed git status (#84) — observational only; renders nothing for a non-repo
-          Workspace and subscribes only while this is the active Workspace. */}
-      <ChangesPanel workspaceDir={connection.workspaceDir} isActive={isActive} busy={busy} />
+      {/* The right-panel Surface stack (#187, ADR-0013): launcher cards collapsed, one
+          Surface expanded at a time. Review re-homes the streamed git panel (#84,
+          active-Workspace-only); Files is the slice-2 placeholder. */}
+      <SurfacePanel
+        workspaceId={connection.workspaceId}
+        workspaceDir={connection.workspaceDir}
+        isActive={isActive}
+        busy={busy}
+      />
     </div>
   )
 }

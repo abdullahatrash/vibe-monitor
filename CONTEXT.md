@@ -34,6 +34,21 @@ agent blocks until the user picks a Permission option (allow once / reject once 
 pending queue and answered by request id.
 _Avoid_: approval, confirmation, prompt (reserve "prompt" for the user's message to the agent).
 
+## Side panel
+
+**Surface**:
+One of the expandable areas stacked in the right-hand side panel — Review, Terminal, Browser, Files.
+Collapsed, each Surface shows as a launcher card; at most one is expanded at a time. Review hosts the
+git Changes panel; Files hosts the Files browser; Terminal and Browser are reserved (not yet built).
+_Avoid_: tab, view, pane, dock (reserve "dock" for the future embedded terminal's chrome).
+
+**Files browser**:
+The Files Surface's content — a searchable tree of the Workspace's files, plus read-only previews of
+opened files. With no file open the tree fills the Surface; opening files shows the preview pane beside
+the tree, where each opened file is a tab (many open, one visible) topped by a read-only breadcrumb of
+its path. Browsing and previewing never change files and never involve the agent.
+_Avoid_: file tree (the widget, not the feature), explorer, finder.
+
 ## Agent controls
 
 The three per-Thread knobs the agent runs under, surfaced from `session/new` and changed mid-Thread.

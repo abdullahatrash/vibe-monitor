@@ -3,16 +3,17 @@ import {
   Boxes,
   Check,
   ChevronDown,
-  ChevronRight,
   GitBranch,
   GitCommitHorizontal,
   GitPullRequest,
   Monitor,
+  PanelRightClose,
   RefreshCw,
 } from 'lucide-react'
 import type { GhPr, GhPrResult, GitBranch as GitBranchInfo, GitStatus } from '../../../shared/ipc'
 import { cn } from '../lib/utils'
 import { Badge, Button, IconButton, Input, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Textarea } from '../ui'
+import { getCommitDraft, setCommitDraft } from './commit-draft-store'
 import { buildChangesView, reconcileUnchecked, type GitFileView } from './status-view'
 import { DiffWorkerProvider } from './DiffWorkerProvider'
 import { DiffView } from './DiffView'
@@ -43,11 +44,17 @@ import { DiffView } from './DiffView'
  * rounded "Environment / Review" aesthetic — Button / Input / Textarea / Badge and the
  * soft `--border-muted` dividers. The git BEHAVIOUR is untouched (ADR-0008): only the
  * chrome changed.
+ *
+ * Re-homed as the Review Surface (#187, ADR-0013): this is now rendered by `SurfacePanel`
+ * only when the Review Surface is expanded. Its former standalone collapse toggle is
+ * FOLDED into the Surface model — the header collapse affordance calls `onCollapse`, which
+ * returns to the launcher-card stack. The git behaviour above is unchanged.
  */
 export function ChangesPanel({
   workspaceDir,
   isActive,
   busy,
+  onCollapse,
 }: {
   workspaceDir: string
   isActive: boolean
@@ -59,15 +66,21 @@ export function ChangesPanel({
    * the panel reflects whatever the agent committed before the user can commit again.
    */
   busy: boolean
-}): JSX.Element | null {
+  /** Collapse the Review Surface back to the card stack (#187) — the header affordance. */
+  onCollapse: () => void
+}): JSX.Element {
   const [status, setStatus] = useState<GitStatus | null>(null)
-  const [collapsed, setCollapsed] = useState(false)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   // Commit-time file selection (#86), tracked as the paths the user DESELECTED — default
   // empty = all selected, so a new file is selected by default. `message` is the commit
   // message; `committing` blocks a double-submit; `commitError` surfaces git's reason.
-  const [unchecked, setUnchecked] = useState<Set<string>>(() => new Set())
-  const [message, setMessage] = useState('')
+  // Both seed from the module-level draft store: Surface collapse now UNMOUNTS this panel
+  // (#187) where the old collapse merely hid it, so without the store a half-typed commit
+  // message would be one accidental ⌃⇧G away from vanishing.
+  const [unchecked, setUnchecked] = useState<Set<string>>(
+    () => new Set(getCommitDraft(workspaceDir)?.unchecked ?? []),
+  )
+  const [message, setMessage] = useState(() => getCommitDraft(workspaceDir)?.message ?? '')
   const [committing, setCommitting] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
   // Bumped by the header refresh button so the PR section re-fetches `ghCurrentPr` on a
@@ -95,6 +108,12 @@ export function ChangesPanel({
     setUnchecked((prev) => reconcileUnchecked(prev, paths))
   }, [status])
 
+  // Mirror the live draft into the store on every change (#187): a successful commit
+  // clears `message`, which empties (deletes) the entry via setCommitDraft's residue rule.
+  useEffect(() => {
+    setCommitDraft(workspaceDir, { message, unchecked })
+  }, [workspaceDir, message, unchecked])
+
   // Manual refresh: a subscribe/unsubscribe pair re-emits a fresh snapshot without
   // changing the net ref-count (the panel keeps its own hold across this).
   function refresh(): void {
@@ -105,8 +124,20 @@ export function ChangesPanel({
     setPrRefreshKey((k) => k + 1)
   }
 
-  // No panel before the first snapshot, or for a non-repo Workspace (degrade quietly).
-  if (!status || !status.isRepo) return null
+  // Before the first snapshot, or for a non-repo Workspace: the git surface degrades to a
+  // quiet empty state (#84 "a Workspace need not be a git repo"). As a Surface it still
+  // renders its header so the collapse affordance is always reachable (#187) — a Surface
+  // must never strand the user with no way back to the card stack.
+  if (!status || !status.isRepo) {
+    return (
+      <aside className="flex w-80 shrink-0 flex-col self-stretch border-l border-border bg-panel text-text">
+        <ReviewHeader onCollapse={onCollapse} onRefresh={refresh} />
+        <p className="px-3 py-3 text-[13px] text-muted">
+          {!status ? 'Loading changes…' : 'Not a Git repository.'}
+        </p>
+      </aside>
+    )
+  }
 
   const view = buildChangesView(status)
 
@@ -165,125 +196,131 @@ export function ChangesPanel({
 
   return (
     <aside className="w-80 shrink-0 border-l border-border bg-panel text-text">
-      <div className="flex items-center gap-2 border-b border-border-muted px-3 py-2.5">
-        <button
-          type="button"
-          onClick={() => setCollapsed((c) => !c)}
-          title={collapsed ? 'Expand' : 'Collapse'}
-          aria-expanded={!collapsed}
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left text-sm font-semibold text-text-strong"
-        >
-          {collapsed ? (
-            <ChevronRight size={15} aria-hidden className="shrink-0 text-muted" />
-          ) : (
-            <ChevronDown size={15} aria-hidden className="shrink-0 text-muted" />
-          )}
-          <span>Changes</span>
-          {view.fileCount > 0 && (
-            <Badge variant="outline" className="ml-0.5 rounded-full px-1.5 py-0 text-[11px] tabular-nums text-muted">
-              {view.fileCount}
-            </Badge>
-          )}
-        </button>
-        <IconButton
-          size="icon-sm"
-          onClick={refresh}
-          title="Refresh"
-          aria-label="Refresh git status"
-          className="text-muted"
-        >
-          <RefreshCw className="size-3.5" aria-hidden />
-        </IconButton>
+      <ReviewHeader count={view.fileCount} onCollapse={onCollapse} onRefresh={refresh} />
+
+      {/* Environment (#119) — a STATIC placeholder gesturing at the mockup's fuller
+          "Environment / Local / Sources" side-panel (styled chrome, non-functional,
+          like the sidebar's Search/Scheduled/Plugins "Soon" rows). Not wired to
+          anything; the live git surface begins at the branch header below. */}
+      <div className="border-b border-border-muted px-3 py-2.5">
+        <p className="mb-1 px-1 text-[11px] font-medium text-faint">Environment</p>
+        <div className="flex flex-col gap-0.5">
+          <EnvPlaceholder icon={<Monitor className="size-4" aria-hidden />}>Local</EnvPlaceholder>
+          <EnvPlaceholder icon={<Boxes className="size-4" aria-hidden />}>Sources</EnvPlaceholder>
+        </div>
       </div>
 
-      {!collapsed && (
+      <BranchMenu
+        workspaceDir={workspaceDir}
+        branch={view.branch}
+        ahead={view.ahead}
+        behind={view.behind}
+        busy={busy}
+      />
+
+      <PrSection
+        workspaceDir={workspaceDir}
+        branch={view.branch}
+        detached={view.detached}
+        hasUpstream={status.upstream !== null}
+        busy={busy}
+        refreshKey={prRefreshKey}
+      />
+
+      {view.files.length === 0 ? (
+        <p className="px-3 py-3 text-[13px] text-muted">No changes — working tree clean.</p>
+      ) : (
         <>
-          {/* Environment (#119) — a STATIC placeholder gesturing at the mockup's fuller
-              "Environment / Local / Sources" side-panel (styled chrome, non-functional,
-              like the sidebar's Search/Scheduled/Plugins "Soon" rows). Not wired to
-              anything; the live git surface begins at the branch header below. */}
-          <div className="border-b border-border-muted px-3 py-2.5">
-            <p className="mb-1 px-1 text-[11px] font-medium text-faint">Environment</p>
-            <div className="flex flex-col gap-0.5">
-              <EnvPlaceholder icon={<Monitor className="size-4" aria-hidden />}>Local</EnvPlaceholder>
-              <EnvPlaceholder icon={<Boxes className="size-4" aria-hidden />}>Sources</EnvPlaceholder>
-            </div>
+          <ul className="flex flex-col gap-0.5 py-1.5">
+            {view.files.map((file) => (
+              <FileRow
+                key={file.path}
+                file={file}
+                checked={!unchecked.has(file.path)}
+                onToggle={() =>
+                  setUnchecked((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(file.path)) next.delete(file.path)
+                    else next.add(file.path)
+                    return next
+                  })
+                }
+                onSelect={() => setSelectedPath(file.path)}
+              />
+            ))}
+          </ul>
+
+          {/* Commit area (#86): message + "Commit N". Disabled on an empty message,
+              no selection, or `busy` (the v1 concurrency guard — no concurrent
+              user+agent commit). git's reason surfaces inline + recoverable. */}
+          <div className="flex flex-col gap-2 border-t border-border-muted px-3 py-2.5">
+            <Textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Commit message"
+              rows={2}
+              className="min-h-16 resize-y text-[13px]"
+              // Ctrl/Cmd+Enter commits, matching the prompt composer's submit chord.
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  e.preventDefault()
+                  void commit()
+                }
+              }}
+            />
+            {commitError && (
+              <p className="text-[11px] text-bad" role="alert">
+                {commitError}
+              </p>
+            )}
+            {busy && <p className="text-[11px] text-muted">Agent is working…</p>}
+            <Button type="button" size="sm" className="w-full" onClick={() => void commit()} disabled={!canCommit}>
+              <GitCommitHorizontal className="size-4" aria-hidden />
+              {committing ? 'Committing…' : `Commit ${selectedPaths.length}`}
+            </Button>
           </div>
-
-          <BranchMenu
-            workspaceDir={workspaceDir}
-            branch={view.branch}
-            ahead={view.ahead}
-            behind={view.behind}
-            busy={busy}
-          />
-
-          <PrSection
-            workspaceDir={workspaceDir}
-            branch={view.branch}
-            detached={view.detached}
-            hasUpstream={status.upstream !== null}
-            busy={busy}
-            refreshKey={prRefreshKey}
-          />
-
-          {view.files.length === 0 ? (
-            <p className="px-3 py-3 text-[13px] text-muted">No changes — working tree clean.</p>
-          ) : (
-            <>
-              <ul className="flex flex-col gap-0.5 py-1.5">
-                {view.files.map((file) => (
-                  <FileRow
-                    key={file.path}
-                    file={file}
-                    checked={!unchecked.has(file.path)}
-                    onToggle={() =>
-                      setUnchecked((prev) => {
-                        const next = new Set(prev)
-                        if (next.has(file.path)) next.delete(file.path)
-                        else next.add(file.path)
-                        return next
-                      })
-                    }
-                    onSelect={() => setSelectedPath(file.path)}
-                  />
-                ))}
-              </ul>
-
-              {/* Commit area (#86): message + "Commit N". Disabled on an empty message,
-                  no selection, or `busy` (the v1 concurrency guard — no concurrent
-                  user+agent commit). git's reason surfaces inline + recoverable. */}
-              <div className="flex flex-col gap-2 border-t border-border-muted px-3 py-2.5">
-                <Textarea
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  placeholder="Commit message"
-                  rows={2}
-                  className="min-h-16 resize-y text-[13px]"
-                  // Ctrl/Cmd+Enter commits, matching the prompt composer's submit chord.
-                  onKeyDown={(e) => {
-                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                      e.preventDefault()
-                      void commit()
-                    }
-                  }}
-                />
-                {commitError && (
-                  <p className="text-[11px] text-bad" role="alert">
-                    {commitError}
-                  </p>
-                )}
-                {busy && <p className="text-[11px] text-muted">Agent is working…</p>}
-                <Button type="button" size="sm" className="w-full" onClick={() => void commit()} disabled={!canCommit}>
-                  <GitCommitHorizontal className="size-4" aria-hidden />
-                  {committing ? 'Committing…' : `Commit ${selectedPaths.length}`}
-                </Button>
-              </div>
-            </>
-          )}
         </>
       )}
     </aside>
+  )
+}
+
+/**
+ * The Review Surface header (#187): the "Changes" title + optional changed-file count, a
+ * collapse-to-stack affordance (folds the panel's former standalone collapse into the
+ * Surface model, ADR-0013), and the manual git-status Refresh. Shared by the live list
+ * and the non-repo/pre-snapshot empty state so the collapse control is always present.
+ */
+function ReviewHeader({
+  count,
+  onCollapse,
+  onRefresh,
+}: {
+  count?: number
+  onCollapse: () => void
+  onRefresh: () => void
+}): JSX.Element {
+  return (
+    <div className="flex items-center gap-2 border-b border-border-muted px-3 py-2.5">
+      <button
+        type="button"
+        onClick={onCollapse}
+        title="Collapse"
+        aria-label="Collapse Review panel"
+        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left text-sm font-semibold text-text-strong"
+      >
+        <PanelRightClose size={15} aria-hidden className="shrink-0 text-muted" />
+        <span>Changes</span>
+        {count !== undefined && count > 0 && (
+          <Badge variant="outline" className="ml-0.5 rounded-full px-1.5 py-0 text-[11px] tabular-nums text-muted">
+            {count}
+          </Badge>
+        )}
+      </button>
+      <IconButton size="icon-sm" onClick={onRefresh} title="Refresh" aria-label="Refresh git status" className="text-muted">
+        <RefreshCw className="size-3.5" aria-hidden />
+      </IconButton>
+    </div>
   )
 }
 

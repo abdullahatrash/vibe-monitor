@@ -80,8 +80,12 @@ export function ConnectedWorkspace({
   onAuthExpired: (authMethods: AuthMethod[]) => void
 }): JSX.Element {
   return (
-    <div className="flex min-h-0 flex-1 items-start gap-4">
-      <div className="flex min-w-0 flex-1 flex-col gap-3">
+    // h-full on the row + chat column completes the height chain from <main> down to
+    // `.conv` (100%): the transcript scrolls internally and the Composer pins to the
+    // bottom. `items-start` stays so the SurfacePanel keeps floating at its content
+    // height — the explicit h-full on the chat column overrides start-alignment sizing.
+    <div className="flex h-full min-h-0 flex-1 items-start gap-4">
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3">
         {isLive ? (
           <Conversation
             key={activeThread.id}

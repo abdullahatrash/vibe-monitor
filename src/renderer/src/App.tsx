@@ -533,7 +533,9 @@ export function App(): JSX.Element {
         const conn = connections[wid]
         if (conn.status !== 'connected') return null
         return (
-          <div key={wid} hidden={inSettings || wid !== selectedWs}>
+          // h-full: complete the height chain from <main> down to `.conv` (100%)
+          // so the transcript scrolls internally and the Composer stays pinned.
+          <div key={wid} className="h-full" hidden={inSettings || wid !== selectedWs}>
             {renderConnected(conn.thread, !inSettings && wid === selectedWs, wsFlags[wid]?.streaming ?? false)}
           </div>
         )

@@ -25,7 +25,10 @@ export function MessageScroller({
     resize: 'smooth',
   })
   return (
-    <div className={cn('relative', className)}>
+    // A flex column itself, so `.messages` (flex: 1, min-height: 0) fills it and
+    // scrolls internally; `flex-1 min-h-0` makes THIS wrapper take the height the
+    // `.conv` column leaves over, keeping the Composer sibling pinned below.
+    <div className={cn('relative flex min-h-0 flex-1 flex-col', className)}>
       <div ref={scrollRef} className="messages">
         <div ref={contentRef} className="flex flex-col gap-3">
           {children}

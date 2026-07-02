@@ -119,7 +119,12 @@ export function FilesSurface({
   return (
     <aside
       aria-label="Files"
-      className="flex w-80 shrink-0 flex-col self-stretch border-l border-border bg-panel text-text"
+      // `flex-1 min-h-0` (not `self-stretch`): the parent Surface slot is a flex COLUMN, where
+      // `align-self:stretch` only stretches the WIDTH — it gives no height. `@pierre/trees` is
+      // virtualized and measures its scroll container, so a content-height (≈0) container renders
+      // ZERO rows (the header/search still show). `flex-1` fills the column's height; `min-h-0`
+      // lets it shrink below content so the inner tree can scroll. (Matches t3code's FileBrowserPanel.)
+      className="flex min-h-0 w-80 flex-1 flex-col border-l border-border bg-panel text-text"
     >
       <div className="flex items-center gap-2 border-b border-border-muted px-3 py-2.5">
         <button

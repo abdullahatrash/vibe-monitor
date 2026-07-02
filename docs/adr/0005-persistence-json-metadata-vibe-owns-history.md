@@ -74,3 +74,21 @@ the *agent* can resume context; if it can't, we re-bind fresh and the user still
 - The persisted Thread record holds the ACP `sessionId` as the resume cursor; a re-bind updates it.
 - Migrating to SQLite later imports small JSON metadata (easy) and per-Thread JSONL (bounded) — a
   deliberately small migration.
+
+## Amendment (2026-07-02, #203): reopen is resume-on-first-prompt, no Continue step
+
+The explicit **Continue** affordance (read-only `ColdThread` replay + a button to promote it live) was
+removed from the primary flow. Clicking a Thread in the sidebar now opens it **ready to resume**:
+
+- **Connected Workspace**: the Thread is hosted live immediately — the conversation renders from JSONL
+  (process-free for the Thread, the Workspace agent is already warm), the composer is enabled, and the
+  Thread's FIRST prompt drives the `session/load` resume via `ensureBoundSession` (re-bind + "context
+  reset" notice on failure). Reading old chats still touches no session.
+- **No connection yet** (cold app start / evicted agent): the click auto-continues — the same
+  `startThread({continueThreadId})` the button fired. This trades the "browsing never spawns" purity
+  for one-click reopen; clicking a Workspace row already spawned its agent, so a Thread click matching
+  that is consistent. The launch list itself is still served entirely from our stores.
+
+`ColdThread`/`ColdOutlet` remain as edge-state fallbacks only. The "reopen renders from JSONL" bullet
+above still holds for the connected case — what changed is that no user-visible Continue step gates the
+live view.

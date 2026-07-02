@@ -3,20 +3,24 @@
 > You are picking up an in-flight project. Read this top to bottom once, then keep it open.
 > It tells you **what this is**, **how we work**, **what exists**, **what's next**, and **where the
 > authoritative information lives** (in-repo docs + the local reference repos in §4). Last updated
-> 2026-07-02, branch `worktree-quality-review-fixes` @ `71fec50` (awaiting PR/merge), **902 tests**.
-> **Latest session: a whole-app quality refactor** (behavior-preserving, 5 slices + 1 fix):
-> canonical `git/run.ts` runner + shared `files/confine.ts` read-confinement; `registerIpc(deps)` DI
-> with `git/`+`files/` feature registrars, `TranscriptBridge` + `AgentActivity` extracted+tested, the
-> unreachable null-`MetadataStore` forks deleted; `App.tsx` 1423→748 (auth/settings slices,
-> `use-workspace-actions` + `use-thread-controls` hooks); `Conversation.tsx` 1432→374 (one
-> `CompletionSource` autocomplete machine for `/`+`@`, `Composer.tsx`, `items/` row renderers);
-> `Shell.tsx` 987→291 (`shell/workspace-nav/`), `ChangesPanel.tsx` 806→335, `src/shared/ipc/` domain
-> split behind a barrel; plus `touchThread` so a prompt bumps `lastActiveAt` (stale-timestamp fix).
-> Deferred follow-ups: rename-origins on `GitFile` (kill `commit.ts`'s second status read), unify the
-> renderer's two turn-in-flight sources, live timestamp push. Prior state: 🎉 the design-system epic
-> (PRD #109) is COMPLETE (all slices #110–#119 + sidebar cluster) and the files-browser epic shipped
-> #187–#190. **There is NO active epic — the next one is the user's call** (see §6). Values live in
-> ADR-0010..0012 + `docs/design-tokens.md` + `docs/design-system-components.md`.
+> 2026-07-02, branch `main` @ `4d367b9`, **916 tests**.
+> **Latest session: UX polish sprint — PRs #201–#204, all squash-merged, live-verified by the user.**
+> #201 composer pinned to the bottom (h-full/min-h-0 chain from `<main>` down; `.messages` owns the
+> scroll, dropping the scaffold-era 360px cap). #202 side panel matched to t3code's shell: full-height
+> flush `border-l` column to the window edges (`<main>` went full-bleed; padding moved into the views),
+> drag-resizable width (`side-panel/panel-width-store`: 360 / default 540 / max min(1400, 70vw),
+> persisted per-window), centered "Open a surface" launcher grid, tab-strip "+" add-surface menu +
+> middle-click close. #203 composer @container adaptivity (chips shrink→truncate→icon-only <480px;
+> send 36→32px <560px; `shadow-xs`) AND **old chats open ready to resume**: a sidebar Thread click
+> hosts it live (JSONL history instantly, FIRST prompt drives `session/load`); an unconnected Workspace
+> auto-continues; `ColdThread`'s Continue/history view is an edge-state fallback — **ADR-0005 amended**.
+> #204 composer clears on send (restore-on-failure), not at turn end.
+> Deferred follow-ups: panel maximize + tab scroll-into-view, live Terminal/Browser surfaces, read-first
+> cold start (show replay while auto-continue connects), thread search over JSONL; from the prior
+> quality-refactor session: rename-origins on `GitFile`, unify the renderer's two turn-in-flight
+> sources, live timestamp push. Prior state: 🎉 design-system epic (PRD #109) COMPLETE; files-browser
+> epic shipped #187–#190. **There is NO active epic — the next one is the user's call** (see §6).
+> Values live in ADR-0010..0012 + `docs/design-tokens.md` + `docs/design-system-components.md`.
 
 ---
 

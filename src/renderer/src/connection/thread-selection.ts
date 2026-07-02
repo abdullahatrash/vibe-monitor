@@ -9,11 +9,12 @@ export type ThreadView = 'live' | 'cold'
  * CURRENT agent this session — the auto-opened Thread plus any drafts created
  * since connecting.
  *
- * A member routes `live` (it has, or on its first prompt will mint, a session on
- * the running agent — see `ensureBoundSession`). A non-member routes `cold`: it
- * was bound in a prior launch, so its ACP session lives on a now-dead process and
- * it replays read-only from JSONL until TB4 (#33) adds `session/load`. Membership
- * is the source of truth — a `sessionId` from a prior launch does NOT make it live.
+ * A member routes `live` (it has, or on its first prompt will mint/resume, a
+ * session on the running agent — see `ensureBoundSession`). Since #203 every
+ * sidebar click on a connected Workspace hosts the Thread live (`open`), so `cold`
+ * is an EDGE-STATE fallback (e.g. an active id pointing at a Thread nothing
+ * opened), not a routine view. Membership is the source of truth — a `sessionId`
+ * from a prior launch does NOT make it live.
  */
 export function routeThreadSelection(
   thread: ThreadMeta,

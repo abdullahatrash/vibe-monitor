@@ -2,11 +2,13 @@ import { BrowserWindow, ipcMain } from 'electron'
 import { spawn } from 'node-pty'
 import {
   IPC,
+  type TerminalClearArgs,
   type TerminalCloseArgs,
   type TerminalEvent,
   type TerminalOpenArgs,
   type TerminalOpenResult,
   type TerminalResizeArgs,
+  type TerminalRestartArgs,
   type TerminalWriteArgs,
 } from '../../shared/ipc'
 import type { AgentPool } from '../agent-pool'
@@ -74,5 +76,18 @@ export function registerTerminalIpc(deps: { pool: AgentPool; manager: TerminalMa
 
   ipcMain.handle(IPC.terminalClose, (_event, args: TerminalCloseArgs): void => {
     deps.manager.close(args.workspaceId)
+  })
+
+  ipcMain.handle(IPC.terminalClear, (_event, args: TerminalClearArgs): void => {
+    // Reset the retained scrollback so a later reattach starts blank — the shell
+    // keeps running; the renderer clears its own xterm view.
+    deps.manager.clear(args.workspaceId)
+  })
+
+  ipcMain.handle(IPC.terminalRestart, (_event, args: TerminalRestartArgs): TerminalOpenResult => {
+    // Kill + respawn the session's shell in its OWN cwd (stored at open) — no agent
+    // needed, so restart works even after the warm agent was evicted. Replies with
+    // the fresh session handle (snapshot empty) or a spawn error for the overlay.
+    return deps.manager.restart(args.workspaceId, args.cols, args.rows)
   })
 }

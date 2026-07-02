@@ -8,6 +8,11 @@ import {
   type TerminalEvent,
 } from '../../shared/ipc'
 
+/** The reply of `openOrAttach` / `restart`: a live session's handle + reattach snapshot, or a spawn failure. */
+export type TerminalSpawnResult =
+  | { ok: true; terminalId: string; snapshot: string; exited: boolean }
+  | { ok: false; error: string }
+
 /**
  * The Workspace terminal sessions we host in MAIN (ADR-0014; t3code's server-side
  * `TerminalManager` mapped onto our no-server architecture). One PTY per Workspace
@@ -95,6 +100,9 @@ const clamp = (value: number, min: number, max: number): number =>
 interface Session {
   terminalId: string
   pty: PtyLike
+  /** The shell's cwd, retained so `restart` can respawn WITHOUT the agent (which
+   *  may have been evicted since open — the session outlives it, ADR-0014). */
+  cwd: string
   /** Retained scrollback for the reattach replay, capped at {@link MAX_SCROLLBACK_CHARS}. */
   scrollback: string
   exited: boolean
@@ -131,21 +139,30 @@ export class TerminalManager {
   openOrAttach(
     workspaceId: string,
     options: { cwd: string; cols: number; rows: number },
-  ): { ok: true; terminalId: string; snapshot: string; exited: boolean } | { ok: false; error: string } {
+  ): TerminalSpawnResult {
     const existing = this.sessions.get(workspaceId)
     if (existing && !existing.exited) {
       return { ok: true, terminalId: existing.terminalId, snapshot: existing.scrollback, exited: false }
     }
     if (existing) this.drop(workspaceId) // exited residue — respawn below
+    return this.spawnInto(workspaceId, options.cwd, options.cols, options.rows)
+  }
 
-    const cols = clamp(options.cols, MIN_TERMINAL_COLS, MAX_TERMINAL_COLS)
-    const rows = clamp(options.rows, MIN_TERMINAL_ROWS, MAX_TERMINAL_ROWS)
+  /**
+   * Spawn a fresh shell and register it as the Workspace's session (replacing any
+   * prior record for the key). Walks the shell fallback chain; never throws — a
+   * failure resolves `{ok:false}` and leaves NO session behind. Shared by
+   * `openOrAttach` (fresh/exited) and `restart`.
+   */
+  private spawnInto(workspaceId: string, cwd: string, cols: number, rows: number): TerminalSpawnResult {
+    const c = clamp(cols, MIN_TERMINAL_COLS, MAX_TERMINAL_COLS)
+    const r = clamp(rows, MIN_TERMINAL_ROWS, MAX_TERMINAL_ROWS)
     const env = terminalEnv(this.deps.env)
     let pty: PtyLike | null = null
     let lastError: unknown = null
     for (const shell of shellCandidates(this.deps.env)) {
       try {
-        pty = this.deps.spawnPty({ file: shell, args: [], cwd: options.cwd, env, cols, rows })
+        pty = this.deps.spawnPty({ file: shell, args: [], cwd, env, cols: c, rows: r })
         break
       } catch (err) {
         lastError = err // missing/broken shell — walk the fallback chain
@@ -160,14 +177,16 @@ export class TerminalManager {
     const session: Session = {
       terminalId: DEFAULT_TERMINAL_ID,
       pty,
+      cwd,
       scrollback: '',
       exited: false,
       killTimer: null,
     }
     this.sessions.set(workspaceId, session)
-    // Both callbacks guard on the session still being the CURRENT record for the
-    // key: after a `close` (record dropped) a dying shell's final output — or its
-    // exit — must not bleed into a freshly reopened session under the same id.
+    // Both callbacks guard on this session still being the CURRENT record for the
+    // key — so after a `close` (record dropped) OR a `restart` (record REPLACED by
+    // a fresh session object), the previous shell's late output/exit can't bleed
+    // into the reopened/restarted session under the same id.
     pty.onData((data) => {
       if (this.sessions.get(workspaceId) !== session) return
       session.scrollback = capScrollback(session.scrollback + data)
@@ -213,6 +232,48 @@ export class TerminalManager {
     const session = this.sessions.get(workspaceId)
     if (!session) return
     this.sessions.delete(workspaceId)
+    this.killPty(session)
+  }
+
+  /**
+   * Reset a session's retained scrollback (the Clear affordance) — the shell keeps
+   * running; only the buffer used for the reattach replay is wiped, so a later
+   * reattach starts blank instead of replaying pre-clear output. The renderer
+   * clears its own xterm view; no session state beyond the buffer changes.
+   */
+  clear(workspaceId: string): void {
+    const session = this.sessions.get(workspaceId)
+    if (!session) return
+    session.scrollback = ''
+  }
+
+  /**
+   * Kill the session's shell and spawn a FRESH one in the same cwd (the Restart
+   * affordance) — revives an exited session too. The cwd is the session's own
+   * (stored at open), so restart needs NO agent and works after eviction. The old
+   * pty is killed with the same SIGTERM->SIGKILL escalation, but the map entry is
+   * REPLACED by the fresh session first, so the dying shell's late output is
+   * suppressed by the session-identity guard. Never throws — a respawn failure
+   * resolves `{ok:false}` and leaves no session (the caller renders the error).
+   */
+  restart(workspaceId: string, cols: number, rows: number): TerminalSpawnResult {
+    const session = this.sessions.get(workspaceId)
+    if (!session) return { ok: false, error: 'No terminal session to restart.' }
+    const result = this.spawnInto(workspaceId, session.cwd, cols, rows) // replaces the map entry ON SUCCESS
+    this.killPty(session) // AFTER the swap, so its late output routes to the dropped session
+    // A respawn failure leaves the OLD (now-killed) session still mapped — drop it
+    // so restart-fail leaves no zombie, and the dying shell's exit is suppressed.
+    if (!result.ok && this.sessions.get(workspaceId) === session) this.sessions.delete(workspaceId)
+    return result
+  }
+
+  /**
+   * SIGTERM the session's shell, escalating to SIGKILL after {@link KILL_GRACE_MS}
+   * if it lingers (t3code's escalation). Operates on the session's pty alone —
+   * the caller owns the map (close removes, restart replaces), so this never
+   * touches `sessions`. A no-op on an already-exited session.
+   */
+  private killPty(session: Session): void {
     if (session.exited) return
     try {
       session.pty.kill('SIGTERM')

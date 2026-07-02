@@ -58,7 +58,21 @@ our side panel is per-Workspace (t3code's is per-Thread; our Threads share the w
   pins a warm agent, and an evicted agent leaves the shell running. Only `terminal:open` needs the
   agent (for the cwd); a session whose agent was later evicted keeps working — write/resize/close
   address the session, not the agent.
-- Deferred to later slices, recorded here so they're choices not gaps: sequence-numbered attach
-  protocol + output coalescing (slice 2), multiple terminals per Workspace (slice 3), link provider /
-  selection-to-composer / live re-theme (slice 4), splits, disk-persisted history, subprocess-name
-  tab labels, Windows/conpty + WSL.
+- Deferred to later slices, recorded here so they're choices not gaps: multiple terminals per
+  Workspace (slice 3), link provider / selection-to-composer / live re-theme (slice 4), splits,
+  disk-persisted history, subprocess-name tab labels, Windows/conpty + WSL.
+
+## Slice 2 — Clear + Restart affordances
+
+A toolbar on the Terminal Surface adds two request/response invokes (no event-stream change — single
+window). **Clear** (`terminal:clear`) wipes main's retained scrollback so a later reattach starts
+blank, and the renderer clears its own xterm; the shell keeps running. **Restart** (`terminal:restart`)
+kills the shell (the same SIGTERM→SIGKILL escalation) and spawns a fresh one in the SAME cwd — stored
+on the session at open, so restart needs no agent and works after eviction; it revives an exited
+session too. The map entry is replaced by the fresh session BEFORE the old shell is killed, so the
+existing session-identity guard suppresses the dying shell's late output.
+
+Output **coalescing / sequence-numbered attach** (t3code has both) is deliberately NOT ported: our
+reattach replays the full scrollback snapshot then streams live, so there is no delta to reconcile and
+no gap to sequence — and per-chunk emit rendered real shell output (including a build log) without
+jank in slice 1. Revisit only if profiling shows IPC churn under sustained high-throughput output.

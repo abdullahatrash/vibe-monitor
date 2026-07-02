@@ -22,11 +22,13 @@ import {
   type FilesListResult,
   type FilesReadArgs,
   type FilesReadResult,
+  type TerminalClearArgs,
   type TerminalCloseArgs,
   type TerminalEvent,
   type TerminalOpenArgs,
   type TerminalOpenResult,
   type TerminalResizeArgs,
+  type TerminalRestartArgs,
   type TerminalWriteArgs,
   type GitStatusEvent,
   type GitStatusSubscriptionArgs,
@@ -134,6 +136,10 @@ const api = {
     ipcRenderer.invoke(IPC.terminalResize, args),
   terminalClose: (args: TerminalCloseArgs): Promise<void> =>
     ipcRenderer.invoke(IPC.terminalClose, args),
+  terminalClear: (args: TerminalClearArgs): Promise<void> =>
+    ipcRenderer.invoke(IPC.terminalClear, args),
+  terminalRestart: (args: TerminalRestartArgs): Promise<TerminalOpenResult> =>
+    ipcRenderer.invoke(IPC.terminalRestart, args),
   onAcpEvent: subscribe<AcpEvent>(IPC.acpEvent),
   onTerminalEvent: subscribe<TerminalEvent>(IPC.terminalEvent),
   onThreadBound: subscribe<ThreadBoundEvent>(IPC.threadBound),

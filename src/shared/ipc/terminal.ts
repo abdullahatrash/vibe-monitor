@@ -18,6 +18,10 @@ export const terminalChannels = {
   terminalResize: 'terminal:resize',
   /** Kill the session's PTY (explicit tab close / Workspace teardown). */
   terminalClose: 'terminal:close',
+  /** Reset the session's retained scrollback (the Clear affordance) — shell keeps running. */
+  terminalClear: 'terminal:clear',
+  /** Kill + respawn the session's shell in the same cwd (the Restart affordance). */
+  terminalRestart: 'terminal:restart',
   /** Main -> renderer: a session's live stream — see {@link TerminalEvent}. */
   terminalEvent: 'terminal:event',
 } as const
@@ -74,6 +78,17 @@ export interface TerminalResizeArgs {
 
 export interface TerminalCloseArgs {
   workspaceId: string
+}
+
+export interface TerminalClearArgs {
+  workspaceId: string
+}
+
+export interface TerminalRestartArgs {
+  workspaceId: string
+  /** The xterm viewport's current size, so the fresh shell spawns already fitted. */
+  cols: number
+  rows: number
 }
 
 /**

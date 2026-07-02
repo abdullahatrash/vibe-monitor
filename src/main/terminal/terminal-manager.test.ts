@@ -267,6 +267,107 @@ describe('TerminalManager close / disposeAll', () => {
   })
 })
 
+describe('TerminalManager clear', () => {
+  it('wipes the retained scrollback so a reattach starts blank; the shell keeps running', () => {
+    const { manager, ptys } = harness()
+    manager.openOrAttach('w1', { cwd: '/proj', cols: 80, rows: 24 })
+    ptys[0].emitData('old output\r\n')
+
+    manager.clear('w1')
+    // The pty was NOT killed (Clear ≠ Restart), and a reattach now replays nothing.
+    expect(ptys[0].killed).toEqual([])
+    expect(manager.openOrAttach('w1', { cwd: '/proj', cols: 80, rows: 24 })).toMatchObject({
+      ok: true,
+      snapshot: '',
+    })
+
+    // Post-clear output still streams and re-accumulates.
+    ptys[0].emitData('new output')
+    expect(manager.openOrAttach('w1', { cwd: '/proj', cols: 80, rows: 24 })).toMatchObject({
+      snapshot: 'new output',
+    })
+  })
+
+  it('is a no-op on an unknown session', () => {
+    const { manager } = harness()
+    expect(() => manager.clear('missing')).not.toThrow()
+  })
+})
+
+describe('TerminalManager restart', () => {
+  it('kills the old shell and spawns a fresh one in the SAME cwd, resetting scrollback', () => {
+    const { manager, ptys, spawns, events } = harness()
+    manager.openOrAttach('w1', { cwd: '/proj', cols: 120, rows: 30 })
+    ptys[0].emitData('stale\r\n')
+
+    const result = manager.restart('w1', 100, 40)
+    expect(result).toMatchObject({ ok: true, snapshot: '', exited: false })
+    expect(ptys[0].killed).toEqual(['SIGTERM']) // old shell killed
+    expect(spawns[1]).toMatchObject({ cwd: '/proj', cols: 100, rows: 40 }) // fresh, same cwd, new size
+    // Reattach now replays the NEW shell's buffer only.
+    events.length = 0
+    ptys[1].emitData('fresh prompt')
+    expect(events).toEqual([
+      { workspaceId: 'w1', terminalId: 'term-1', event: { type: 'output', data: 'fresh prompt' } },
+    ])
+  })
+
+  it('the killed old shell\'s late output/exit is suppressed (session was replaced)', () => {
+    const { manager, ptys, events } = harness()
+    manager.openOrAttach('w1', { cwd: '/proj', cols: 80, rows: 24 })
+    manager.restart('w1', 80, 24)
+    events.length = 0
+
+    ptys[0].emitData('death rattle')
+    ptys[0].emitExit(137)
+    expect(events).toEqual([]) // nothing from the old session
+  })
+
+  it('revives an EXITED session (restart after the shell exited)', () => {
+    const { manager, ptys, spawns } = harness()
+    manager.openOrAttach('w1', { cwd: '/proj', cols: 80, rows: 24 })
+    ptys[0].emitExit(0)
+
+    const result = manager.restart('w1', 80, 24)
+    expect(result.ok).toBe(true)
+    expect(spawns).toHaveLength(2)
+    expect(ptys[0].killed).toEqual([]) // already dead — no SIGTERM
+  })
+
+  it('restarts WITHOUT the agent — cwd comes from the session, not a fresh lookup', () => {
+    // The manager never sees the agent; cwd is the session's own. This mirrors the
+    // registrar contract: restart is addressed by workspaceId alone (no agentId).
+    const { manager, spawns } = harness()
+    manager.openOrAttach('w1', { cwd: '/original/proj', cols: 80, rows: 24 })
+    manager.restart('w1', 80, 24)
+    expect(spawns[1].cwd).toBe('/original/proj')
+  })
+
+  it('an unknown session restart is a no-op error, spawning nothing', () => {
+    const { manager, spawns } = harness()
+    expect(manager.restart('missing', 80, 24)).toEqual({ ok: false, error: 'No terminal session to restart.' })
+    expect(spawns).toHaveLength(0)
+  })
+
+  it('a respawn failure leaves NO session behind (no zombie)', () => {
+    let calls = 0
+    const { manager } = harness({
+      spawn: () => {
+        calls += 1
+        if (calls === 1) return new FakePty()
+        throw new Error('ENOENT')
+      },
+    })
+    manager.openOrAttach('w1', { cwd: '/proj', cols: 80, rows: 24 })
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const result = manager.restart('w1', 80, 24)
+    errSpy.mockRestore()
+
+    expect(result.ok).toBe(false)
+    expect(manager.has('w1')).toBe(false)
+  })
+})
+
 describe('capScrollback', () => {
   it('keeps a under-cap buffer untouched and trims an over-cap one at a line boundary', () => {
     expect(capScrollback('short')).toBe('short')

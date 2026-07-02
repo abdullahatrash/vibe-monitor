@@ -89,4 +89,12 @@ describe('TranscriptBridge.tee', () => {
     b.tee('t2', ENTRY) // other Threads unaffected
     expect(appended).toEqual([{ threadId: 't2' }])
   })
+
+  it('exposes the tombstone via isTombstoned so sibling persistence can skip alongside', () => {
+    const b = bridge()
+    expect(b.isTombstoned('t1')).toBe(false)
+    b.tombstone('t1')
+    expect(b.isTombstoned('t1')).toBe(true)
+    expect(b.isTombstoned('t2')).toBe(false)
+  })
 })

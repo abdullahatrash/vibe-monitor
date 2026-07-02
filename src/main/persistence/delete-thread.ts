@@ -27,10 +27,17 @@ export interface DeleteThreadTranscript {
   delete(threadId: string): Promise<void>
 }
 
+/** The attachments surface needed to drop a Thread's image files (missing = no-op). */
+export interface DeleteThreadAttachments {
+  delete(threadId: string): Promise<void>
+}
+
 export interface DeleteThreadArgs {
   threadId: string
   store: DeleteThreadStore
   transcript: DeleteThreadTranscript
+  /** Omitted when the attachments dir failed to create at startup (null store). */
+  attachments?: DeleteThreadAttachments
   /**
    * Best-effort close of the Thread's live ACP session, when one is hosted on an
    * active agent. Omitted for a cold Thread / unbound draft (nothing to close).
@@ -62,5 +69,12 @@ export async function deleteThread(args: DeleteThreadArgs): Promise<void> {
   } catch {
     // A transcript unlink failure is non-fatal (the store already swallows ENOENT;
     // this guards the injected/no-op seam and any unexpected reject too).
+  }
+  if (args.attachments) {
+    try {
+      await args.attachments.delete(args.threadId)
+    } catch {
+      // An attachments removal failure is non-fatal — same guard as the transcript.
+    }
   }
 }

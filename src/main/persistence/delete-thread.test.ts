@@ -71,6 +71,30 @@ describe('deleteThread (TB6 #35)', () => {
     expect(store.deleteThread).toHaveBeenCalledWith('t5')
   })
 
+  it('drops the attachments alongside the records when the seam is provided', async () => {
+    const { store, transcript } = fakes()
+    const attachments = { delete: vi.fn<AsyncId>(async () => {}) }
+
+    await deleteThread({ threadId: 't6', store, transcript, attachments })
+
+    expect(attachments.delete).toHaveBeenCalledWith('t6')
+  })
+
+  it('RESOLVES even when the attachments removal rejects (best-effort)', async () => {
+    const { store, transcript } = fakes()
+    const attachments = {
+      delete: vi.fn<AsyncId>(async () => {
+        throw new Error('EPERM')
+      }),
+    }
+
+    await expect(
+      deleteThread({ threadId: 't7', store, transcript, attachments }),
+    ).resolves.toBeUndefined()
+    expect(store.deleteThread).toHaveBeenCalledWith('t7')
+    expect(transcript.delete).toHaveBeenCalledWith('t7')
+  })
+
   it('still completes the deletion when the best-effort close REJECTS (no error surfaced)', async () => {
     const { store, transcript } = fakes()
     const closeSession = vi.fn(async () => {

@@ -10,6 +10,8 @@ import {
   type ListMetadataResult,
   type OpenThreadArgs,
   type ReadTranscriptResult,
+  type ReadThreadAttachmentsResult,
+  type TranscriptImageRef,
   type RemoveWorkspaceResult,
   type RespondPermissionArgs,
   type SendPromptArgs,
@@ -47,6 +49,7 @@ import {
   userPromptEntry,
 } from './persistence/transcript'
 import { TranscriptBridge } from './persistence/transcript-bridge'
+import { AttachmentStore } from './persistence/attachment-store'
 import { WorkspaceAgent, WorkspaceAgentError } from './workspace-agent'
 import { AgentPool } from './agent-pool'
 import { AgentActivity } from './agent-activity'
@@ -213,6 +216,8 @@ interface MainDeps {
   store: MetadataStore
   transcript: TranscriptStore | null
   bridge: TranscriptBridge
+  /** Null when the attachments dir `mkdir` failed — image persistence no-ops (logged). */
+  attachments: AttachmentStore | null
 }
 
 /**
@@ -511,10 +516,19 @@ async function runPromptTurn(
   // sending it, so it precedes the streamed events it triggers. We hold the
   // Thread id, so no bridge lookup — a draft's first prompt can't misroute to
   // another Thread. Main has no renderer item id, so mint an opaque replay key.
-  // v1 does NOT persist image base64 — the transcript tees text only (#100). Image
-  // attachments live only in the in-memory echo for this session's live view; a
-  // reopen replays the text-only prompt. Intentional for this slice.
-  deps.bridge.tee(args.threadId, userPromptEntry(randomUUID(), args.text))
+  //
+  // Image attachments persist FIRST (awaited: the refs must exist when the entry
+  // is appended, and the entry must precede the turn's `acp-event` tees — the
+  // TranscriptStore chain serializes in CALL order). `saveAll` never rejects; a
+  // failed/oversized image drops out of the refs and the prompt replays
+  // text-only. Skipped for a tombstoned Thread so a removeWorkspace racing this
+  // in-flight prompt can't re-create the attachments dir after its delete.
+  let imageRefs: TranscriptImageRef[] | undefined
+  if (deps.attachments && args.images?.length && !deps.bridge.isTombstoned(args.threadId)) {
+    imageRefs = await deps.attachments.saveAll(args.threadId, args.images)
+    if (imageRefs.length === 0) imageRefs = undefined
+  }
+  deps.bridge.tee(args.threadId, userPromptEntry(randomUUID(), args.text, imageRefs))
   // On a re-bind (TB4 #33), persist the "context reset" notice right AFTER the
   // user's prompt and BEFORE the turn's events — so a later reopen replays it
   // in the same position the live view rendered it (`thread:bound` -> notice).
@@ -848,6 +862,7 @@ function registerIpc(deps: MainDeps): void {
       threadId,
       store: deps.store,
       transcript: deps.transcript ?? { delete: () => Promise.resolve() },
+      attachments: deps.attachments ?? undefined,
       closeSession: bestEffortCloseFor(deps, threadId),
     })
     return { ok: true }
@@ -878,6 +893,7 @@ function registerIpc(deps: MainDeps): void {
         workspaceId,
         store: deps.store,
         transcript: deps.transcript ?? { delete: () => Promise.resolve() },
+        attachments: deps.attachments ?? undefined,
         // When a warm agent hosts this Workspace, stop it via the SAME path the
         // sweep/stop uses: `pool.dispose` (graceful teardown of hosted sessions) plus
         // `notifyAgentsEvicted` (clears the activity + transcript bridge + per-Thread
@@ -1001,6 +1017,18 @@ function registerIpc(deps: MainDeps): void {
     if (!deps.transcript) return Promise.resolve([])
     return deps.transcript.read(threadId)
   })
+
+  ipcMain.handle(
+    IPC.readThreadAttachments,
+    (_event, threadId: string): Promise<ReadThreadAttachmentsResult> => {
+      // The replay's batched image read: every persisted attachment of the Thread
+      // as `file -> data URL`, resolved against the `user-prompt` entries' refs.
+      // Called by the hydrate effect only when the transcript references images.
+      // A null store (dir mkdir failed) or an image-less Thread reads back {}.
+      if (!deps.attachments) return Promise.resolve({})
+      return deps.attachments.readAll(threadId)
+    },
+  )
 }
 
 app.whenReady().then(async () => {
@@ -1024,13 +1052,25 @@ app.whenReady().then(async () => {
     transcript = null
   }
 
+  // The per-Thread prompt-image attachments dir (sibling of the transcripts —
+  // the store mkdirs each Thread's subdir itself, but probe the root once here
+  // so a broken `userData` degrades to null exactly like the transcript store).
+  const attachmentsDir = join(app.getPath('userData'), 'attachments')
+  let attachments: AttachmentStore | null
+  try {
+    await mkdir(attachmentsDir, { recursive: true })
+    attachments = new AttachmentStore({ dir: attachmentsDir })
+  } catch {
+    attachments = null
+  }
+
   // The ACP-event -> Thread-JSONL router (see `TranscriptBridge`): primary route by
   // the event's own sessionId (via the store), fallback by the agent's active Thread.
   const bridge = new TranscriptBridge({
     sink: transcript,
     resolveBySession: (sessionId) => store.findThreadIdBySessionId(sessionId),
   })
-  const deps: MainDeps = { store, transcript, bridge }
+  const deps: MainDeps = { store, transcript, bridge, attachments }
 
   registerIpc(deps)
   createWindow()

@@ -27,10 +27,17 @@ export interface RemoveWorkspaceTranscript {
   delete(threadId: string): Promise<void>
 }
 
+/** The attachments surface needed to drop one Thread's image files (missing = no-op). */
+export interface RemoveWorkspaceAttachments {
+  delete(threadId: string): Promise<void>
+}
+
 export interface RemoveWorkspaceArgs {
   workspaceId: string
   store: RemoveWorkspaceStore
   transcript: RemoveWorkspaceTranscript
+  /** Omitted when the attachments dir failed to create at startup (null store). */
+  attachments?: RemoveWorkspaceAttachments
   /**
    * Best-effort clean stop of the Workspace's LIVE warm agent, when one is warm.
    * Omitted for a cold Workspace (nothing to stop). Any rejection is swallowed — a
@@ -66,6 +73,13 @@ export async function removeWorkspace(args: RemoveWorkspaceArgs): Promise<void> 
       await args.transcript.delete(threadId)
     } catch {
       // A transcript unlink failure is non-fatal — continue with the rest.
+    }
+    if (args.attachments) {
+      try {
+        await args.attachments.delete(threadId)
+      } catch {
+        // An attachments removal failure is non-fatal — continue with the rest.
+      }
     }
   }
 }

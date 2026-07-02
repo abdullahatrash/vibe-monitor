@@ -26,6 +26,7 @@ import {
   type GitStatusSubscriptionArgs,
   type ListMetadataResult,
   type ReadTranscriptResult,
+  type ReadThreadAttachmentsResult,
   type RemoveWorkspaceResult,
   type RespondPermissionArgs,
   type OpenThreadArgs,
@@ -98,6 +99,8 @@ const api = {
     ipcRenderer.invoke(IPC.setThreadTitle, args),
   readTranscript: (threadId: string): Promise<ReadTranscriptResult> =>
     ipcRenderer.invoke(IPC.readTranscript, threadId),
+  readThreadAttachments: (threadId: string): Promise<ReadThreadAttachmentsResult> =>
+    ipcRenderer.invoke(IPC.readThreadAttachments, threadId),
   gitSubscribeStatus: (args: GitStatusSubscriptionArgs): Promise<void> =>
     ipcRenderer.invoke(IPC.gitSubscribeStatus, args),
   gitUnsubscribeStatus: (args: GitStatusSubscriptionArgs): Promise<void> =>

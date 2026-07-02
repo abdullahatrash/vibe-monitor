@@ -17,7 +17,8 @@ import {
   type PermissionOption,
 } from './reducer'
 import { eventBelongsToThread } from './event-routing'
-import { replayTranscript } from './replay'
+import { replayTranscript, transcriptHasImages } from './replay'
+import { replayCache } from './replay-cache'
 import { MessageScroller } from './MessageScroller'
 import { Item } from './items/Item'
 import { UsageBar } from './items/UsageBar'
@@ -104,6 +105,15 @@ export function Conversation({
   // True once any live event has been folded in: guards the async hydrate from
   // clobbering events that streamed in before the JSONL read resolved.
   const liveSeen = useRef(false)
+  // True once this view holds real history (a cache hit, a resolved transcript
+  // read — even an empty one — or a live event): the unmount snapshot below may
+  // only cache a HYDRATED view, else an instant switch-away before the read
+  // resolved would cache an empty state and replay a non-empty Thread as empty.
+  const hydratedRef = useRef(false)
+  // Mirror of the reducer state for the unmount snapshot (an unmount cleanup
+  // closes over the FIRST render's `state` otherwise). Fresh per key-remount.
+  const stateRef = useRef(state)
+  stateRef.current = state
 
   // The follow-up queue for THIS Thread (#105, ADR-0009): submitting while a turn
   // streams enqueues here (the queue lives in a module store ABOVE this remount, so
@@ -119,16 +129,56 @@ export function Conversation({
   // `liveSeen` guard keeps a late hydrate from clobbering resumed live events, but
   // the brief early-history gap on such a reopen is accepted for this slice.
   useEffect(() => {
+    // Cache first (take = consume — the mounted view owns the state from here):
+    // a switch-back within the LRU window hydrates instantly, no IPC, no re-fold.
+    const cached = replayCache.take(thread.threadId)
+    if (cached) {
+      hydratedRef.current = true
+      // Sync the snapshot mirror NOW, not at the re-render: an unmount landing
+      // between this dispatch and its render (StrictMode's dev double-mount
+      // does exactly that) would otherwise snapshot the still-initial state and
+      // poison the cache with an empty view for this Thread.
+      stateRef.current = cached.state
+      dispatch({ type: 'hydrate', state: cached.state })
+      return
+    }
     let active = true
-    void window.api.readTranscript(thread.threadId).then((entries) => {
+    void window.api.readTranscript(thread.threadId).then(async (entries) => {
+      // Resolve persisted image attachments (one batched IPC) ONLY when the
+      // transcript references any — an image-less reopen costs nothing extra.
+      const attachments = transcriptHasImages(entries)
+        ? await window.api.readThreadAttachments(thread.threadId)
+        : undefined
       if (!active || liveSeen.current) return
-      const replayed = replayTranscript(entries)
-      if (replayed.items.length > 0) dispatch({ type: 'hydrate', state: replayed })
+      // Hydrated even when the transcript is EMPTY — a legitimately empty
+      // Thread may cache as empty; only an unresolved read must not.
+      hydratedRef.current = true
+      const replayed = replayTranscript(entries, attachments)
+      if (replayed.items.length > 0) {
+        stateRef.current = replayed // pre-render sync, same poison guard as above
+        dispatch({ type: 'hydrate', state: replayed })
+      }
     })
     return () => {
       active = false
     }
   }, [thread.threadId])
+
+  // Unmount snapshot: give the folded view back to the cache so the next mount
+  // of THIS Thread skips the JSONL re-read + re-fold. `put` refuses a mid-turn
+  // (`isProcessing`) state — a turn outliving the unmount keeps teeing to the
+  // transcript, so that snapshot would go stale (the next mount replays fully).
+  useEffect(() => {
+    return () => {
+      if (hydratedRef.current || liveSeen.current) {
+        replayCache.put(thread.threadId, {
+          state: stateRef.current,
+          sessionId: boundRef.current,
+          workspaceId: thread.workspaceId,
+        })
+      }
+    }
+  }, [thread.threadId, thread.workspaceId])
 
   // Bind a draft to its OWN session the instant main signals `thread:bound` —
   // BEFORE that session's first event arrives (main emits it ahead of the prompt

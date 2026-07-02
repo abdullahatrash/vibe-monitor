@@ -11,7 +11,7 @@ import {
   type ReasoningItem,
   type ToolItem,
 } from './reducer'
-import { replayTranscript } from './replay'
+import { replayTranscript, transcriptHasImages } from './replay'
 
 /**
  * TB3 (#32): a reopened Thread renders FROM its JSONL, no `vibe-acp` spawned.
@@ -138,5 +138,59 @@ describe('replayTranscript (TB3 #32)', () => {
     expect(replayed).toEqual(initialConversationState)
     expect(replayed.items).toHaveLength(0)
     expect(replayed.isProcessing).toBe(false)
+  })
+})
+
+describe('replayTranscript image attachments', () => {
+  const PROMPT_WITH_IMAGES: TranscriptEntry[] = [
+    {
+      t: 'user-prompt',
+      id: 'user:0',
+      text: 'what is in this screenshot?',
+      images: [
+        { file: 'aaaa.png', mimeType: 'image/png' },
+        { file: 'bbbb.jpg', mimeType: 'image/jpeg' },
+      ],
+    },
+    { t: 'turn-complete' },
+  ]
+
+  it('resolves image refs through the attachment map into previewUrls on the user item', () => {
+    const replayed = replayTranscript(PROMPT_WITH_IMAGES, {
+      'aaaa.png': 'data:image/png;base64,AAAA',
+      'bbbb.jpg': 'data:image/jpeg;base64,BBBB',
+    })
+
+    const user = replayed.items[0]
+    expect(user.kind).toBe('user')
+    expect(user.kind === 'user' && user.images).toEqual([
+      { previewUrl: 'data:image/png;base64,AAAA' },
+      { previewUrl: 'data:image/jpeg;base64,BBBB' },
+    ])
+  })
+
+  it('a ref missing from the map (deleted/corrupt file) degrades that image, keeping the rest', () => {
+    const replayed = replayTranscript(PROMPT_WITH_IMAGES, {
+      'bbbb.jpg': 'data:image/jpeg;base64,BBBB',
+    })
+
+    const user = replayed.items[0]
+    expect(user.kind === 'user' && user.images).toEqual([{ previewUrl: 'data:image/jpeg;base64,BBBB' }])
+  })
+
+  it('no attachment map at all (store failed / legacy caller) replays text-only, never throwing', () => {
+    const replayed = replayTranscript(PROMPT_WITH_IMAGES)
+
+    const user = replayed.items[0]
+    expect(user.kind).toBe('user')
+    expect(user.kind === 'user' && user.images).toBeUndefined()
+    expect(user.kind === 'user' && user.text).toBe('what is in this screenshot?')
+  })
+
+  it('transcriptHasImages gates the attachments IPC: true only when a prompt carries refs', () => {
+    expect(transcriptHasImages(PROMPT_WITH_IMAGES)).toBe(true)
+    expect(transcriptHasImages(READ_TRANSCRIPT)).toBe(false)
+    expect(transcriptHasImages([{ t: 'user-prompt', id: 'u1', text: 'hi', images: [] }])).toBe(false)
+    expect(transcriptHasImages([])).toBe(false)
   })
 })

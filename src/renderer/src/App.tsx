@@ -28,6 +28,7 @@ import { useThreadControls } from './connection/use-thread-controls'
 import { useWorkspaceActions } from './connection/use-workspace-actions'
 import { resolveActiveControls } from './connection/resolve-controls'
 import { setThreadStatus, type ThreadStatusMap } from './conversation/thread-status'
+import { replayCache, wireReplayCacheInvalidation } from './conversation/replay-cache'
 import { setWorkspaceControls, workspaceControlsKey } from './connection/workspace-controls-store'
 import { ArrowLeft, ArrowRight, Maximize2, PanelLeft, PanelRight, Terminal } from 'lucide-react'
 import { IconButton } from './ui/icon-button'
@@ -314,6 +315,12 @@ export function App(): JSX.Element {
       void refreshRecents()
     })
   }, [])
+
+  // Wire the replay-cache invalidation ONCE: any acp:event session-tagged to a
+  // cached (unmounted) Thread means main teed to its transcript behind our back,
+  // and a thread:title push covers the cold store-only rename — both dirty the
+  // entry so the next mount replays fresh instead of hydrating stale.
+  useEffect(() => wireReplayCacheInvalidation(replayCache, window.api), [])
 
   /**
    * Select a Workspace from the sidebar: pin it in the nav reducer and

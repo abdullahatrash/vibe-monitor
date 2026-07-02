@@ -3,6 +3,7 @@ import type { ListMetadataResult, ThreadMeta } from '../../../shared/ipc'
 import type { NavAction, NavState } from '../shell/nav-reducer'
 import { clearThreadStatus, type ThreadStatusMap } from '../conversation/thread-status'
 import { clearDraft } from '../conversation/composer-draft-store'
+import { replayCache } from '../conversation/replay-cache'
 import { removeWorkspacePanel } from '../side-panel/side-panel-store'
 import { agentIdOf, type ConnectionAction, type ConnectionMap } from './connections'
 import {
@@ -74,6 +75,8 @@ export function useWorkspaceActions(deps: WorkspaceActionsDeps): WorkspaceAction
       deps.setStatuses((prev) => clearThreadStatus(prev, thread.id))
       // Drop the deleted Thread's persisted composer draft (#60) — no orphaned text.
       clearDraft(deps.storage, thread.id)
+      // And its cached replay view — a re-created Thread id must never see it.
+      replayCache.invalidate(thread.id)
       await deps.refreshRecents()
     },
 
@@ -108,6 +111,8 @@ export function useWorkspaceActions(deps: WorkspaceActionsDeps): WorkspaceAction
       // Drop the side-panel entry too (#193): workspaceIds are fresh UUIDs, so a removed
       // Workspace's open-tabs blob would otherwise sit unreachable in localStorage forever.
       removeWorkspacePanel(workspaceId)
+      // And every removed Thread's cached replay view.
+      replayCache.invalidateByWorkspace(workspaceId)
       await deps.refreshRecents()
     },
 
@@ -142,6 +147,11 @@ export function useWorkspaceActions(deps: WorkspaceActionsDeps): WorkspaceAction
         sessionId: thread.sessionId,
       })
       if (!result.ok) return
+      // A cached replay view carries the OLD title in `state.title`, which would
+      // beat the fresh metadata title on the next mount — drop it. (The
+      // `thread:title` wire also covers pushes main initiates; this covers the
+      // rename WE initiated without depending on an echo.)
+      replayCache.invalidate(thread.id)
       await deps.refreshRecents()
     },
   }

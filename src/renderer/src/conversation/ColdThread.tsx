@@ -1,9 +1,10 @@
-import { useEffect, useState, type JSX } from 'react'
+import { useEffect, useRef, useState, type JSX } from 'react'
 import type { ThreadMeta } from '../../../shared/ipc'
 import { Item } from './items/Item'
 import { UsageBar } from './items/UsageBar'
 import { initialConversationState, type ConversationState } from './reducer'
-import { replayTranscript } from './replay'
+import { replayTranscript, transcriptHasImages } from './replay'
+import { replayCache } from './replay-cache'
 
 /**
  * A reopened Thread rendered READ-ONLY from its persisted JSONL (ADR-0005, TB3
@@ -28,17 +29,52 @@ export function ColdThread({
 }): JSX.Element {
   // null = still loading; a ConversationState once the transcript has replayed.
   const [state, setState] = useState<ConversationState | null>(null)
+  // Mirror for the unmount snapshot (a cleanup closes over the first render's
+  // `state` otherwise). `null` (read never resolved) is never cached.
+  const stateRef = useRef(state)
+  stateRef.current = state
 
-  // Fetch + replay once per Thread. Reads only — no agent is started here.
+  // Fetch + replay once per Thread — cache first (take = consume), so a
+  // switch-back within the LRU window skips the IPC + re-fold entirely.
+  // Reads only — no agent is started here.
   useEffect(() => {
+    const cached = replayCache.take(thread.id)
+    if (cached) {
+      // Sync the snapshot mirror NOW, not at the re-render: an unmount landing
+      // before the render (StrictMode's dev double-mount) would otherwise see
+      // `null` and drop the consumed entry instead of putting it back.
+      stateRef.current = cached.state
+      setState(cached.state)
+      return
+    }
     let active = true
-    void window.api.readTranscript(thread.id).then((entries) => {
-      if (active) setState(replayTranscript(entries))
+    void window.api.readTranscript(thread.id).then(async (entries) => {
+      // Resolve persisted image attachments (one batched IPC) ONLY when the
+      // transcript references any — an image-less reopen costs nothing extra.
+      const attachments = transcriptHasImages(entries)
+        ? await window.api.readThreadAttachments(thread.id)
+        : undefined
+      if (active) setState(replayTranscript(entries, attachments))
     })
     return () => {
       active = false
     }
   }, [thread.id])
+
+  // Unmount snapshot: a replayed cold view is settled by construction (no live
+  // turn here — `isProcessing` is forced false by replay), so cache it for the
+  // next open. A still-loading view (`null`) is never cached.
+  useEffect(() => {
+    return () => {
+      if (stateRef.current !== null) {
+        replayCache.put(thread.id, {
+          state: stateRef.current,
+          sessionId: thread.sessionId,
+          workspaceId: thread.workspaceId,
+        })
+      }
+    }
+  }, [thread.id, thread.sessionId, thread.workspaceId])
 
   const view = state ?? initialConversationState
   const title = view.title ?? thread.title ?? 'Untitled thread'

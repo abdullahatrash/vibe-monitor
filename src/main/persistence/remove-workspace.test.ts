@@ -35,6 +35,32 @@ describe('removeWorkspace ("Remove project")', () => {
     expect(transcript.delete).toHaveBeenCalledTimes(2)
   })
 
+  it('drops each removed Thread\'s attachments when the seam is provided', async () => {
+    const { store, transcript } = fakes(['t1', 't2'])
+    const attachments = { delete: vi.fn<DeleteFn>(async () => {}) }
+
+    await removeWorkspace({ workspaceId: 'w1', store, transcript, attachments })
+
+    expect(attachments.delete).toHaveBeenCalledWith('t1')
+    expect(attachments.delete).toHaveBeenCalledWith('t2')
+    expect(attachments.delete).toHaveBeenCalledTimes(2)
+  })
+
+  it('a rejecting attachments removal never rejects the orchestration nor skips the rest', async () => {
+    const { store, transcript } = fakes(['t1', 't2'])
+    const attachments = {
+      delete: vi.fn<DeleteFn>(async (threadId) => {
+        if (threadId === 't1') throw new Error('EPERM')
+      }),
+    }
+
+    await expect(
+      removeWorkspace({ workspaceId: 'w1', store, transcript, attachments }),
+    ).resolves.toBeUndefined()
+    expect(attachments.delete).toHaveBeenCalledWith('t2')
+    expect(transcript.delete).toHaveBeenCalledTimes(2)
+  })
+
   it('stops the agent BEFORE touching the store when a warm agent is present', async () => {
     const { store, transcript } = fakes(['t1'])
     const order: string[] = []

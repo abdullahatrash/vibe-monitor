@@ -25,6 +25,12 @@ export const threadChannels = {
   listMetadata: 'metadata:list',
   /** Read a Thread's persisted JSONL transcript for a process-free reopen (TB3). */
   readTranscript: 'transcript:read',
+  /**
+   * Read a Thread's persisted image attachments for replay — ONE batched read per
+   * reopen (file name -> data URL), called only when the transcript references
+   * images, so image-less reopens cost no extra IPC.
+   */
+  readThreadAttachments: 'transcript:attachments',
   /** Delete a Thread (TB6) — see {@link DeleteThreadResult}. */
   deleteThread: 'thread:delete',
   /** Remove a Workspace ("Remove project") — see {@link RemoveWorkspaceResult}. */
@@ -352,7 +358,7 @@ export type ListMetadataResult = WorkspaceThreads[]
  * — the renderer cannot import the main process. `transcript.ts` re-exports it.
  */
 export type TranscriptEntry =
-  | { t: 'user-prompt'; id: string; text: string }
+  | { t: 'user-prompt'; id: string; text: string; images?: TranscriptImageRef[] }
   | { t: 'acp-event'; payload: unknown }
   | { t: 'turn-complete' }
   | { t: 'turn-error'; message: string }
@@ -365,3 +371,22 @@ export type TranscriptEntry =
 
 /** The `readTranscript` reply: a Thread's transcript entries (empty when none). */
 export type ReadTranscriptResult = TranscriptEntry[]
+
+/**
+ * A persisted image attachment referenced by a `user-prompt` transcript entry.
+ * Additive/optional on the v1 entry — NO schema-version bump: `isTranscriptEntry`
+ * discriminates on `t` alone, so legacy lines (no `images`) parse unchanged and
+ * older readers ignore the field (same precedent as `ThreadMeta.pinned`).
+ */
+export interface TranscriptImageRef {
+  /** File name under the Thread's attachments dir (e.g. `3f2a….png`). Never a path. */
+  file: string
+  /** e.g. 'image/png' — recorded for forward use; reads derive mime from the extension. */
+  mimeType: string
+}
+
+/**
+ * The `readThreadAttachments` reply: attachment file name -> full data URL for
+ * every image persisted under the Thread. Missing dir (image-less Thread) → `{}`.
+ */
+export type ReadThreadAttachmentsResult = Record<string, string>

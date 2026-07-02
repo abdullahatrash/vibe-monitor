@@ -3,13 +3,20 @@
 > You are picking up an in-flight project. Read this top to bottom once, then keep it open.
 > It tells you **what this is**, **how we work**, **what exists**, **what's next**, and **where the
 > authoritative information lives** (in-repo docs + the local reference repos in §4). Last updated
-> 2026-07-01, `main` @ `3485094` or later, **675 tests**. 🎉 **The design-system epic (PRD #109) is COMPLETE** —
-> ALL slices shipped (#110 tokens · #111 primitives · #112 streamdown spike · #113 shell · #114–#116 conversation
-> core · #117 composer · #118 auth · #119 git panel, plus the sidebar cluster #127–#134/#138). Every UI area now
-> runs on tokens + primitives. **There is NO active epic — the next one is the user's call** (see §6 for the
-> roadmap + a small open follow-up backlog). `docs/NEXT-SESSION.md` is the copy-paste kickoff. Values live in
-> ADR-0010..0012 + `docs/design-tokens.md` + `docs/design-system-components.md` + `docs/streamdown-spike.md`.
-> `$`/`@` autocomplete stays paused.
+> 2026-07-02, branch `worktree-quality-review-fixes` @ `71fec50` (awaiting PR/merge), **902 tests**.
+> **Latest session: a whole-app quality refactor** (behavior-preserving, 5 slices + 1 fix):
+> canonical `git/run.ts` runner + shared `files/confine.ts` read-confinement; `registerIpc(deps)` DI
+> with `git/`+`files/` feature registrars, `TranscriptBridge` + `AgentActivity` extracted+tested, the
+> unreachable null-`MetadataStore` forks deleted; `App.tsx` 1423→748 (auth/settings slices,
+> `use-workspace-actions` + `use-thread-controls` hooks); `Conversation.tsx` 1432→374 (one
+> `CompletionSource` autocomplete machine for `/`+`@`, `Composer.tsx`, `items/` row renderers);
+> `Shell.tsx` 987→291 (`shell/workspace-nav/`), `ChangesPanel.tsx` 806→335, `src/shared/ipc/` domain
+> split behind a barrel; plus `touchThread` so a prompt bumps `lastActiveAt` (stale-timestamp fix).
+> Deferred follow-ups: rename-origins on `GitFile` (kill `commit.ts`'s second status read), unify the
+> renderer's two turn-in-flight sources, live timestamp push. Prior state: 🎉 the design-system epic
+> (PRD #109) is COMPLETE (all slices #110–#119 + sidebar cluster) and the files-browser epic shipped
+> #187–#190. **There is NO active epic — the next one is the user's call** (see §6). Values live in
+> ADR-0010..0012 + `docs/design-tokens.md` + `docs/design-system-components.md`.
 
 ---
 

@@ -30,8 +30,9 @@ renderer — everything through IPC.
 
 ## IPC (from opencode)
 
-- **One typed contract.** Channel names + payload types live in `src/shared/ipc.ts`; grow it toward a
-  single `VibeMistroApi` interface. No stringly-typed channels in feature code.
+- **One typed contract.** Channel names + payload types live in `src/shared/ipc/` — domain modules
+  behind one barrel, so both sides import `shared/ipc` — feeding the single `VibeMistroApi`
+  interface. No stringly-typed channels in feature code.
 - Three shapes: `invoke` (request/response), `send` (fire-and-forget), `on`+unsubscribe (streaming).
 - **Subscriptions always return an unsubscribe fn**; clean up on `webContents` destroyed + app quit.
 - When handlers multiply, register them via `registerIpc(deps)` **dependency injection** (testable).

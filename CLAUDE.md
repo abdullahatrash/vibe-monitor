@@ -64,10 +64,12 @@ Three Electron layers, strictly separated (`docs/conventions.md`):
 - **`src/renderer`** — UI only, **no Node, no `fs`** — everything via IPC. `contextIsolation: true`,
   `nodeIntegration: false`.
 
-The single typed IPC contract (channel names + payload types) lives in **`src/shared/ipc.ts`** and
-must stay free of Node/DOM imports so both sides import it. Three shapes: `invoke` (request/response),
-`send` (fire-and-forget), `on`+unsubscribe (streaming). All ACP events stream over the **one**
-`acp:event` channel, tagged by `agentId`. Never add stringly-typed channels in feature code.
+The single typed IPC contract (channel names + payload types) lives in **`src/shared/ipc/`** —
+domain modules (`core`/`thread`/`auth`/`git`/`gh`/`files`) re-exported by one barrel, so both sides
+still import `shared/ipc` — and must stay free of Node/DOM imports. Three shapes: `invoke`
+(request/response), `send` (fire-and-forget), `on`+unsubscribe (streaming). All ACP events stream
+over the **one** `acp:event` channel, tagged by `agentId`. Never add stringly-typed channels in
+feature code.
 
 ## Domain language (use these exact terms — see `CONTEXT.md`)
 
@@ -134,22 +136,29 @@ the resolved shell-env PATH (`src/main/shell-env.ts`), since `vibe`/`vibe-acp` a
 
 ## Renderer architecture
 
-Feature-Sliced under `src/renderer/src/` (`shell/`, `connection/`, `conversation/`, `auth/`). The
-persistent two-pane shell (`shell/Shell.tsx`) keeps the sidebar mounted and swaps a conversation
-outlet. Navigation is a **pure reducer** (`shell/nav-reducer.ts`); the per-Workspace connection
-registry lives in `App`. Conversation state is a reducer of typed items keyed by Thread
+Feature-Sliced under `src/renderer/src/` (`shell/`, `connection/`, `conversation/`, `auth/`,
+`settings/`, `git/`, `side-panel/`, shared `lib/`/`ui/`). The persistent two-pane shell
+(`shell/Shell.tsx`) keeps the sidebar mounted and swaps a conversation outlet; the Projects subtree
+lives in `shell/workspace-nav/`. Navigation is a **pure reducer** (`shell/nav-reducer.ts`); the
+per-Workspace connection registry lives in `App`, with the lifecycle mutations and per-Thread
+agent-controls choreography behind `connection/use-workspace-actions.ts` /
+`use-thread-controls.ts`. Conversation state is a reducer of typed items keyed by Thread
 (`conversation/reducer.ts`); an event-router (`conversation/event-routing.ts`) subscribes once to
-`acp:event`, switches on the ACP method, and dispatches typed actions. Reopen replays the JSONL
-transcript through the same reducer (`conversation/replay.ts`). Renderer-only UI state (drafts, panel
-sizes, scroll) stays in `localStorage`; durable state goes through IPC.
+`acp:event`, switches on the ACP method, and dispatches typed actions; per-kind row renderers live
+in `conversation/items/`, the composer (drafts, images, the unified `/`+`@` autocomplete) in
+`conversation/Composer.tsx`. Reopen replays the JSONL transcript through the same reducer
+(`conversation/replay.ts`). Renderer-only UI state (drafts, panel sizes, scroll) stays in
+`localStorage`; durable state goes through IPC.
 
 ## Conventions
 
 - Files `kebab-case`; functions verb-prefixed (`spawnSession`, `registerIpc`); constants
   `SCREAMING_SNAKE`; **named exports only**. `strict` TS, no unused locals/params (enforced).
-- IPC handlers are registered in `registerIpc()` in `src/main/index.ts`; keep load-bearing logic in
-  small pure modules (with their own `*.test.ts`) and keep the handler a thin wrapper — this is the
-  established pattern (e.g. `runPromptTurn`, `isProtected`, `ensureBoundSession`).
+- IPC handlers are registered via `registerIpc(deps)` in `src/main/index.ts` (dependency-injected
+  stores/bridge), with the git and files handler groups in feature registrars beside their modules
+  (`git/register-ipc.ts`, `files/register-ipc.ts`). Keep load-bearing logic in small pure modules
+  (with their own `*.test.ts`) and keep the handler a thin wrapper — this is the established pattern
+  (e.g. `runPromptTurn`, `ensureBoundSession`, `TranscriptBridge`, `AgentActivity`).
 - Log, don't swallow — surface failures to the renderer even when a flow is best-effort.
 - ACP param field names: verify against the live `vibe-acp` binary as each method is implemented;
   don't hardcode unverified shapes. Protocol reference: `docs/vibe-acp-protocol.md`, `docs/acp-capture.md`.

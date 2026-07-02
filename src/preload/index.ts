@@ -20,6 +20,8 @@ import {
   type RevealPathArgs,
   type FilesListArgs,
   type FilesListResult,
+  type FilesReadArgs,
+  type FilesReadResult,
   type GitStatusEvent,
   type GitStatusSubscriptionArgs,
   type ListMetadataResult,
@@ -100,6 +102,7 @@ const api = {
     ipcRenderer.invoke(IPC.ghCreatePr, args),
   revealPath: (args: RevealPathArgs): Promise<void> => ipcRenderer.invoke(IPC.revealPath, args),
   filesList: (args: FilesListArgs): Promise<FilesListResult> => ipcRenderer.invoke(IPC.filesList, args),
+  filesRead: (args: FilesReadArgs): Promise<FilesReadResult> => ipcRenderer.invoke(IPC.filesRead, args),
   onAcpEvent: (listener: (event: AcpEvent) => void): (() => void) => {
     const handler = (_e: unknown, payload: AcpEvent): void => listener(payload)
     ipcRenderer.on(IPC.acpEvent, handler)

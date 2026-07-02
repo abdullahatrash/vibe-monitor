@@ -75,6 +75,7 @@ import { replayTranscript } from './replay'
 import { Response } from './Response'
 import { MessageScroller } from './MessageScroller'
 import { getDraft, setDraft as persistDraft, clearDraft } from './composer-draft-store'
+import { appendMention, subscribeComposerInsert } from './composer-insert'
 import {
   applyCommand,
   filterCommands,
@@ -250,6 +251,20 @@ export function Conversation({
       // NOW — main emits `thread:bound` before the prompt streams, so it lands
       // after the user's prompt and before the agent's response (matching replay).
       if (e.rebound) dispatch({ type: 'agent-rebound' })
+    })
+  }, [thread.threadId])
+
+  // Insert `@path` from the Files preview's action (#189): the side panel is a sibling of this
+  // view, so it reaches the composer through the module-level `composer-insert` channel keyed by
+  // threadId. We append to the CURRENT persisted draft (kept in lockstep with `draft` state on
+  // every keystroke below), then write state + persisted draft together — the same write-through
+  // the textarea's onChange uses. Plain text only: the agent expands `@path` itself (ADR-0002).
+  useEffect(() => {
+    return subscribeComposerInsert(thread.threadId, (relativePath) => {
+      const next = appendMention(getDraft(window.localStorage, thread.threadId), relativePath)
+      setDraft(next)
+      persistDraft(window.localStorage, thread.threadId, next)
+      inputRef.current?.focus()
     })
   }, [thread.threadId])
 

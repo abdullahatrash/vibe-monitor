@@ -23,6 +23,8 @@ import {
   type GitStatusSubscriptionArgs,
   type FilesListArgs,
   type FilesListResult,
+  type FilesReadArgs,
+  type FilesReadResult,
   type ListMetadataResult,
   type RevealPathArgs,
   type OpenThreadArgs,
@@ -82,6 +84,7 @@ import { ghCreatePr, ghCurrentPr } from './git/github'
 import { GitStatusManager } from './git/status-stream'
 import { chokidarWatchFactory, realClock } from './git/runtime'
 import { listFiles } from './files/list-files'
+import { readWorkspaceFile } from './files/read-file'
 import { FilesListCache, shouldInvalidateFilesCacheOnGitStatus } from './files/cache'
 
 /**
@@ -1261,6 +1264,20 @@ function registerIpc(): void {
     const result = await listFiles(workspaceDir)
     filesListCache.set(workspaceDir, result)
     return result
+  })
+
+  ipcMain.handle(IPC.filesRead, async (_event, args: FilesReadArgs): Promise<FilesReadResult> => {
+    // READ one Workspace file for the read-only preview (#189, ADR-0013). The read root is the
+    // warm agent's OWN workspaceDir — resolved via `pool.get`, NOT a renderer-supplied path
+    // (review F3, matching `filesList` / `revealPath`) — so the renderer can only read a
+    // CONNECTED Workspace's files. `readWorkspaceFile` does the SAME confinement as `revealPath`
+    // (resolveWorkspacePath + realpath + isWithinDir): a `..`/absolute target or a symlink escaping
+    // the root → `error`, never reading out of tree. It caps at ~1MB (via stat, before reading),
+    // sniffs a NUL byte for binary, and is STRICTLY read-only. NOT agent activity, so — like
+    // `files:list` / `git:diff` — it does NOT `pool.touch`. Unknown agent / any throw → `error`.
+    const agent = pool.get(args.agentId)
+    if (!agent) return { kind: 'error' }
+    return readWorkspaceFile(agent.workspaceDir, args.relativePath)
   })
 }
 

@@ -112,6 +112,7 @@ export function ConnectedWorkspace({
         workspaceId={connection.workspaceId}
         workspaceDir={connection.workspaceDir}
         agentId={connection.agentId}
+        activeThreadId={activeThread.id}
         isActive={isActive}
         busy={busy}
       />

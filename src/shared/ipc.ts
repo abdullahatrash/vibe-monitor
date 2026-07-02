@@ -231,6 +231,21 @@ export const IPC = {
    * walk failure degrades to the empty result (never throws).
    */
   filesList: 'files:list',
+  /**
+   * Renderer -> main: READ one Workspace file for the read-only preview (#189, ADR-0013
+   * decisions 2-3). Invoke, `{ agentId, relativePath }` -> `FilesReadResult` — a discriminated
+   * union `{ kind:'text', content } | { kind:'binary' } | { kind:'tooLarge' } | { kind:'error' }`.
+   * `relativePath` is a tree-relative path from `filesList` (forward-slash, never absolute/`..`).
+   * The read root is the warm agent's OWN `workspaceDir` (`pool.get(agentId)`, NOT a
+   * renderer-supplied path — review F3, matching `filesList`/`revealPath`); an unknown agent →
+   * `{kind:'error'}`. The target is confined with the SAME machinery as `revealPath`
+   * (`resolveWorkspacePath` + `realpath` + `isWithinDir`), so a `..`/absolute target or a symlink
+   * escaping the root → `{kind:'error'}` (logged, never leaking the absolute path/stack). Must be
+   * a regular file; a ~1MB size cap is checked via `stat` BEFORE reading → `{kind:'tooLarge'}`; a
+   * NUL byte in the first chunk → `{kind:'binary'}`; else utf8 → `{kind:'text'}`. STRICTLY
+   * read-only (no write path). Best-effort: any throw degrades to `{kind:'error'}`, never rejects.
+   */
+  filesRead: 'files:read',
 } as const
 
 /**
@@ -983,3 +998,29 @@ export interface FilesListResult {
   entries: FileEntry[]
   truncated: boolean
 }
+
+/**
+ * Args for `filesRead` (#189): read one Workspace file for the read-only preview. Addressed by
+ * `agentId` — main resolves the read root from the warm agent's OWN `workspaceDir`
+ * (`pool.get(agentId)`), NOT a renderer-supplied path (review F3, matching `filesList`). `relativePath`
+ * is a tree-relative path from a `filesList` entry (forward-slash separated, never absolute or `..`);
+ * main confines the resolved target to the Workspace root (realpath + `isWithinDir`) before reading.
+ */
+export interface FilesReadArgs {
+  agentId: string
+  relativePath: string
+}
+
+/**
+ * The `filesRead` reply (#189), a discriminated union so the preview renders each outcome cleanly
+ * and never shows garbage. `text` carries the utf8-decoded `content`; `binary` (a NUL byte was found
+ * in the first chunk) and `tooLarge` (the file exceeds the ~1MB cap, checked via `stat` before any
+ * read) render muted notices; `error` covers EVERY failure — an unknown agent, a confinement refusal
+ * (out-of-tree/absolute/`..`/symlink escape), a non-regular-file target, or any fs throw — and never
+ * leaks an absolute path or stack to the renderer.
+ */
+export type FilesReadResult =
+  | { kind: 'text'; content: string }
+  | { kind: 'binary' }
+  | { kind: 'tooLarge' }
+  | { kind: 'error' }

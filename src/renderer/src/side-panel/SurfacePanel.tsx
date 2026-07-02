@@ -1,5 +1,5 @@
 import { useEffect, type JSX, type ReactNode } from 'react'
-import { FileDiff, Files, Globe, SquareTerminal, X } from 'lucide-react'
+import { FileDiff, FileText, Files, Globe, SquareTerminal, X } from 'lucide-react'
 import { cn } from '../lib/utils'
 import { useMediaQuery } from '../lib/use-media-query'
 import {
@@ -12,6 +12,8 @@ import {
 } from '../ui'
 import { ChangesPanel } from '../git/ChangesPanel'
 import { FilesSurface } from './FilesSurface'
+import { FilePreview } from './FilePreview'
+import { fileBasename } from './breadcrumb-segments'
 import { surfaceForChord } from './surface-keys'
 import {
   activateWorkspaceSurface,
@@ -20,6 +22,7 @@ import {
   closeWorkspacePanel,
   closeWorkspaceSurface,
   closeWorkspaceSurfacesToRight,
+  openWorkspaceFileSurface,
   openWorkspaceSurface,
   toggleWorkspaceSurface,
   useWorkspacePanel,
@@ -48,13 +51,16 @@ export function SurfacePanel({
   workspaceId,
   workspaceDir,
   agentId,
+  activeThreadId,
   isActive,
   busy,
 }: {
   workspaceId: string
   workspaceDir: string
-  /** The warm agent handle — Files addresses `files:list` by this (confinement, #188 F3). */
+  /** The warm agent handle — Files addresses `files:list`/`files:read` by this (confinement, #188 F3). */
   agentId: string
+  /** The live Thread whose composer a file preview's Insert-@path targets (#189); null when none. */
+  activeThreadId: string | null
   /** Whether this is the on-screen Workspace (#84) — gates git streaming AND shortcuts. */
   isActive: boolean
   /** Whether a turn is streaming (#86) — threaded to the Review panel's commit guard. */
@@ -99,6 +105,7 @@ export function SurfacePanel({
       workspaceId={workspaceId}
       workspaceDir={workspaceDir}
       agentId={agentId}
+      activeThreadId={activeThreadId}
       isActive={isActive}
       busy={busy}
       panel={panel}
@@ -132,6 +139,7 @@ function PanelBody({
   workspaceId,
   workspaceDir,
   agentId,
+  activeThreadId,
   isActive,
   busy,
   panel,
@@ -139,6 +147,7 @@ function PanelBody({
   workspaceId: string
   workspaceDir: string
   agentId: string
+  activeThreadId: string | null
   isActive: boolean
   busy: boolean
   panel: ReturnType<typeof useWorkspacePanel>
@@ -174,23 +183,29 @@ function PanelBody({
           // tab and the panel is open — and focuses its own search on mount, so ⌘P (which
           // opens/activates Files via the store) and a Files card/tab click both land in a
           // search-focused tree (ADR-0013 decision 1), with no per-trigger plumbing.
-          // Selecting a file emits an open-file intent that slice 3 (#189) will route to a
-          // `file:` Surface via the store; a no-op until then.
+          // Selecting a file opens a panel-level `file:` Surface (a preview tab) via the
+          // store — dedupes on the path, so re-selecting an open file just re-activates it.
           <FilesSurface
             onCollapse={() => closeWorkspaceSurface(workspaceId, 'files')}
             agentId={agentId}
-            onOpenFile={NO_OPEN_FILE}
+            onOpenFile={(relativePath) => openWorkspaceFileSurface(workspaceId, relativePath)}
+          />
+        )}
+        {active?.kind === 'file' && (
+          // A read-only file preview tab (#189): fetches the confined `files:read` and renders
+          // the highlighted content (or a binary/too-large/error notice), keyed by the path so a
+          // tab switch remounts a fresh fetch.
+          <FilePreview
+            key={active.id}
+            agentId={agentId}
+            relativePath={active.relativePath}
+            activeThreadId={activeThreadId}
           />
         )}
       </div>
     </div>
   )
 }
-
-// Selecting a file emits an open-file intent; slice 3 (#189) swaps this for opening a
-// `file:` Surface (a panel-level file tab) via the store. A no-op until then (a zero-arg
-// fn satisfies the callback type).
-const NO_OPEN_FILE = (): void => undefined
 
 /** A Surface's tab-strip presentation: its kind icon + a short human label. */
 function surfaceMeta(surface: Surface): { icon: ReactNode; label: string } {
@@ -200,7 +215,7 @@ function surfaceMeta(surface: Surface): { icon: ReactNode; label: string } {
     case 'files':
       return { icon: <Files aria-hidden />, label: 'Files' }
     case 'file':
-      return { icon: <Files aria-hidden />, label: surface.relativePath.slice(surface.relativePath.lastIndexOf('/') + 1) }
+      return { icon: <FileText aria-hidden />, label: fileBasename(surface.relativePath) }
     case 'terminal':
       return { icon: <SquareTerminal aria-hidden />, label: 'Terminal' }
     case 'browser':

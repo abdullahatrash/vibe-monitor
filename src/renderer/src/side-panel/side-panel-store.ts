@@ -100,6 +100,21 @@ export function openSurface(state: WorkspacePanelState, kind: SingletonKind): Wo
   return upsertSurface(state, singletonSurface(kind))
 }
 
+/** A per-file Surface descriptor, its id keyed by the relative path so it dedupes (#189). */
+function fileSurface(relativePath: string): Surface {
+  return { id: `file:${relativePath}`, kind: 'file', relativePath }
+}
+
+/**
+ * Open a `file:<relativePath>` preview Surface and activate it (#189). Keyed by the path, so
+ * opening an already-open file just RE-ACTIVATES its tab rather than duplicating it — the same
+ * `upsertSurface` dedupe the singletons use. The content re-reads on activate (`FilePreview`),
+ * so this holds only the path, never the file's bytes.
+ */
+export function openFileSurface(state: WorkspacePanelState, relativePath: string): WorkspacePanelState {
+  return upsertSurface(state, fileSurface(relativePath))
+}
+
 /**
  * The ⌘P / ⌃⇧G semantics (t3code `toggle`): if the panel is open AND this kind is the
  * ACTIVE tab, hide the panel (keep the tabs + active id). Otherwise open/activate the
@@ -213,6 +228,17 @@ export function coerceSurface(raw: unknown): Surface | null {
   const kind = (raw as { kind?: unknown }).kind
   if (kind === 'review') return { id: 'review', kind: 'review' }
   if (kind === 'files') return { id: 'files', kind: 'files' }
+  if (kind === 'file') {
+    // A persisted file tab names a path — harmless to restore (the content re-reads on activate;
+    // a since-deleted file just shows the preview's error). Validate the shape defensively: a
+    // non-empty `relativePath` string whose `id` matches the `file:<path>` convention, else drop.
+    const relativePath = (raw as { relativePath?: unknown }).relativePath
+    const id = (raw as { id?: unknown }).id
+    if (typeof relativePath === 'string' && relativePath.length > 0 && id === `file:${relativePath}`) {
+      return { id: `file:${relativePath}`, kind: 'file', relativePath }
+    }
+    return null
+  }
   return null
 }
 
@@ -329,6 +355,9 @@ function apply(workspaceId: string, updater: (current: WorkspacePanelState) => W
 
 export function openWorkspaceSurface(workspaceId: string, kind: SingletonKind): void {
   apply(workspaceId, (state) => openSurface(state, kind))
+}
+export function openWorkspaceFileSurface(workspaceId: string, relativePath: string): void {
+  apply(workspaceId, (state) => openFileSurface(state, relativePath))
 }
 export function toggleWorkspaceSurface(workspaceId: string, kind: SingletonKind): void {
   apply(workspaceId, (state) => toggleSurface(state, kind))

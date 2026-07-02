@@ -11,7 +11,9 @@ import {
   coerceSurface,
   EMPTY_PANEL_STATE,
   getWorkspacePanel,
+  openFileSurface,
   openSurface,
+  openWorkspaceFileSurface,
   openWorkspaceSurface,
   readPanelMap,
   removeWorkspacePanel,
@@ -69,6 +71,42 @@ describe('openSurface', () => {
       activeSurfaceId: 'files',
       surfaces: [FILES],
     })
+  })
+})
+
+describe('openFileSurface', () => {
+  const APP: Surface = { id: 'file:src/app.ts', kind: 'file', relativePath: 'src/app.ts' }
+  const UTIL: Surface = { id: 'file:src/util.ts', kind: 'file', relativePath: 'src/util.ts' }
+
+  it('opens a file tab (id keyed by path) and activates it, opening the panel', () => {
+    expect(openFileSurface(empty(), 'src/app.ts')).toEqual({
+      isOpen: true,
+      activeSurfaceId: 'file:src/app.ts',
+      surfaces: [APP],
+    })
+  })
+
+  it('appends a second distinct file tab, activating the new one', () => {
+    const one = openFileSurface(empty(), 'src/app.ts')
+    expect(openFileSurface(one, 'src/util.ts')).toEqual({
+      isOpen: true,
+      activeSurfaceId: 'file:src/util.ts',
+      surfaces: [APP, UTIL],
+    })
+  })
+
+  it('re-activates an already-open file (dedupe by path) instead of duplicating it', () => {
+    const both = openFileSurface(openFileSurface(empty(), 'src/app.ts'), 'src/util.ts')
+    const again = openFileSurface(both, 'src/app.ts')
+    expect(again.surfaces).toEqual([APP, UTIL]) // no duplicate appended
+    expect(again.activeSurfaceId).toBe('file:src/app.ts') // just re-activated
+  })
+
+  it('coexists with singleton surfaces (opened beside Review/Files)', () => {
+    const withReview = openSurface(empty(), 'review')
+    const withFile = openFileSurface(withReview, 'src/app.ts')
+    expect(withFile.surfaces).toEqual([REVIEW, APP])
+    expect(withFile.activeSurfaceId).toBe('file:src/app.ts')
   })
 })
 
@@ -308,8 +346,22 @@ describe('coerceSurface', () => {
     expect(coerceSurface({ id: 'files', kind: 'files' })).toEqual(FILES)
   })
 
+  it('accepts a well-formed persisted file tab (id matches file:<relativePath>)', () => {
+    expect(coerceSurface({ id: 'file:src/app.ts', kind: 'file', relativePath: 'src/app.ts' })).toEqual({
+      id: 'file:src/app.ts',
+      kind: 'file',
+      relativePath: 'src/app.ts',
+    })
+  })
+
+  it('drops a malformed file tab (missing/mismatched id, empty or non-string path)', () => {
+    expect(coerceSurface({ kind: 'file', relativePath: 'x' })).toBeNull() // no id
+    expect(coerceSurface({ id: 'file:wrong', kind: 'file', relativePath: 'x' })).toBeNull() // id≠file:x
+    expect(coerceSurface({ id: 'file:', kind: 'file', relativePath: '' })).toBeNull() // empty path
+    expect(coerceSurface({ id: 'file:5', kind: 'file', relativePath: 5 })).toBeNull() // non-string
+  })
+
   it('drops not-yet-implemented / unknown / malformed descriptors', () => {
-    expect(coerceSurface({ kind: 'file', relativePath: 'x' })).toBeNull()
     expect(coerceSurface({ kind: 'terminal' })).toBeNull()
     expect(coerceSurface({ kind: 'nope' })).toBeNull()
     expect(coerceSurface(null)).toBeNull()
@@ -420,6 +472,22 @@ describe('module singleton', () => {
       activeSurfaceId: 'files',
       surfaces: [FILES],
     })
+  })
+
+  it('opens + persists a file tab through the workspace-scoped wrapper', () => {
+    const storage = fakeStorage()
+    _resetSidePanelStore(storage)
+    openWorkspaceFileSurface('ws-a', 'src/app.ts')
+    const stored = readPanelMap(storage)['ws-a']
+    expect(stored).toEqual({
+      isOpen: true,
+      activeSurfaceId: 'file:src/app.ts',
+      surfaces: [{ id: 'file:src/app.ts', kind: 'file', relativePath: 'src/app.ts' }],
+    })
+    // Re-opening the same path just re-activates (no duplicate) and survives a reload round-trip.
+    openWorkspaceFileSurface('ws-a', 'src/app.ts')
+    _resetSidePanelStore(storage)
+    expect(getWorkspacePanel('ws-a').surfaces).toHaveLength(1)
   })
 
   it('notifies subscribers on a real change only', () => {

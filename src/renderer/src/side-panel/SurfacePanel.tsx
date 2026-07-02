@@ -4,31 +4,38 @@ import { cn } from '../lib/utils'
 import { ChangesPanel } from '../git/ChangesPanel'
 import { FilesSurface } from './FilesSurface'
 import { surfaceForChord } from './surface-keys'
-import { toggleSurface, type ExpandedSurface, type Surface } from './surface-model'
+import { resolveSurfaceChord, type ExpandedSurface, type Surface } from './surface-model'
 import { getSurfaceState, setSurfaceState } from './surface-state-store'
 
 /**
  * The right-hand side panel as a Surface stack (#187, ADR-0013 decision 1; CONTEXT.md
- * "Surface"). Collapsed, it renders four launcher CARDS — Review (⌃⇧G), Terminal,
- * Browser (⌘T), Files (⌘P) — top-aligned; at most ONE Surface is expanded at a time and
- * the cards show only when NONE is. Review re-homes the existing git Changes panel
- * behavior-identical (#84–#88); Files expands to a slice-2 placeholder; Terminal and
- * Browser are inert "Soon" cards (the sidebar Search/Scheduled/Plugins precedent).
+ * "Surface"). The PANEL ITSELF is toggled from the window header's PanelRight icon and
+ * is CLOSED by default (#187 follow-up — `open`/`onOpenChange` are owned by App next to
+ * the sidebar toggle, persisted app-globally). Open, it renders four launcher CARDS —
+ * Review (⌃⇧G), Terminal, Browser (⌘T), Files (⌘P) — top-aligned; at most ONE Surface is
+ * expanded at a time and the cards show only when NONE is. Review re-homes the existing
+ * git Changes panel behavior-identical (#84–#88); Files expands to a slice-2 placeholder;
+ * Terminal and Browser are inert "Soon" cards (the sidebar Search/Scheduled/Plugins
+ * precedent).
  *
  * The expanded choice persists PER Workspace across restart (localStorage, throw-tolerant
  * injected-storage store). Because App keys each `ConnectedWorkspace` (hence this panel)
  * by `agentId`, every Workspace has its own instance seeding from its own stored entry —
  * so switching Workspace restores that Workspace's Surface with no extra plumbing.
  *
- * Rendered by `ConnectedWorkspace` for the active/connected Workspace only. The state
- * machine is the pure `surface-model`; this component is a thin switch over it plus the
- * renderer-level keyboard handler.
+ * Rendered by `ConnectedWorkspace` for the active/connected Workspace only. When the
+ * panel is closed it renders NOTHING but stays mounted, so the shortcut listener stays
+ * live — ⌘P/⌃⇧G resolve through the pure `resolveSurfaceChord` (closed → open with that
+ * Surface; same Surface → close; other → switch). The state machine is the pure
+ * `surface-model`; this component is a thin switch over it plus the keyboard handler.
  */
 export function SurfacePanel({
   workspaceId,
   workspaceDir,
   isActive,
   busy,
+  open,
+  onOpenChange,
 }: {
   workspaceId: string
   workspaceDir: string
@@ -36,7 +43,11 @@ export function SurfacePanel({
   isActive: boolean
   /** Whether a turn is streaming (#86) — threaded to the Review panel's commit guard. */
   busy: boolean
-}): JSX.Element {
+  /** Whether the side panel is showing at all — App owns it (header PanelRight icon). */
+  open: boolean
+  /** Ask App to open/close the panel (a shortcut resolving across the closed state). */
+  onOpenChange: (open: boolean) => void
+}): JSX.Element | null {
   const [expanded, setExpanded] = useState<ExpandedSurface>(() =>
     getSurfaceState(window.localStorage, workspaceId),
   )
@@ -47,27 +58,33 @@ export function SurfacePanel({
     setSurfaceState(window.localStorage, workspaceId, next)
   }
 
-  // Renderer-level shortcuts (NO Electron accelerators): ⌘P toggles Files, ⌃⇧G toggles
-  // Review. Gated on `isActive` so a backgrounded (mounted-hidden) Workspace never grabs
-  // keys. Both chords carry a modifier, so plain typing never matches — a focused
-  // textarea is intentionally NOT exempt (⌘P must open Files even while composing); the
-  // composer's own Enter/Esc handling is untouched (those chords aren't ours). We
-  // preventDefault the match to stop the browser's ⌘P print dialog.
+  // Renderer-level shortcuts (NO Electron accelerators): ⌘P for Files, ⌃⇧G for Review,
+  // resolved against the WHOLE panel state (closed → open+Surface; same → close panel;
+  // other → switch). Gated on `isActive` so a backgrounded (mounted-hidden) Workspace
+  // never grabs keys; live even while the panel is CLOSED (this component stays mounted
+  // rendering null). Both chords carry a modifier, so plain typing never matches — a
+  // focused textarea is intentionally NOT exempt (⌘P must open Files even while
+  // composing); the composer's own Enter/Esc handling is untouched (those chords aren't
+  // ours). We preventDefault the match to stop the browser's ⌘P print dialog.
   useEffect(() => {
     if (!isActive) return
     function onKeyDown(e: KeyboardEvent): void {
       const surface = surfaceForChord(e)
       if (!surface) return
       e.preventDefault()
-      setExpanded((current) => {
-        const next = toggleSurface(current, surface)
-        setSurfaceState(window.localStorage, workspaceId, next)
-        return next
-      })
+      const next = resolveSurfaceChord({ open, expanded }, surface)
+      setExpanded(next.expanded)
+      setSurfaceState(window.localStorage, workspaceId, next.expanded)
+      if (next.open !== open) onOpenChange(next.open)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isActive, workspaceId])
+    // `expanded` in deps: the listener re-binds on each change (cheap) so the chord
+    // always resolves against fresh state without side effects inside an updater.
+  }, [isActive, workspaceId, open, expanded, onOpenChange])
+
+  // Closed panel: render nothing, keep the listener (the effect above) alive.
+  if (!open) return null
 
   if (expanded === 'review') {
     // The Review Surface IS the existing Changes panel, behavior-identical (#84–#88). It

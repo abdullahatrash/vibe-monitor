@@ -64,6 +64,10 @@ import {
   getSidebarCollapsed,
   setSidebarCollapsed as setSidebarCollapsedStore,
 } from './shell/sidebar-collapsed-store'
+import {
+  getSidePanelOpen,
+  setSidePanelOpen as setSidePanelOpenStore,
+} from './side-panel/side-panel-open-store'
 import { deriveUnifiedThreads, workspaceFlags, type UnifiedThreadRow } from './shell/unified-threads'
 
 /** A stable empty live-set for Workspaces with no live-state yet (no re-alloc). */
@@ -103,6 +107,15 @@ export function App(): JSX.Element {
       setSidebarCollapsedStore(window.localStorage, next)
       return next
     })
+  }
+  // Whether the right SIDE PANEL is open (#187 follow-up): the header's PanelRight icon
+  // toggles it (the sidebar toggle's mirror), CLOSED by default. App-global chrome —
+  // WHICH Surface shows inside stays per-Workspace (surface-state-store). A Surface
+  // shortcut (⌘P/⌃⇧G) can also open/close it via `setSidePanelOpenState`.
+  const [sidePanelOpen, setSidePanelOpen] = useState(() => getSidePanelOpen(window.localStorage))
+  function setSidePanelOpenState(open: boolean): void {
+    setSidePanelOpen(open)
+    setSidePanelOpenStore(window.localStorage, open)
   }
   // Navigation (decision 2): WHICH Workspace/Thread the user is looking at —
   // lifted here so the connect flow (Open project, Continue, sign-in) can drive it.
@@ -656,6 +669,8 @@ export function App(): JSX.Element {
           isLive={isLive}
           isActive={isActive}
           busy={busy}
+          sidePanelOpen={sidePanelOpen}
+          onSidePanelOpenChange={setSidePanelOpenState}
           seedSessionId={seed}
           controls={
             // A bound Thread sources its OWN live config (#70); a draft (no config
@@ -837,9 +852,15 @@ export function App(): JSX.Element {
           </IconButton>
         </div>
         <div className="flex-1" />
-        {/* placeholder — layout / view modes (#future) */}
+        {/* Right-region layout controls: the side-panel toggle is LIVE (#187 follow-up,
+            the design's header affordance); Terminal/Expand stay placeholders (#future). */}
         <div className="flex items-center gap-0.5 [-webkit-app-region:no-drag]">
-          <IconButton size="icon-sm" aria-label="Toggle side panel" title="Toggle side panel">
+          <IconButton
+            size="icon-sm"
+            aria-label={sidePanelOpen ? 'Close side panel' : 'Open side panel'}
+            title={sidePanelOpen ? 'Close side panel' : 'Open side panel'}
+            onClick={() => setSidePanelOpenState(!sidePanelOpen)}
+          >
             <PanelRight className="size-4" aria-hidden />
           </IconButton>
           <IconButton size="icon-sm" aria-label="Toggle terminal" title="Toggle terminal">

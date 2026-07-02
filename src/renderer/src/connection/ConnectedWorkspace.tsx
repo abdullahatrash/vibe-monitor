@@ -39,8 +39,6 @@ export function ConnectedWorkspace({
   busy,
   seedSessionId,
   controls,
-  sidePanelOpen,
-  onSidePanelOpenChange,
   onSetConfig,
   onBound,
   onContinue,
@@ -69,10 +67,6 @@ export function ConnectedWorkspace({
   seedSessionId: string | null
   /** The active Thread's OWN agent-controls (#70), or null when none are seeded yet. */
   controls: ThreadAgentControls | null
-  /** Whether the right side panel is open (#187 follow-up) — App owns it (header icon). */
-  sidePanelOpen: boolean
-  /** Open/close the side panel (a Surface shortcut resolving across the closed state). */
-  onSidePanelOpenChange: (open: boolean) => void
   /** Change an agent control on the active Thread (#66/#70, ADR-0007): a bound session
    *  fires the IPC; a null session is a draft pre-pick App caches to apply on bind (#75). */
   onSetConfig: (axis: ThreadConfigAxis, value: string, sessionId: string | null) => void
@@ -109,17 +103,16 @@ export function ConnectedWorkspace({
           <ColdThread key={activeThread.id} thread={activeThread} onClose={onCloseCold} onContinue={onContinue} />
         )}
       </div>
-      {/* The right side panel (#187, ADR-0013): header-toggled, closed by default; open,
-          it shows the Surface stack (launcher cards / one expanded Surface). Review
-          re-homes the streamed git panel (#84, active-Workspace-only); Files is the
-          slice-2 placeholder. Stays mounted while closed so ⌘P/⌃⇧G can open it. */}
+      {/* The right side panel (#193, ADR-0013): a t3code Sheet/tab surface stack, header-
+          toggled and closed by default. Open Surfaces show as tabs (Review re-homes the
+          streamed git panel #84 active-Workspace-only; Files is the slice-2 placeholder);
+          zero open shows the launcher cards. Owns its per-Workspace state via the shared
+          side-panel-store; stays mounted while closed so ⌘P/⌃⇧G can open it. */}
       <SurfacePanel
         workspaceId={connection.workspaceId}
         workspaceDir={connection.workspaceDir}
         isActive={isActive}
         busy={busy}
-        open={sidePanelOpen}
-        onOpenChange={onSidePanelOpenChange}
       />
     </div>
   )

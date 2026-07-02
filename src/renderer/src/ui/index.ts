@@ -69,3 +69,7 @@ export {
   MenuRadioGroup,
   MenuRadioItem,
 } from './menu'
+
+export { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem } from './context-menu'
+
+export { Sheet, SheetPopup } from './sheet'

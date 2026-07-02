@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState, type JSX, type ReactNode } from 'react'
+import { useEffect, useReducer, useRef, useState, type JSX, type ReactNode } from 'react'
 import type {
   AuthMethod,
   ListMetadataResult,
@@ -65,9 +65,10 @@ import {
   setSidebarCollapsed as setSidebarCollapsedStore,
 } from './shell/sidebar-collapsed-store'
 import {
-  getSidePanelOpen,
-  setSidePanelOpen as setSidePanelOpenStore,
-} from './side-panel/side-panel-open-store'
+  removeWorkspacePanel,
+  toggleWorkspacePanelVisibility,
+  useWorkspacePanel,
+} from './side-panel/side-panel-store'
 import { deriveUnifiedThreads, workspaceFlags, type UnifiedThreadRow } from './shell/unified-threads'
 
 /** A stable empty live-set for Workspaces with no live-state yet (no re-alloc). */
@@ -108,17 +109,6 @@ export function App(): JSX.Element {
       return next
     })
   }
-  // Whether the right SIDE PANEL is open (#187 follow-up): the header's PanelRight icon
-  // toggles it (the sidebar toggle's mirror), CLOSED by default. App-global chrome —
-  // WHICH Surface shows inside stays per-Workspace (surface-state-store). A Surface
-  // shortcut (⌘P/⌃⇧G) can also open/close it via `setSidePanelOpenState`.
-  const [sidePanelOpen, setSidePanelOpen] = useState(() => getSidePanelOpen(window.localStorage))
-  // Stable identity (review fold): this reaches SurfacePanel's keydown-effect deps, and a
-  // fresh function every App render would re-bind the window listener on every ACP tick.
-  const setSidePanelOpenState = useCallback((open: boolean): void => {
-    setSidePanelOpen(open)
-    setSidePanelOpenStore(window.localStorage, open)
-  }, [])
   // Navigation (decision 2): WHICH Workspace/Thread the user is looking at —
   // lifted here so the connect flow (Open project, Continue, sign-in) can drive it.
   const [nav, navDispatch] = useReducer(navReducer, initialNavState)
@@ -228,6 +218,9 @@ export function App(): JSX.Element {
       setStatuses((prev) => removedThreadIds.reduce((acc, id) => clearThreadStatus(acc, id), prev))
       for (const id of removedThreadIds) clearDraft(window.localStorage, id)
     }
+    // Drop the side-panel entry too (#193): workspaceIds are fresh UUIDs, so a removed
+    // Workspace's open-tabs blob would otherwise sit unreachable in localStorage forever.
+    removeWorkspacePanel(workspaceId)
     await refreshRecents()
   }
 
@@ -603,6 +596,12 @@ export function App(): JSX.Element {
   const connectedIds = connectedWorkspaceIds(connections)
   const selectedWs = nav.selectedWorkspaceId
   const selected = selectedConnection(connections, selectedWs)
+  // The selected Workspace's side-panel state (#193): the window-header PanelRight icon
+  // reflects + toggles the ACTIVE Workspace's panel directly through the shared
+  // side-panel-store (per-Workspace, replacing the old app-global open flag). An empty-
+  // string key when nothing's selected resolves to the frozen closed state; the toggle
+  // then no-ops (no panel is mounted to show anyway — the panel lives in a connected view).
+  const activePanel = useWorkspacePanel(selectedWs ?? '')
   // The selected Workspace's display name, for the empty-state hero headline (#113).
   const selectedWorkspaceName = recents.find((w) => w.id === selectedWs)?.displayName ?? null
 
@@ -671,8 +670,6 @@ export function App(): JSX.Element {
           isLive={isLive}
           isActive={isActive}
           busy={busy}
-          sidePanelOpen={sidePanelOpen}
-          onSidePanelOpenChange={setSidePanelOpenState}
           seedSessionId={seed}
           controls={
             // A bound Thread sources its OWN live config (#70); a draft (no config
@@ -854,14 +851,17 @@ export function App(): JSX.Element {
           </IconButton>
         </div>
         <div className="flex-1" />
-        {/* Right-region layout controls: the side-panel toggle is LIVE (#187 follow-up,
-            the design's header affordance); Terminal/Expand stay placeholders (#future). */}
+        {/* Right-region layout controls: the side-panel toggle is LIVE (#193, the design's
+            header affordance — toggles the ACTIVE Workspace's panel visibility via the
+            store); Terminal/Expand stay placeholders (#future). */}
         <div className="flex items-center gap-0.5 [-webkit-app-region:no-drag]">
           <IconButton
             size="icon-sm"
-            aria-label={sidePanelOpen ? 'Close side panel' : 'Open side panel'}
-            title={sidePanelOpen ? 'Close side panel' : 'Open side panel'}
-            onClick={() => setSidePanelOpenState(!sidePanelOpen)}
+            aria-label={activePanel.isOpen ? 'Close side panel' : 'Open side panel'}
+            title={activePanel.isOpen ? 'Close side panel' : 'Open side panel'}
+            onClick={() => {
+              if (selectedWs) toggleWorkspacePanelVisibility(selectedWs)
+            }}
           >
             <PanelRight className="size-4" aria-hidden />
           </IconButton>

@@ -1,4 +1,4 @@
-import type { Surface } from './surface-model'
+import type { SingletonKind } from './side-panel-store'
 
 /** The subset of a `KeyboardEvent` the shortcut matcher reads (DOM-free for testing). */
 export interface KeyChord {
@@ -20,7 +20,7 @@ export interface KeyChord {
  * can be left to type normally EXCEPT these two combos (neither is a typing combo), which
  * stay live even while a textarea has focus.
  */
-export function surfaceForChord(chord: KeyChord): Surface | null {
+export function surfaceForChord(chord: KeyChord): SingletonKind | null {
   const key = chord.key.toLowerCase()
   // ⌘P → Files. Meta only (no ctrl/alt/shift) so ⌘⇧P and ⌃P stay free.
   if (key === 'p' && chord.metaKey && !chord.ctrlKey && !chord.altKey && !chord.shiftKey) {

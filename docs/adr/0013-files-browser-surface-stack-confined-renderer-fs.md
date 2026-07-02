@@ -16,24 +16,33 @@ a `@pierre/trees` tree fed by a flat `{path, kind}[]` listing, with a preview pa
 
 ## Decision
 
-1. **The right panel becomes a header-toggled Surface stack.** The side panel is CLOSED by default
-   and opens from the window header's PanelRight icon (the left sidebar toggle's mirror; app-global,
-   persisted) — it is NOT an always-visible dock. Open with no Surface expanded, it renders launcher
-   cards (Review / Terminal / Browser / Files); at most one Surface expands at a time (per-Workspace,
-   persisted). Review wires the existing git Changes panel (#119) into this model; Terminal and
-   Browser are inert "Soon" cards reserved for their epics. Shortcuts resolve across the closed
-   state: ⌘P from anywhere = open the panel with Files expanded (tree-search focused), pressed again
-   = close it; ⌃⇧G the same for Review. Active/connected Workspace only (ADR-0008 precedent).
-2. **Files browser = t3code's shape on our stack, plus tabs.** Tree = `@pierre/trees` (new dep;
-   preact/shadow-DOM widget, React 19 peer, NO shiki dependency — cannot reintroduce the #159
-   duplication) fed by `files:list`, with SEARCH first-class (the tree's hide-non-matches filter; ⌘P
-   opens Files with search focused); no file open → tree fills the Surface; opening files shows the
-   READ-ONLY preview pane beside the tree, where each opened file is a TAB (many open, one visible —
-   renderer-only ephemeral state) topped by a read-only BREADCRUMB of its path. Preview highlights via
-   the SAME `@pierre/diffs` shared-shiki path the git panel uses (one highlighter, already
-   regression-gated by #159 tests). Preview actions: Reveal in Finder (reuses the #116 `revealPath`
-   IPC) and Insert `@path` into the composer (renderer-only draft append). We take t3code's layout —
-   diverging where the design says so (t3code has no tab strip; ours does) — but NOT its editability
+1. **The right panel is t3code's Sheet/tab model** (third and FINAL iteration of this decision —
+   supersedes both the always-visible stack of #187/#191 and the cards-as-primary toggle of #192;
+   reference: t3code `rightPanelStore.ts` + `RightPanelTabs.tsx` + `RightPanelSheet.tsx`). The panel
+   owns an ORDERED LIST of open Surface descriptors + an active id + an open flag, scoped
+   PER-WORKSPACE (t3code scopes per-Thread; our Threads share the Workspace working tree, so
+   Workspace is our unit) and persisted. Open Surfaces render as a TAB STRIP (icon + label + close ×;
+   context menu: Close / Close others / Close to the right / Copy path for file tabs); the active
+   tab's content shows below. `review` and `files` are singleton kinds; each previewed file is its
+   own dynamic `file:<path>` Surface (#189); `terminal`/`browser` kinds are reserved. The panel is
+   CLOSED by default and toggled from the window header's PanelRight icon; with ZERO open Surfaces it
+   shows the mockup's launcher cards as the EMPTY STATE (Review ⌃⇧G / Terminal / Browser / Files ⌘P,
+   the reserved two inert) — opening a Surface replaces cards with tabs, closing the last tab returns
+   to them. Shortcuts toggle their Surface from anywhere, opening the panel when closed (⌘P = files,
+   ⌃⇧G = review). PRESENTATION is dual, t3code-style: inline beside the conversation on wide windows;
+   on narrow windows (≤980px) a **Sheet** — a slide-over from the right edge over the conversation
+   with a dimmed backdrop, Esc/outside-click closing (copy-adapt t3code `ui/sheet.tsx` onto our
+   base-ui Dialog primitive). Active/connected Workspace only (ADR-0008 precedent).
+2. **Files browser = t3code's shape on our stack.** Tree = `@pierre/trees` (new dep; preact/
+   shadow-DOM widget, React 19 peer, NO shiki dependency — cannot reintroduce the #159 duplication)
+   fed by `files:list`, with SEARCH first-class (the tree's hide-non-matches filter; ⌘P opens the
+   Files Surface with search focused). The Files Surface's content is the tree; opening a file from
+   it creates a PANEL-LEVEL `file:<path>` Surface tab (#189) whose content is the READ-ONLY preview
+   topped by a read-only BREADCRUMB of its path (we simplify t3code here: no explorer column inside
+   the file Surface — the tree stays in the Files tab). Preview highlights via the SAME
+   `@pierre/diffs` shared-shiki path the git panel uses (one highlighter, already regression-gated by
+   #159 tests). Preview actions: Reveal in Finder (reuses the #116 `revealPath` IPC) and Insert
+   `@path` into the composer (renderer-only draft append). NOT t3code's editability
    (`EditableFileSurface`): editing means a renderer-facing write IPC, deliberately out of scope.
 3. **Two new renderer-facing fs IPCs, BOTH Workspace-confined and symlink-resolved** (the #116
    `open-target.ts` posture): `files:list(workspaceId)` → flat `{path, kind}[]` + `truncated`

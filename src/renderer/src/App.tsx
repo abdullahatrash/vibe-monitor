@@ -133,13 +133,31 @@ export function App(): JSX.Element {
 
   /**
    * Select a Thread from the sidebar (TB3 #48): pin it in nav (the single source of
-   * truth) and, for a connected Workspace, remember it as the active (kept-mounted)
-   * Thread so backgrounding the Workspace keeps it streaming.
+   * truth) and open it READY TO RESUME — no Continue step (#resume-on-first-prompt):
+   *
+   * - Connected Workspace: host the Thread live immediately (`open`). Conversation
+   *   hydrates its JSONL history for instant reading, the composer is ENABLED, and
+   *   its FIRST prompt resumes the stored session via main's `ensureBoundSession`
+   *   (`session/load`, re-binding fresh + "context reset" notice on failure) — the
+   *   exact lazy binding a draft uses, so reading stays free until you actually send.
+   * - No connection yet (cold app start / evicted agent): auto-continue — spawn-or-
+   *   reuse the Workspace agent seeded with THIS Thread (`continueColdThread`), the
+   *   same call the old Continue button made, just without the button.
+   * - Connecting / sign-in / error: nav-select only; the transient outlet resolves.
    */
   function selectThreadInWorkspace(workspaceId: string, threadId: string): void {
     navDispatch({ type: 'select-thread', workspaceId, threadId })
+    const status = connections[workspaceId]?.status
+    if (status === 'connected') {
+      wtDispatch({ type: 'open', workspaceId, threadId })
+      return
+    }
     if (workspaceThreadStateFor(workspaceThreads, workspaceId)) {
       wtDispatch({ type: 'select', workspaceId, threadId })
+    }
+    if (status === undefined) {
+      const meta = threadsForWorkspace(recents, workspaceId).find((t) => t.id === threadId)
+      if (meta) void continueColdThread(meta)
     }
   }
 

@@ -13,6 +13,7 @@ import {
 import type { GhPr, GhPrResult, GitBranch as GitBranchInfo, GitStatus } from '../../../shared/ipc'
 import { cn } from '../lib/utils'
 import { Badge, Button, IconButton, Input, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Textarea } from '../ui'
+import { getCommitDraft, setCommitDraft } from './commit-draft-store'
 import { buildChangesView, reconcileUnchecked, type GitFileView } from './status-view'
 import { DiffWorkerProvider } from './DiffWorkerProvider'
 import { DiffView } from './DiffView'
@@ -73,8 +74,13 @@ export function ChangesPanel({
   // Commit-time file selection (#86), tracked as the paths the user DESELECTED — default
   // empty = all selected, so a new file is selected by default. `message` is the commit
   // message; `committing` blocks a double-submit; `commitError` surfaces git's reason.
-  const [unchecked, setUnchecked] = useState<Set<string>>(() => new Set())
-  const [message, setMessage] = useState('')
+  // Both seed from the module-level draft store: Surface collapse now UNMOUNTS this panel
+  // (#187) where the old collapse merely hid it, so without the store a half-typed commit
+  // message would be one accidental ⌃⇧G away from vanishing.
+  const [unchecked, setUnchecked] = useState<Set<string>>(
+    () => new Set(getCommitDraft(workspaceDir)?.unchecked ?? []),
+  )
+  const [message, setMessage] = useState(() => getCommitDraft(workspaceDir)?.message ?? '')
   const [committing, setCommitting] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
   // Bumped by the header refresh button so the PR section re-fetches `ghCurrentPr` on a
@@ -101,6 +107,12 @@ export function ChangesPanel({
     const paths = status?.isRepo ? status.files.map((f) => f.path) : []
     setUnchecked((prev) => reconcileUnchecked(prev, paths))
   }, [status])
+
+  // Mirror the live draft into the store on every change (#187): a successful commit
+  // clears `message`, which empties (deletes) the entry via setCommitDraft's residue rule.
+  useEffect(() => {
+    setCommitDraft(workspaceDir, { message, unchecked })
+  }, [workspaceDir, message, unchecked])
 
   // Manual refresh: a subscribe/unsubscribe pair re-emits a fresh snapshot without
   // changing the net ref-count (the panel keeps its own hold across this).

@@ -73,6 +73,16 @@ export class TranscriptBridge {
     this.tombstoned.add(threadId)
   }
 
+  /**
+   * Whether a Thread is tombstoned — lets sibling persistence (the attachment
+   * save in `runPromptTurn`) skip alongside the suppressed tee, so a
+   * removeWorkspace racing an in-flight prompt can't re-create the Thread's
+   * attachments dir after its delete (same hazard class the tee guard closes).
+   */
+  isTombstoned(threadId: string): boolean {
+    return this.tombstoned.has(threadId)
+  }
+
   /** Resolve the Thread id for a chokepoint, or null to skip the tee (best-effort). */
   threadIdFor(agentId: string, sessionId?: string | null): string | null {
     return this.deps.resolveBySession(sessionId ?? null) ?? this.threads.get(agentId) ?? null

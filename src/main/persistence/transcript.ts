@@ -1,6 +1,6 @@
 import { appendFile, readFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { TranscriptEntry } from '../../shared/ipc'
+import type { TranscriptEntry, TranscriptImageRef } from '../../shared/ipc'
 
 /**
  * The per-Thread visible-conversation transcript we OWN (ADR-0005). The main
@@ -60,9 +60,18 @@ export function transcriptVersionOf(raw: string): number {
   return TRANSCRIPT_SCHEMA_VERSION
 }
 
-/** The user's prompt, teed at `sendPrompt` — mirrors the `send-prompt` action. */
-export function userPromptEntry(id: string, text: string): TranscriptEntry {
-  return { t: 'user-prompt', id, text }
+/**
+ * The user's prompt, teed at `sendPrompt` — mirrors the `send-prompt` action.
+ * `images` are the refs of the prompt's attachments already persisted by the
+ * `AttachmentStore` (omitted entirely when none survived — an image-less entry
+ * stays byte-identical to the legacy shape).
+ */
+export function userPromptEntry(
+  id: string,
+  text: string,
+  images?: TranscriptImageRef[],
+): TranscriptEntry {
+  return images && images.length > 0 ? { t: 'user-prompt', id, text, images } : { t: 'user-prompt', id, text }
 }
 
 /** A streamed payload, teed at the `acp:event` forward — mirrors `acp-event`. */

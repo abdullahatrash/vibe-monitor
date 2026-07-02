@@ -22,19 +22,50 @@ import {
  *    and a log whose final turn was cut off (app closed before its terminal entry)
  *    would otherwise leave a phantom in-flight spinner.
  */
-export function replayTranscript(entries: TranscriptEntry[]): ConversationState {
+/**
+ * A Thread's persisted attachments (`file name -> data URL`), the reply of the
+ * batched `readThreadAttachments` IPC. Resolved against each `user-prompt`
+ * entry's image refs so a replayed prompt renders its images; a ref whose file
+ * is missing from the map (deleted/corrupt on disk) is silently omitted — the
+ * prompt degrades to text-only, replay never breaks.
+ */
+export type AttachmentMap = Readonly<Record<string, string>>
+
+/** Whether any entry references persisted images — gates the attachments IPC. */
+export function transcriptHasImages(entries: TranscriptEntry[]): boolean {
+  return entries.some((e) => e.t === 'user-prompt' && (e.images?.length ?? 0) > 0)
+}
+
+export function replayTranscript(
+  entries: TranscriptEntry[],
+  attachments?: AttachmentMap,
+): ConversationState {
   let state = initialConversationState
   for (const entry of entries) {
-    state = conversationReducer(state, toAction(entry, state))
+    state = conversationReducer(state, toAction(entry, state, attachments))
   }
   return state.isProcessing ? { ...state, isProcessing: false } : state
 }
 
 /** Map one logged entry to its reducer action (using `state` to recover names). */
-function toAction(entry: TranscriptEntry, state: ConversationState): ConversationAction {
+function toAction(
+  entry: TranscriptEntry,
+  state: ConversationState,
+  attachments?: AttachmentMap,
+): ConversationAction {
   switch (entry.t) {
-    case 'user-prompt':
-      return { type: 'send-prompt', id: entry.id, text: entry.text }
+    case 'user-prompt': {
+      const images = entry.images
+        ?.map((ref) => attachments?.[ref.file])
+        .filter((url): url is string => typeof url === 'string')
+        .map((previewUrl) => ({ previewUrl }))
+      return {
+        type: 'send-prompt',
+        id: entry.id,
+        text: entry.text,
+        images: images && images.length > 0 ? images : undefined,
+      }
+    }
     case 'acp-event':
       return { type: 'acp-event', payload: entry.payload }
     case 'turn-complete':

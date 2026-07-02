@@ -123,6 +123,29 @@ describe('TranscriptStore read / parseTranscript', () => {
     const read = await store.read(id)
     expect(read).toEqual([{ t: 'user-prompt', id: 'u1', text: 'hi' }])
   })
+
+  it('parses a user-prompt WITH image refs and a legacy one WITHOUT, side by side', () => {
+    // The additive optional `images` needs no schema-version bump: the guard
+    // discriminates on `t` alone, so legacy lines and new lines coexist in one log.
+    const raw =
+      '{"t":"user-prompt","id":"u1","text":"old"}\n' +
+      '{"t":"user-prompt","id":"u2","text":"new","images":[{"file":"a.png","mimeType":"image/png"}]}\n'
+
+    expect(parseTranscript(raw)).toEqual([
+      { t: 'user-prompt', id: 'u1', text: 'old' },
+      { t: 'user-prompt', id: 'u2', text: 'new', images: [{ file: 'a.png', mimeType: 'image/png' }] },
+    ])
+  })
+})
+
+describe('userPromptEntry images', () => {
+  it('carries the refs when given, and omits the field entirely when absent or empty', () => {
+    const refs = [{ file: 'a.png', mimeType: 'image/png' }]
+    expect(userPromptEntry('u1', 'hi', refs)).toEqual({ t: 'user-prompt', id: 'u1', text: 'hi', images: refs })
+    // Legacy byte-identical shape — no `images` key, not even undefined.
+    expect(userPromptEntry('u2', 'hi')).toEqual({ t: 'user-prompt', id: 'u2', text: 'hi' })
+    expect('images' in userPromptEntry('u3', 'hi', [])).toBe(false)
+  })
 })
 
 describe('TranscriptStore schema versioning (ADR-0005 hardening)', () => {

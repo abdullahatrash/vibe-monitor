@@ -3,11 +3,13 @@
 > You are picking up an in-flight project. Read this top to bottom once, then keep it open.
 > It tells you **what this is**, **how we work**, **what exists**, **what's next**, and **where the
 > authoritative information lives** (in-repo docs + the local reference repos in §4). Last updated
-> 2026-07-01, `main` @ `3485094` or later, **675 tests**. 🎉 **The design-system epic (PRD #109) is COMPLETE** —
+> 2026-07-02, `main` @ `4a0104f` or later, **691 tests**. 🎉 **The design-system epic (PRD #109) is COMPLETE** —
 > ALL slices shipped (#110 tokens · #111 primitives · #112 streamdown spike · #113 shell · #114–#116 conversation
 > core · #117 composer · #118 auth · #119 git panel, plus the sidebar cluster #127–#134/#138). Every UI area now
 > runs on tokens + primitives. **There is NO active epic — the next one is the user's call** (see §6 for the
-> roadmap + a small open follow-up backlog). `docs/NEXT-SESSION.md` is the copy-paste kickoff. Values live in
+> roadmap + a small open follow-up backlog). **Five draft feature epics are now FILED and ready to pick up:**
+> #174 Search · #175 Scheduled · #176 Plugins · #177 Project actions · #178 Open in IDE (see §6 "Draft feature
+> epics"). `docs/NEXT-SESSION.md` is the copy-paste kickoff. Values live in
 > ADR-0010..0012 + `docs/design-tokens.md` + `docs/design-system-components.md` + `docs/streamdown-spike.md`.
 > `$`/`@` autocomplete stays paused.
 
@@ -319,9 +321,28 @@ review round):** the in-flight latch MUST be module-level per-Thread (`sending` 
 
 ## 6. What's next
 
-**The DESIGN-SYSTEM epic (PRD #109) is ~HALF DONE — `docs/NEXT-SESSION.md` is the copy-paste kickoff for the
-next session.** Pipeline was: `/grill-with-docs` → **ADR-0010** + `docs/design-tokens.md` +
-`docs/design-system-components.md` → PRD #109 → `/to-issues` (#110–#119).
+**The DESIGN-SYSTEM epic (PRD #109) is COMPLETE (all slices merged).** Pipeline was: `/grill-with-docs` →
+**ADR-0010** + `docs/design-tokens.md` + `docs/design-system-components.md` → PRD #109 → `/to-issues`
+(#110–#119). **There is no active epic; the next one is the user's call.** The ► SHIPPED block below records
+what landed; the remaining-slices block is retained only as build-order history (those slices are now merged).
+
+**► DRAFT FEATURE EPICS (filed, ready to pick up & refine — each is a `(draft)` GitHub issue with a slice
+breakdown + open questions, anchored to the reference repos; none is `ready-for-agent` yet):**
+- **#174 Search** — find across local Threads & transcripts. Natural first: we already own the data
+  (`MetadataStore` titles + `TranscriptStore` JSONL), so it's a read-only local index, no agent.
+- **#175 Scheduled** — run a prompt in a Workspace on a schedule (persisted store + a scheduler sweep firing
+  headless turns via the pool). Key tensions: app must be running (no daemon); approval posture with no user present.
+- **#176 Plugins** — manage the agent's extensions / tool providers. Least-defined; **slice 1 is a protocol
+  spike** (what does `vibe-acp` expose?) — may be blocked on Vibe (ADR-0002: thin orchestrator).
+- **#177 Project actions** — user-defined per-Workspace shell commands ("Add action", from **t3code**'s
+  `ProjectScriptsControl.tsx`): run/test/build/lint with icons + keybindings, streamed output. Reuses
+  `shell-env.ts` + process supervision.
+- **#178 Open in IDE** — a header target-picker to open the Workspace in an external editor (from **CodexMonitor**'s
+  `OpenAppTarget` select + **t3code**'s `shell.openInEditor`). Generalizes the existing reveal-in-Finder seam.
+
+The first three (#174–#176) are the sidebar's current static **"Soon"** placeholders (New chat PR #161); the
+last two (#177–#178) are header features mined from the reference apps. Refine scope (a PRD / grill-with-docs)
+before starting any.
 
 **► SHIPPED (all merged to `main`):**
 - **Foundation:** #110 token layer (warm/rounded/soft-orange in `styles.css`) · #111 primitive library

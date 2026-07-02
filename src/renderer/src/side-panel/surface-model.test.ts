@@ -3,6 +3,7 @@ import {
   coerceExpandedSurface,
   collapseSurface,
   EXPANDABLE_SURFACES,
+  resolveSurfaceChord,
   toggleSurface,
 } from './surface-model'
 
@@ -50,5 +51,42 @@ describe('coerceExpandedSurface', () => {
 describe('EXPANDABLE_SURFACES', () => {
   it('is exactly the two live Surfaces', () => {
     expect([...EXPANDABLE_SURFACES]).toEqual(['review', 'files'])
+  })
+})
+
+// #187 follow-up: the panel itself is header-toggled and defaults closed, so a shortcut
+// resolves against the WHOLE panel state (open + expanded), not just the Surface.
+describe('resolveSurfaceChord', () => {
+  it('opens a closed panel with that Surface expanded', () => {
+    expect(resolveSurfaceChord({ open: false, expanded: null }, 'files')).toEqual({
+      open: true,
+      expanded: 'files',
+    })
+    expect(resolveSurfaceChord({ open: false, expanded: 'review' }, 'files')).toEqual({
+      open: true,
+      expanded: 'files',
+    })
+  })
+
+  it('closes the panel when its Surface is already expanded, keeping the choice', () => {
+    expect(resolveSurfaceChord({ open: true, expanded: 'files' }, 'files')).toEqual({
+      open: false,
+      expanded: 'files',
+    })
+    expect(resolveSurfaceChord({ open: true, expanded: 'review' }, 'review')).toEqual({
+      open: false,
+      expanded: 'review',
+    })
+  })
+
+  it('switches Surface when the panel is open on another (or none)', () => {
+    expect(resolveSurfaceChord({ open: true, expanded: 'review' }, 'files')).toEqual({
+      open: true,
+      expanded: 'files',
+    })
+    expect(resolveSurfaceChord({ open: true, expanded: null }, 'review')).toEqual({
+      open: true,
+      expanded: 'review',
+    })
   })
 })

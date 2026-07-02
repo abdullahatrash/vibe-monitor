@@ -38,8 +38,10 @@ _Avoid_: approval, confirmation, prompt (reserve "prompt" for the user's message
 
 **Surface**:
 One of the expandable areas stacked in the right-hand side panel — Review, Terminal, Browser, Files.
-Collapsed, each Surface shows as a launcher card; at most one is expanded at a time. Review hosts the
-git Changes panel; Files hosts the Files browser; Terminal and Browser are reserved (not yet built).
+The side panel itself is closed by default and toggled from the window header (or a Surface's
+shortcut); open, each Surface shows as a launcher card and at most one is expanded at a time. Review
+hosts the git Changes panel; Files hosts the Files browser; Terminal and Browser are reserved (not
+yet built).
 _Avoid_: tab, view, pane, dock (reserve "dock" for the future embedded terminal's chrome).
 
 **Files browser**:

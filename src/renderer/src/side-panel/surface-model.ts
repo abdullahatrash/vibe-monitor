@@ -39,3 +39,24 @@ export function collapseSurface(): ExpandedSurface {
 export function coerceExpandedSurface(raw: unknown): ExpandedSurface {
   return raw === 'review' || raw === 'files' ? raw : null
 }
+
+/** The side panel's full keyboard-visible state: open at all + which Surface, if any. */
+export interface SidePanelState {
+  open: boolean
+  expanded: ExpandedSurface
+}
+
+/**
+ * Resolve a Surface shortcut (⌘P / ⌃⇧G) against the WHOLE panel state (#187 follow-up:
+ * the panel itself is toggled from the window header's PanelRight icon and defaults
+ * CLOSED, so a shortcut must be able to open it):
+ *  - panel closed              → open it with that Surface expanded (one keystroke in);
+ *  - open, SAME Surface        → close the panel (one keystroke back out) — the expanded
+ *    choice is kept, so the header icon reopens where you left off;
+ *  - open, other/none expanded → switch to (expand) that Surface, panel stays open.
+ */
+export function resolveSurfaceChord(state: SidePanelState, surface: Surface): SidePanelState {
+  if (!state.open) return { open: true, expanded: surface }
+  if (state.expanded === surface) return { open: false, expanded: surface }
+  return { open: true, expanded: surface }
+}

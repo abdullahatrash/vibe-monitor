@@ -16,11 +16,14 @@ a `@pierre/trees` tree fed by a flat `{path, kind}[]` listing, with a preview pa
 
 ## Decision
 
-1. **The right panel becomes a Surface stack.** Collapsed, it renders launcher cards (Review /
-   Terminal / Browser / Files); at most one Surface expands at a time. Review wires the existing git
-   Changes panel (#119) into this model; Terminal and Browser are inert "Soon" cards reserved for
-   their epics; ⌘P opens Files with tree-search focused, ⌃⇧G toggles Review. Active/connected
-   Workspace only (ADR-0008 precedent).
+1. **The right panel becomes a header-toggled Surface stack.** The side panel is CLOSED by default
+   and opens from the window header's PanelRight icon (the left sidebar toggle's mirror; app-global,
+   persisted) — it is NOT an always-visible dock. Open with no Surface expanded, it renders launcher
+   cards (Review / Terminal / Browser / Files); at most one Surface expands at a time (per-Workspace,
+   persisted). Review wires the existing git Changes panel (#119) into this model; Terminal and
+   Browser are inert "Soon" cards reserved for their epics. Shortcuts resolve across the closed
+   state: ⌘P from anywhere = open the panel with Files expanded (tree-search focused), pressed again
+   = close it; ⌃⇧G the same for Review. Active/connected Workspace only (ADR-0008 precedent).
 2. **Files browser = t3code's shape on our stack, plus tabs.** Tree = `@pierre/trees` (new dep;
    preact/shadow-DOM widget, React 19 peer, NO shiki dependency — cannot reintroduce the #159
    duplication) fed by `files:list`, with SEARCH first-class (the tree's hide-non-matches filter; ⌘P

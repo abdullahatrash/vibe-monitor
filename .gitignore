@@ -11,3 +11,7 @@ dist/
 .env.local
 .vibe-mistro/
 bun.lock
+
+# Playwright e2e artifacts (baselines in e2e/*-snapshots/ ARE committed).
+test-results/
+playwright-report/

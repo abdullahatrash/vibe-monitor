@@ -61,6 +61,15 @@ import { registerGitIpc } from './git/register-ipc'
 import { registerFilesIpc } from './files/register-ipc'
 import { FilesListCache, shouldInvalidateFilesCacheOnGitStatus } from './files/cache'
 
+// Test seam (e2e smoke): point the whole persisted profile (metadata.json +
+// transcripts) at a throwaway dir so the suite launches against a KNOWN state
+// (fresh first-run, or a pre-seeded fixture) without touching the real profile.
+// Must run before `app.whenReady()` — `userData` is read at ready. No-op in
+// normal launches (the env var is unset).
+if (process.env.VIBE_MISTRO_USER_DATA) {
+  app.setPath('userData', process.env.VIBE_MISTRO_USER_DATA)
+}
+
 /**
  * The warm-agent pool (ADR-0006 decision 3, TB2 #47): one `vibe-acp` agent per
  * OPEN Workspace, lazily spawned on first select and kept warm thereafter — the

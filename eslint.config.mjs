@@ -39,7 +39,7 @@ export default tseslint.config(
   // `bun scripts/*.ts`; not part of the app/build graph, so they live outside
   // tsconfig — this block keeps `eslint .` covering them with Node globals.
   {
-    files: ['scripts/**/*.{ts,mts,mjs}'],
+    files: ['scripts/**/*.{ts,mts,mjs}', 'e2e/**/*.ts', 'playwright.config.ts'],
     languageOptions: {
       globals: { ...globals.node },
     },

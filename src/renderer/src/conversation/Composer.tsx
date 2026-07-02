@@ -254,9 +254,14 @@ export function Composer({
   }
 
   return (
-    <div className="mx-auto w-full max-w-[830px]">
-      <Card className="gap-0 p-0">
-        <div className="flex flex-col px-6 pt-[22px] pb-[14px]">
+    // @container: the composer adapts to ITS OWN width (container queries), not the
+    // viewport's — with the sidebar + side panel open the chat column narrows while
+    // the window stays wide, so viewport breakpoints would never fire.
+    <div className="mx-auto w-full max-w-[830px] @container">
+      {/* shadow-xs: a lighter lift than the Card default — the composer sits over the
+          transcript, so the full shadow-sm read as a heavy smudge under it. */}
+      <Card className="gap-0 p-0 shadow-xs">
+        <div className="flex flex-col px-6 pt-[22px] pb-[14px] @max-[480px]:px-4">
           {followUps.queued.length > 0 && (
             // Queued follow-ups (#105, ADR-0009): messages submitted while a turn
             // streams, auto-flushed one per turn end. Each row shows its text (or a
@@ -351,7 +356,9 @@ export function Composer({
 
           {/* Control row (prototype: 44px gap below the input). Attach + agent
               controls left; mic + interrupt + gradient send right. */}
-          <div className="mt-[44px] flex items-center gap-3.5">
+          {/* min-w-0 lets the AgentControls chips absorb the squeeze (they shrink +
+              truncate) so the send button NEVER leaves the card in a narrow column. */}
+          <div className="mt-[44px] flex min-w-0 items-center gap-3.5 @max-[560px]:gap-2">
             <IconButton
               size="icon-sm"
               aria-label="Attach images"
@@ -376,8 +383,9 @@ export function Composer({
 
             <div className="flex-1" />
 
-            {/* Decorative voice-input affordance from the prototype; not yet wired. */}
-            <Mic className="size-[19px] shrink-0 text-muted" aria-hidden />
+            {/* Decorative voice-input affordance from the prototype; not yet wired.
+                First thing to yield in a tight column (it does nothing yet). */}
+            <Mic className="size-[19px] shrink-0 text-muted @max-[400px]:hidden" aria-hidden />
 
             {isProcessing && boundSessionId && (
               // Interrupt the active turn (#103, ADR-0009): fire `session/cancel`. The
@@ -405,9 +413,9 @@ export function Composer({
               disabled={draft.trim().length === 0 && pendingImages.length === 0}
               aria-label={followUps.sending ? 'Queue message' : 'Send message'}
               title={followUps.sending ? 'Queue' : 'Send'}
-              className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-white shadow-[0_1px_2px_var(--accent-shadow)] outline-none transition-opacity [background:var(--accent-grad-action)] hover:opacity-90 disabled:cursor-default disabled:opacity-40"
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-white shadow-[0_1px_2px_var(--accent-shadow)] outline-none transition-opacity [background:var(--accent-grad-action)] hover:opacity-90 disabled:cursor-default disabled:opacity-40 @max-[560px]:size-8"
             >
-              <ArrowUp className="size-5" aria-hidden />
+              <ArrowUp className="size-5 @max-[560px]:size-4" aria-hidden />
             </button>
           </div>
         </div>

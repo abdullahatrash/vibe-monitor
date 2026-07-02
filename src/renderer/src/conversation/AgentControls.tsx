@@ -38,7 +38,9 @@ export function AgentControls({
 }): JSX.Element | null {
   if (!modes && !models && !reasoningEffort) return null
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    // min-w-0 + no wrap: in a narrow composer the chips SHRINK (labels truncate, see
+    // AgentControl) instead of wrapping into a stack that overflows the control row.
+    <div className="flex min-w-0 items-center gap-1">
       {modes && (
         <AgentControl
           label="Mode"
@@ -107,14 +109,19 @@ function AgentControl({
         aria-label={label}
         title={label}
         className={cn(
-          'inline-flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-sm text-text-body outline-none transition-colors',
+          'inline-flex min-w-0 items-center gap-1.5 rounded-lg px-1.5 py-1 text-sm text-text-body outline-none transition-colors @max-[480px]:gap-1',
           'hover:text-accent-text',
           'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-text-body',
           '[&_svg]:pointer-events-none [&_svg]:shrink-0',
         )}
       >
         {Icon && <Icon className="size-4 text-muted" aria-hidden />}
-        <span className="font-medium">{currentLabel}</span>
+        {/* truncate (not wrap): a long model id like "devstral-small" must never
+            line-break inside the chip; in a tight column it ellipsizes instead. Below
+            480px of composer width the label HIDES entirely — an empty truncated span
+            would still cost two flex gaps between icon and chevron — leaving a clean
+            icon+chevron chip (the trigger's title/aria-label still name it). */}
+        <span className="min-w-0 truncate font-medium @max-[480px]:hidden">{currentLabel}</span>
         <ChevronDown className="size-3.5 text-faint" aria-hidden />
       </MenuTrigger>
       <MenuContent align="start">

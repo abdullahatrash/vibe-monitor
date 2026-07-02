@@ -62,6 +62,23 @@ describe('readWorkspaceFile — classify (cap, binary sniff, text)', () => {
     expect(result).toEqual({ kind: 'text', content: 'y'.repeat(16) })
   })
 
+  // #189 security review (size-cap TOCTOU): the BOUNDED read is authoritative, not stat. A file
+  // that lies about its size (grew after stat, or a stat that under-reports) still can't exceed the
+  // cap — the read stops at maxBytes+1 and reports tooLarge. Injected fs proves the read path alone
+  // enforces it, independent of stat.size.
+  it('caps by the bounded read even when stat under-reports the size (TOCTOU)', async () => {
+    const realRoot = '/ws'
+    const fs = {
+      realpath: async (p: string) => p,
+      // stat lies: reports 4 bytes (under the cap) though the file is really larger.
+      stat: async () => ({ isFile: () => true, size: 4 }),
+      // the actual file is 2048 bytes; a bounded read of limit returns exactly `limit` bytes.
+      readBounded: async (_p: string, limit: number) => Buffer.alloc(Math.min(2_048, limit), 0x78),
+    }
+    const result = await readWorkspaceFile(realRoot, 'grew.txt', { maxBytes: 16, fs })
+    expect(result).toEqual({ kind: 'tooLarge' })
+  })
+
   it('reads an empty file as empty text', async () => {
     const root = tmp('vibe-read-')
     write(root, 'empty.txt', '')

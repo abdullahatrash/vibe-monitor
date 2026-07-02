@@ -1,4 +1,4 @@
-import { readFile, realpath, stat } from 'node:fs/promises'
+import { open, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import type { FilesReadResult } from '../../shared/ipc'
 import { resolveWorkspacePath } from '../resolve-workspace-path'
@@ -20,8 +20,11 @@ import { isWithinDir } from '../open-target'
  *      a `..`/absolute escape or a symlink pointing OUT of the tree → `error` (logged). We only ever
  *      `readFile` the realpath'd, in-tree target, so an out-of-tree file's bytes are never read.
  *
- * CLASSIFY: the size cap is checked from `stat.size` BEFORE reading (a huge file never loads) →
- * `tooLarge`. Otherwise the bytes are read once as a Buffer; a NUL byte within the first
+ * CLASSIFY: a huge file is rejected `tooLarge` WITHOUT loading it fully. `stat.size` is a cheap
+ * fast-path (skip opening an obviously-huge file), but the AUTHORITATIVE cap is a BOUNDED read:
+ * we only ever read `maxBytes + 1` bytes, and if that many come back the file exceeds the cap →
+ * `tooLarge`. This closes the stat→read TOCTOU (a file growing between the two can't sneak past the
+ * cap), so at most `maxBytes + 1` bytes are ever buffered. Within the cap: a NUL byte in the first
  * {@link BINARY_SNIFF_BYTES} → `binary` (the standard "looks binary" heuristic); else utf8 → `text`.
  *
  * Best-effort: EVERY throw (bad root, stat/realpath/read failure) is caught and degrades to
@@ -40,13 +43,23 @@ export const BINARY_SNIFF_BYTES = 8_000
 export interface ReadFileFs {
   realpath(path: string): Promise<string>
   stat(path: string): Promise<{ isFile(): boolean; size: number }>
-  readFile(path: string): Promise<Buffer>
+  /** Read AT MOST `limit` bytes from the start of `path` (bounded — never loads a huge file). */
+  readBounded(path: string, limit: number): Promise<Buffer>
 }
 
 const nodeFs: ReadFileFs = {
   realpath: (p) => realpath(p),
   stat: (p) => stat(p),
-  readFile: (p) => readFile(p),
+  readBounded: async (p, limit) => {
+    const fh = await open(p, 'r')
+    try {
+      const buf = Buffer.alloc(limit)
+      const { bytesRead } = await fh.read(buf, 0, limit, 0)
+      return buf.subarray(0, bytesRead)
+    } finally {
+      await fh.close()
+    }
+  },
 }
 
 export interface ReadFileOptions {
@@ -88,9 +101,12 @@ export async function readWorkspaceFile(
       return { kind: 'error' }
     }
 
-    if (stats.size > maxBytes) return { kind: 'tooLarge' } // never read a file over the cap
+    if (stats.size > maxBytes) return { kind: 'tooLarge' } // cheap fast-path: skip an obviously-huge file
 
-    const buf = await fs.readFile(realTarget) // realpath'd + confirmed in-tree — safe to read
+    // Authoritative cap (closes the stat→read TOCTOU): read at most maxBytes+1 bytes from the
+    // realpath'd, in-tree target. If maxBytes+1 come back, the file grew past the cap → tooLarge.
+    const buf = await fs.readBounded(realTarget, maxBytes + 1)
+    if (buf.length > maxBytes) return { kind: 'tooLarge' }
     if (looksBinary(buf)) return { kind: 'binary' }
     return { kind: 'text', content: buf.toString('utf8') }
   } catch (err) {

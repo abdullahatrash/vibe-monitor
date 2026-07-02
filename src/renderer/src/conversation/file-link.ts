@@ -7,8 +7,10 @@
  *
  * Ported and trimmed from t3code's `markdown-links.ts` — the `localApi`/editor-open
  * plumbing and workspace-relative display are dropped (the chip is a thin consumer
- * that only needs a label + line ref). Kept self-contained: no external deps.
+ * that only needs a label + line ref). Kept DOM-free; the sole import is the shared
+ * `basename` helper.
  */
+import { basename } from '../lib/paths'
 
 /** A markdown link destination recognised as a file path. */
 export interface FileLink {
@@ -141,11 +143,6 @@ function splitPathAndPosition(value: string): {
   return { path, line: first }
 }
 
-function basenameOf(path: string): string {
-  const separatorIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
-  return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path
-}
-
 /**
  * Classify one markdown link destination. Returns a `FileLink` when it looks like
  * a file path (absolute, relative, `file://`, with an optional line/col position),
@@ -177,7 +174,7 @@ export function parseFileLink(href: string | undefined): FileLink | null {
   const { path, line, column } = splitPathAndPosition(withPosition)
   return {
     path,
-    basename: basenameOf(path),
+    basename: basename(path),
     ...(line !== undefined ? { line } : {}),
     ...(column !== undefined ? { column } : {}),
   }
@@ -232,17 +229,17 @@ export function fileLinkLabels(paths: readonly string[]): Map<string, string> {
   const uniquePaths = [...new Set(paths)]
   const byBasename = new Map<string, string[]>()
   for (const path of uniquePaths) {
-    const basename = basenameOf(path)
-    const group = byBasename.get(basename) ?? []
+    const base = basename(path)
+    const group = byBasename.get(base) ?? []
     group.push(path)
-    byBasename.set(basename, group)
+    byBasename.set(base, group)
   }
 
   const labels = new Map<string, string>()
-  for (const [basename, group] of byBasename) {
+  for (const [base, group] of byBasename) {
     if (group.length < 2) {
       const only = group[0]
-      if (only) labels.set(only, basename)
+      if (only) labels.set(only, base)
       continue
     }
 
@@ -261,7 +258,7 @@ export function fileLinkLabels(paths: readonly string[]): Map<string, string> {
           break
         }
       }
-      labels.set(path, suffix ? `${basename} · ${suffix}` : basename)
+      labels.set(path, suffix ? `${base} · ${suffix}` : base)
     }
   }
   return labels

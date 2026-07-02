@@ -1,6 +1,7 @@
 import type { ComponentProps, JSX } from 'react'
 import { ContextMenu as BaseContextMenu } from '@base-ui/react/context-menu'
 import { cn } from '../lib/utils'
+import { menuItemClass, menuSurfaceClass } from './menu-styles'
 
 /**
  * A right-click context menu over base-ui's ContextMenu primitive (#193). It shares the
@@ -27,13 +28,7 @@ export function ContextMenuContent({
   return (
     <BaseContextMenu.Portal>
       <BaseContextMenu.Positioner className="z-50">
-        <BaseContextMenu.Popup
-          className={cn(
-            'min-w-40 rounded-md border border-border bg-panel p-1 text-sm text-text shadow-md outline-none',
-            className,
-          )}
-          {...props}
-        />
+        <BaseContextMenu.Popup className={cn('min-w-40 p-1', menuSurfaceClass, className)} {...props} />
       </BaseContextMenu.Positioner>
     </BaseContextMenu.Portal>
   )
@@ -46,12 +41,7 @@ export function ContextMenuItem({
 }: ComponentProps<typeof BaseContextMenu.Item>): JSX.Element {
   return (
     <BaseContextMenu.Item
-      className={cn(
-        'flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 outline-none',
-        'data-[highlighted]:bg-accent data-[highlighted]:text-on-accent',
-        'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
-        className,
-      )}
+      className={cn(menuItemClass, 'data-[disabled]:pointer-events-none data-[disabled]:opacity-50', className)}
       {...props}
     />
   )

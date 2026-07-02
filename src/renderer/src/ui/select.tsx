@@ -2,6 +2,7 @@ import type { ComponentProps, JSX } from 'react'
 import { Select as BaseSelect } from '@base-ui/react/select'
 import { Check, ChevronDown } from 'lucide-react'
 import { cn } from '../lib/utils'
+import { menuSurfaceClass } from './menu-styles'
 
 /**
  * A listbox select over base-ui's Select (Root/Trigger/Value/Positioner/Popup/
@@ -60,7 +61,8 @@ export function SelectContent({
         <BaseSelect.Popup
           data-slot="select-content"
           className={cn(
-            'z-50 max-h-(--available-height) min-w-32 overflow-y-auto rounded-md border border-border bg-panel py-1 text-sm text-text shadow-md outline-none',
+            'z-50 max-h-(--available-height) min-w-32 overflow-y-auto py-1',
+            menuSurfaceClass,
             className,
           )}
           {...props}

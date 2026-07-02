@@ -1,19 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { breadcrumbSegments, fileBasename } from './breadcrumb-segments'
-
-describe('fileBasename', () => {
-  it('returns the last segment', () => {
-    expect(fileBasename('src/app.ts')).toBe('app.ts')
-    expect(fileBasename('README.md')).toBe('README.md')
-  })
-
-  it('tolerates trailing/leading/duplicate slashes and empty input', () => {
-    expect(fileBasename('src/dir/')).toBe('dir')
-    expect(fileBasename('/a/b')).toBe('b')
-    expect(fileBasename('a//b')).toBe('b')
-    expect(fileBasename('')).toBe('')
-  })
-})
+import { breadcrumbSegments } from './breadcrumb-segments'
 
 describe('breadcrumbSegments', () => {
   it('returns every segment as a label within the budget', () => {

@@ -353,39 +353,29 @@ function apply(workspaceId: string, updater: (current: WorkspacePanelState) => W
   notify()
 }
 
-export function openWorkspaceSurface(workspaceId: string, kind: SingletonKind): void {
-  apply(workspaceId, (state) => openSurface(state, kind))
+/**
+ * Lift a pure `WorkspacePanelState` op into a Workspace-addressed action: the returned
+ * fn takes `(workspaceId, ...opArgs)` and runs the op through {@link apply} (which
+ * persists + notifies only on a real change). Collapses the per-op boilerplate while
+ * keeping each exported action's exact signature — the op's trailing args flow through.
+ */
+function bindWorkspaceOp<A extends unknown[]>(
+  op: (state: WorkspacePanelState, ...args: A) => WorkspacePanelState,
+): (workspaceId: string, ...args: A) => void {
+  return (workspaceId, ...args) => apply(workspaceId, (state) => op(state, ...args))
 }
-export function openWorkspaceFileSurface(workspaceId: string, relativePath: string): void {
-  apply(workspaceId, (state) => openFileSurface(state, relativePath))
-}
-export function toggleWorkspaceSurface(workspaceId: string, kind: SingletonKind): void {
-  apply(workspaceId, (state) => toggleSurface(state, kind))
-}
-export function activateWorkspaceSurface(workspaceId: string, surfaceId: string): void {
-  apply(workspaceId, (state) => activateSurface(state, surfaceId))
-}
-export function closeWorkspaceSurface(workspaceId: string, surfaceId: string): void {
-  apply(workspaceId, (state) => closeSurface(state, surfaceId))
-}
-export function closeOtherWorkspaceSurfaces(workspaceId: string, surfaceId: string): void {
-  apply(workspaceId, (state) => closeOtherSurfaces(state, surfaceId))
-}
-export function closeWorkspaceSurfacesToRight(workspaceId: string, surfaceId: string): void {
-  apply(workspaceId, (state) => closeSurfacesToRight(state, surfaceId))
-}
-export function closeAllWorkspaceSurfaces(workspaceId: string): void {
-  apply(workspaceId, closeAllSurfaces)
-}
-export function showWorkspacePanel(workspaceId: string): void {
-  apply(workspaceId, showPanel)
-}
-export function closeWorkspacePanel(workspaceId: string): void {
-  apply(workspaceId, closePanel)
-}
-export function toggleWorkspacePanelVisibility(workspaceId: string): void {
-  apply(workspaceId, togglePanelVisibility)
-}
+
+export const openWorkspaceSurface = bindWorkspaceOp(openSurface)
+export const openWorkspaceFileSurface = bindWorkspaceOp(openFileSurface)
+export const toggleWorkspaceSurface = bindWorkspaceOp(toggleSurface)
+export const activateWorkspaceSurface = bindWorkspaceOp(activateSurface)
+export const closeWorkspaceSurface = bindWorkspaceOp(closeSurface)
+export const closeOtherWorkspaceSurfaces = bindWorkspaceOp(closeOtherSurfaces)
+export const closeWorkspaceSurfacesToRight = bindWorkspaceOp(closeSurfacesToRight)
+export const closeAllWorkspaceSurfaces = bindWorkspaceOp(closeAllSurfaces)
+export const showWorkspacePanel = bindWorkspaceOp(showPanel)
+export const closeWorkspacePanel = bindWorkspaceOp(closePanel)
+export const toggleWorkspacePanelVisibility = bindWorkspaceOp(togglePanelVisibility)
 /**
  * Delete-cascade for a REMOVED Workspace (#193 review; t3code `removeThread`): drop its
  * panel entry entirely so `side-panel:v2` accumulates no unreachable blobs — workspaceIds

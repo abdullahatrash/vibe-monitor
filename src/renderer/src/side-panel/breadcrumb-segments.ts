@@ -1,8 +1,8 @@
 /**
- * Pure view-model helpers for the file-preview breadcrumb + tab label (#189, ADR-0013 decision 2).
- * A `file:` Surface's breadcrumb is a read-only, non-interactive trail of its relative path; the
- * tab shows the basename. Kept DOM-free so the load-bearing splitting/truncation is unit-tested
- * and the `FilePreview` JSX stays a thin map over these.
+ * Pure view-model helper for the file-preview breadcrumb (#189, ADR-0013 decision 2). A `file:`
+ * Surface's breadcrumb is a read-only, non-interactive trail of its relative path. Kept DOM-free so
+ * the load-bearing splitting/truncation is unit-tested and the `FilePreview` JSX stays a thin map
+ * over it. (The tab label's basename comes from the shared `basename` in `lib/paths`.)
  */
 
 /** One breadcrumb crumb: a path segment `label`, or an `ellipsis` placeholder for elided middles. */
@@ -10,12 +10,6 @@ export interface BreadcrumbSegment {
   label: string
   /** True for the single "…" crumb inserted when a deep path is truncated (no label then). */
   ellipsis?: boolean
-}
-
-/** The file name (last segment) of a relative path — the tab label. Empty string for empty input. */
-export function fileBasename(relativePath: string): string {
-  const parts = relativePath.split('/').filter((s) => s.length > 0)
-  return parts.at(-1) ?? ''
 }
 
 /**

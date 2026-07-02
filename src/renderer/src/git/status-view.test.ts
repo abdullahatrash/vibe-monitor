@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildChangesView, fileGlyph, reconcileUnchecked } from './status-view'
+import { buildChangesView, fileGlyph, glyphClass, reconcileUnchecked } from './status-view'
 import type { GitFile, GitStatus } from '../../../shared/ipc'
 
 function file(partial: Partial<GitFile> & { path: string }): GitFile {
@@ -20,6 +20,17 @@ describe('fileGlyph', () => {
     expect(fileGlyph(file({ path: 'a', status: 'A.' }))).toEqual({ glyph: 'A', label: 'Added' })
     expect(fileGlyph(file({ path: 'a', status: '.D' }))).toEqual({ glyph: 'D', label: 'Deleted' })
     expect(fileGlyph(file({ path: 'a', status: 'RM' }))).toEqual({ glyph: 'R', label: 'Renamed' })
+  })
+})
+
+describe('glyphClass', () => {
+  it('accents added/untracked positive, deleted negative, else neutral', () => {
+    expect(glyphClass('A')).toBe('text-ok')
+    expect(glyphClass('U')).toBe('text-ok')
+    expect(glyphClass('D')).toBe('text-bad')
+    expect(glyphClass('M')).toBe('text-accent-text')
+    expect(glyphClass('R')).toBe('text-accent-text')
+    expect(glyphClass('C')).toBe('text-accent-text')
   })
 })
 

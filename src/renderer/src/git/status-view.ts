@@ -42,6 +42,13 @@ export function fileGlyph(file: GitFile): { glyph: string; label: string } {
   return { glyph: 'M', label: 'Modified' }
 }
 
+/** A glyph's accent: added/untracked read positive, deleted negative, else neutral. */
+export function glyphClass(glyph: string): string {
+  if (glyph === 'A' || glyph === 'U') return 'text-ok'
+  if (glyph === 'D') return 'text-bad'
+  return 'text-accent-text'
+}
+
 /** Sort rank by glyph so like-changes group together; ties break on path. */
 const GLYPH_RANK: Record<string, number> = { M: 0, A: 1, D: 2, R: 3, C: 4, U: 5 }
 

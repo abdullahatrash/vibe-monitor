@@ -3,6 +3,7 @@ import { getFiletypeFromFileName, getSharedHighlighter } from '@pierre/diffs'
 import { AtSign, FolderOpen } from 'lucide-react'
 import type { FilesReadResult } from '../../../shared/ipc'
 import { cn } from '../lib/utils'
+import { basename } from '../lib/paths'
 import { emitComposerInsert } from '../conversation/composer-insert'
 import { breadcrumbSegments } from './breadcrumb-segments'
 
@@ -74,7 +75,7 @@ export function FilePreview({
   useEffect(() => {
     if (result?.kind !== 'text') return
     let cancelled = false
-    const fileName = relativePath.slice(relativePath.lastIndexOf('/') + 1)
+    const fileName = basename(relativePath)
     void highlightToHtml(result.content, fileName).then((h) => {
       if (!cancelled) setHtml(h)
     })

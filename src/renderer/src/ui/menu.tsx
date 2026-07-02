@@ -2,6 +2,7 @@ import type { ComponentProps, JSX } from 'react'
 import { Menu as BaseMenu } from '@base-ui/react/menu'
 import { Check } from 'lucide-react'
 import { cn } from '../lib/utils'
+import { menuItemClass, menuSurfaceClass } from './menu-styles'
 
 /**
  * A small brand-styled wrapper over base-ui's Menu primitive. base-ui owns the
@@ -36,13 +37,7 @@ export function MenuContent({
   return (
     <BaseMenu.Portal>
       <BaseMenu.Positioner sideOffset={sideOffset} align={align}>
-        <BaseMenu.Popup
-          className={cn(
-            'min-w-32 rounded-md border border-border bg-panel p-1 text-sm text-text shadow-md outline-none',
-            className,
-          )}
-          {...props}
-        />
+        <BaseMenu.Popup className={cn('min-w-32 p-1', menuSurfaceClass, className)} {...props} />
       </BaseMenu.Positioner>
     </BaseMenu.Portal>
   )
@@ -54,14 +49,7 @@ export function MenuItem({
   ...props
 }: ComponentProps<typeof BaseMenu.Item>): JSX.Element {
   return (
-    <BaseMenu.Item
-      className={cn(
-        'flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 outline-none',
-        'data-[highlighted]:bg-accent data-[highlighted]:text-on-accent',
-        className,
-      )}
-      {...props}
-    />
+    <BaseMenu.Item className={cn(menuItemClass, className)} {...props} />
   )
 }
 
@@ -87,14 +75,7 @@ export function MenuRadioItem({
   ...props
 }: ComponentProps<typeof BaseMenu.RadioItem>): JSX.Element {
   return (
-    <BaseMenu.RadioItem
-      className={cn(
-        'flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 outline-none',
-        'data-[highlighted]:bg-accent data-[highlighted]:text-on-accent',
-        className,
-      )}
-      {...props}
-    >
+    <BaseMenu.RadioItem className={cn(menuItemClass, className)} {...props}>
       <span className="flex size-4 shrink-0 items-center justify-center">
         <BaseMenu.RadioItemIndicator>
           <Check className="size-4" aria-hidden />

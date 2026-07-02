@@ -13,8 +13,8 @@ import {
 import { ChangesPanel } from '../git/ChangesPanel'
 import { FilesSurface } from './FilesSurface'
 import { FilePreview } from './FilePreview'
-import { fileBasename } from './breadcrumb-segments'
 import { surfaceForChord } from './surface-keys'
+import { basename } from '../lib/paths'
 import {
   activateWorkspaceSurface,
   closeAllWorkspaceSurfaces,
@@ -215,7 +215,7 @@ function surfaceMeta(surface: Surface): { icon: ReactNode; label: string } {
     case 'files':
       return { icon: <Files aria-hidden />, label: 'Files' }
     case 'file':
-      return { icon: <FileText aria-hidden />, label: fileBasename(surface.relativePath) }
+      return { icon: <FileText aria-hidden />, label: basename(surface.relativePath) }
     case 'terminal':
       return { icon: <SquareTerminal aria-hidden />, label: 'Terminal' }
     case 'browser':

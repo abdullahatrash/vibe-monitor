@@ -671,13 +671,15 @@ export function App(): JSX.Element {
         outlet={outlet}
         opening={opening}
         onOpenProject={() => void openProject()}
-        onSelectThread={selectThreadInWorkspace}
         onNewThread={startNewChat}
-        onNewThreadInWorkspace={newThreadInWorkspace}
-        onDeleteThread={actions.deleteThread}
-        onRemoveWorkspace={actions.removeWorkspace}
-        onSetThreadFlags={actions.setThreadFlags}
-        onRenameThread={actions.renameThread}
+        actions={{
+          selectThread: selectThreadInWorkspace,
+          newThreadInWorkspace,
+          deleteThread: actions.deleteThread,
+          removeWorkspace: actions.removeWorkspace,
+          setThreadFlags: actions.setThreadFlags,
+          renameThread: actions.renameThread,
+        }}
         onOpenSettings={() => navDispatch({ type: 'open-settings' })}
       />
     </div>

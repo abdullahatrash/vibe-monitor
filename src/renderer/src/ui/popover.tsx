@@ -1,6 +1,7 @@
 import type { ComponentProps, JSX } from 'react'
 import { Popover as BasePopover } from '@base-ui/react/popover'
 import { cn } from '../lib/utils'
+import { menuSurfaceClass } from './menu-styles'
 
 /**
  * A floating popover over base-ui's Popover, wrapped Portal→Positioner→Popup like
@@ -34,10 +35,7 @@ export function PopoverContent({
       >
         <BasePopover.Popup
           data-slot="popover-content"
-          className={cn(
-            'z-50 w-72 rounded-md border border-border bg-panel p-4 text-sm text-text shadow-md outline-none',
-            className,
-          )}
+          className={cn('z-50 w-72 p-4', menuSurfaceClass, className)}
           {...props}
         />
       </BasePopover.Positioner>

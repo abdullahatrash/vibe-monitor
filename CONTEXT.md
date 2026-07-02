@@ -37,18 +37,23 @@ _Avoid_: approval, confirmation, prompt (reserve "prompt" for the user's message
 ## Side panel
 
 **Surface**:
-One of the expandable areas stacked in the right-hand side panel — Review, Terminal, Browser, Files.
-The side panel itself is closed by default and toggled from the window header (or a Surface's
-shortcut); open, each Surface shows as a launcher card and at most one is expanded at a time. Review
-hosts the git Changes panel; Files hosts the Files browser; Terminal and Browser are reserved (not
-yet built).
-_Avoid_: tab, view, pane, dock (reserve "dock" for the future embedded terminal's chrome).
+One open area in the side panel, shown as a tab in its tab strip. Review (the git Changes panel) and
+Files (the Files browser) are singletons; each previewed file is its own Surface; Terminal and Browser
+are reserved (not yet built). Many Surfaces can be open at once; one is active (visible). Open-Surface
+state is per-Workspace.
+_Avoid_: view, pane, dock (reserve "dock" for the future embedded terminal's chrome).
+
+**Side panel**:
+The right-hand panel hosting Surfaces. Closed by default; toggled from the window header or a
+Surface's shortcut. With no Surfaces open it shows a launcher list (its empty state). On a wide window
+it sits beside the conversation; on a narrow window it presents as a **Sheet** — a slide-over from the
+right edge, over the conversation, dismissed by Esc or clicking outside.
+_Avoid_: drawer, sidebar (that's the left navigation), overlay (the Sheet is one presentation of it).
 
 **Files browser**:
-The Files Surface's content — a searchable tree of the Workspace's files, plus read-only previews of
-opened files. With no file open the tree fills the Surface; opening files shows the preview pane beside
-the tree, where each opened file is a tab (many open, one visible) topped by a read-only breadcrumb of
-its path. Browsing and previewing never change files and never involve the agent.
+The Files Surface's content — a searchable tree of the Workspace's files. Opening a file from it opens
+that file's own Surface: a read-only preview topped by a read-only breadcrumb of its path. Browsing
+and previewing never change files and never involve the agent.
 _Avoid_: file tree (the widget, not the feature), explorer, finder.
 
 ## Agent controls

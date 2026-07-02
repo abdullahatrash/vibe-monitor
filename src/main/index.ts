@@ -787,6 +787,14 @@ function registerIpc(deps: MainDeps): void {
     activity.beginAuth(args.agentId)
     try {
       const authState = await agent.signIn(args.methodId)
+      if (authState !== 'signed-in') {
+        // complete + persist both reported success yet status still isn't
+        // signed-in — per Vibe's source this shouldn't be reachable, so leave a
+        // loud breadcrumb: it means a contract change we need to hear about.
+        console.error(
+          `[vibe-mistro:auth] sign-in completed but status reports '${authState}' (agent ${args.agentId})`,
+        )
+      }
       return { ok: true, authState }
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)

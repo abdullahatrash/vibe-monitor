@@ -14,10 +14,14 @@ export function TransientOutlet({
   connect,
   onContinueToThread,
   onRetry,
+  onRestartAgent,
 }: {
   connect: ConnectState
   onContinueToThread: (agentId: string) => void
   onRetry: () => void
+  /** Dispose this agent and re-run the connect flow — the sign-in panel's
+   * stale-keyring-cache recovery (a fresh process re-reads the keychain). */
+  onRestartAgent: (agentId: string) => void
 }): JSX.Element | null {
   switch (connect.status) {
     case 'connecting':
@@ -38,6 +42,7 @@ export function TransientOutlet({
           agentId={connect.agentId}
           authMethods={connect.authMethods}
           onSignedIn={() => onContinueToThread(connect.agentId)}
+          onRestartAgent={() => onRestartAgent(connect.agentId)}
         />
       )
     case 'error':

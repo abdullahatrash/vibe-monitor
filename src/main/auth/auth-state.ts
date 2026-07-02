@@ -33,6 +33,22 @@ export function classifyAuthStatus(status: unknown): AuthState {
 }
 
 /**
+ * Vibe's `authenticate` responses report credential-persist failures IN-BAND:
+ * `_meta[method].persistResult` is `"completed"` on success, or an error detail
+ * (`"env_var_error:…"`, `"save_error:…"`) with NO JSON-RPC error — the browser
+ * flow itself succeeded but the key was never saved to env/keyring
+ * (vibe/setup/auth/api_key_persistence.py). Ignoring it leaves every follow-up
+ * `_auth/status` signed out with only a vague "did not complete" to show for it.
+ * Returns the failure detail to surface, or null when the persist succeeded —
+ * or when the field is absent (older vibe-acp), which must not fail sign-in.
+ * This reads a save-status string, never a credential (ADR-0003 still holds).
+ */
+export function classifyPersistFailure(persistResult: unknown): string | null {
+  if (typeof persistResult !== 'string' || persistResult === 'completed') return null
+  return persistResult
+}
+
+/**
  * Whether `_auth/status` reports sign-out is available (`signOutAvailable`).
  * Gates the renderer's Sign-out control — only `true` enables it (acp-capture §8;
  * `_auth/signOut` errors -32602 when it's false).

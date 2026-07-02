@@ -1,6 +1,8 @@
 import type { JSX } from 'react'
 import type { VibeDetectResult } from '../../../shared/ipc'
+import { INSTALL_DOCS_URL, INSTALL_HINT } from '../../../shared/install-guidance'
 import { Button } from '../ui/button'
+import { CodeText } from '../ui/code-text'
 import { Environment } from '../settings/Environment'
 import { Logo } from './logo'
 import { heroHeadline } from './hero-headline'
@@ -37,9 +39,13 @@ export function EmptyState({
         <div className="text-[15px] font-semibold text-text-strong">
           Install Mistral Vibe to get started
         </div>
+        {/* Same canonical copy as the spawn-error hint + the persistent banner
+            (shared/install-guidance) — one root cause, one message. */}
         <p className="hint">
-          vibe-mistro drives the <code>vibe-acp</code> ACP server. Install the Mistral Vibe CLI and{' '}
-          <code>vibe-acp</code>, then re-check below.
+          vibe-mistro drives the <code>vibe-acp</code> ACP server. <CodeText text={INSTALL_HINT} />{' '}
+          <a className="underline" href={INSTALL_DOCS_URL} target="_blank" rel="noreferrer">
+            Install guide
+          </a>
         </p>
         <Environment detect={detect} loading={loading} onRecheck={onRecheck} />
       </div>

@@ -34,7 +34,9 @@ import { ArrowLeft, ArrowRight, Maximize2, PanelLeft, PanelRight, Terminal } fro
 import { IconButton } from './ui/icon-button'
 import { Shell, type WorkspaceFlags } from './shell/Shell'
 import { firstRunState } from './shell/first-run'
-import { initialNavState, navReducer } from './shell/nav-reducer'
+import { installBannerMessage } from './shell/install-banner'
+import { InstallBanner } from './shell/InstallBanner'
+import { findSelectedThread, initialNavState, navReducer } from './shell/nav-reducer'
 import {
   getSidebarCollapsed,
   setSidebarCollapsed as setSidebarCollapsedStore,
@@ -356,6 +358,20 @@ export function App(): JSX.Element {
     }
   }
 
+  /**
+   * Restart recovery for a stale warm agent: Vibe caches keyring reads
+   * PER-PROCESS (acp-capture §8), so a warm agent that started signed-out never
+   * sees an out-of-band sign-in (terminal, another process) — its `_auth/status`
+   * answers from the stale cache forever. Dispose the child, then re-run the
+   * normal connect flow: the FRESH process re-reads the keychain, landing
+   * connected if signed in or back at the sign-in panel if genuinely not.
+   * `stopAgent` is awaited so `startThread` can't reuse the stale agent.
+   */
+  async function restartAgent(workspaceId: string, agentId: string): Promise<void> {
+    await window.api.stopAgent(agentId)
+    await connectWorkspace(workspaceId)
+  }
+
   async function openProject(): Promise<void> {
     const workspaceDir = await window.api.openWorkspaceDialog()
     if (!workspaceDir) return
@@ -555,6 +571,17 @@ export function App(): JSX.Element {
   // so each NON-connected view re-adds the old p-6 breathing room via a wrapper here;
   // the connected view spends it inside its chat column (ConnectedWorkspace) instead.
   const inSettings = nav.view === 'settings'
+  // Persistent missing-CLI banner (visibility is the pure `installBannerMessage`):
+  // spans the shell under the window chrome so a selected Workspace / open Thread
+  // still surfaces the missing toolchain; suppressed where the fuller guidance is
+  // already on screen (the needs-install first-run outlet, Settings' Environment).
+  const emptyOutletVisible =
+    !inSettings && selected.status === 'idle' && !findSelectedThread(recents, nav)
+  const installBanner = installBannerMessage({
+    detect,
+    inSettings,
+    installOutletVisible: emptyOutletVisible,
+  })
   const outlet = (
     <>
       {connectedIds.map((wid) => {
@@ -609,6 +636,7 @@ export function App(): JSX.Element {
               connect={selected}
               onContinueToThread={(agentId) => void continueToThread(selectedWs ?? '', agentId)}
               onRetry={() => selectedWs && void connectWorkspace(selectedWs)}
+              onRestartAgent={(agentId) => selectedWs && void restartAgent(selectedWs, agentId)}
             />
           ) : (
             <ColdOutlet
@@ -695,6 +723,10 @@ export function App(): JSX.Element {
           </IconButton>
         </div>
       </header>
+
+      {installBanner && (
+        <InstallBanner message={installBanner} loading={loading} onRecheck={() => void runDetect()} />
+      )}
 
       <Shell
         collapsed={sidebarCollapsed}

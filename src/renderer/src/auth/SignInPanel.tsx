@@ -15,10 +15,19 @@ export function SignInPanel({
   agentId,
   authMethods,
   onSignedIn,
+  onRestartAgent,
 }: {
   agentId: string
   authMethods: AuthMethod[]
   onSignedIn: () => void
+  /**
+   * Stale-cache recovery: Vibe caches keyring reads per-process, so this warm
+   * agent can keep reporting signed-out after an out-of-band sign-in (terminal
+   * or another process). Disposes the agent and re-runs the connect flow — the
+   * fresh process re-reads the keychain. Offered from the recoverable error
+   * state (a failed sign-in or a still-not-signed-in check).
+   */
+  onRestartAgent: () => void
 }): JSX.Element {
   const [state, dispatch] = useReducer(authReducer, authMethods, initialAuthViewState)
   // Generation counter: bumped on every attempt start and on cancel. Neither the
@@ -41,7 +50,13 @@ export function SignInPanel({
     } else {
       dispatch({
         type: 'sign-in-error',
-        message: result.ok ? 'Sign-in did not complete. Please try again.' : result.error,
+        // ok-but-not-signed-in: Vibe said the browser flow AND the credential
+        // save succeeded, yet its status still reports signed out — a state its
+        // source says is unreachable, so point at the recovery affordances
+        // rather than a bare "try again".
+        message: result.ok
+          ? 'Vibe reported sign-in complete, but its status still shows signed out. Try "Already signed in? Check status", or sign in with `vibe` in a terminal.'
+          : result.error,
       })
     }
   }
@@ -66,7 +81,8 @@ export function SignInPanel({
     } else if (result.ok) {
       dispatch({
         type: 'sign-in-error',
-        message: 'Still not signed in. Finish signing in (in your browser or via `vibe`), then check again.',
+        message:
+          'Still not signed in. Finish signing in (in your browser or via `vibe`), then check again — or use "Restart agent" if you signed in elsewhere and it isn\'t picked up.',
       })
     } else {
       dispatch({ type: 'sign-in-error', message: result.error })
@@ -128,6 +144,15 @@ export function SignInPanel({
         <Button variant="ghost" onClick={() => void checkStatus()}>
           Already signed in? Check status
         </Button>
+        {view.kind === 'error' && (
+          <Button
+            variant="ghost"
+            onClick={onRestartAgent}
+            title="Stop and respawn this Workspace's agent — a fresh process re-reads the keychain, picking up a sign-in done in a terminal or another window"
+          >
+            Restart agent
+          </Button>
+        )}
       </div>
     </SignInCard>
   )

@@ -231,15 +231,24 @@ export function Composer({
       setPendingImages([])
       return
     }
-    // Idle: send now. `submitPrompt` echoes text/images by value up front, so we can
-    // clear the composer AFTER, but only on a successful outcome — preserving #100's
-    // clear-on-success / keep-on-failure (a failed send keeps text + staged images
-    // for retry, e.g. switching to a vision model).
+    // Idle: send now, clearing the composer OPTIMISTICALLY — `submitPrompt` resolves
+    // only when the whole turn ENDS (the IPC returns at the turn's stopReason), so a
+    // clear-after-await would hold the sent text in the input for the entire streamed
+    // response. The echo is already in the transcript; on a FAILED outcome we RESTORE
+    // the payload for retry (#100's keep-on-failure, e.g. switching to a vision model
+    // after -31008) — unless the user started composing something new meanwhile.
+    const staged = pendingImages
+    setPendingImages([])
+    setDraft('')
+    clearDraft(window.localStorage, threadId)
     const ok = await submitPrompt(text, images)
-    if (ok) {
-      setPendingImages([])
-      setDraft('')
-      clearDraft(window.localStorage, threadId)
+    if (!ok) {
+      setDraft((current) => {
+        if (current.length > 0) return current
+        persistDraft(window.localStorage, threadId, text)
+        return text
+      })
+      setPendingImages((current) => (current.length > 0 ? current : staged))
     }
   }
 

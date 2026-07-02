@@ -20,6 +20,13 @@ import { indexEntryKinds, selectedFilePath, toTreePaths } from './tree-paths'
 /** Map the tree's shadow-DOM theme onto our tokens (styles.css). */
 const TREE_UNSAFE_CSS = `
   :host {
+    /* The widget's defaults use CSS light-dark() (e.g. --trees-input-bg =
+       light-dark(#f8f8f8, #070707)); with no color-scheme pinned it followed the OS, so on a
+       dark-mode Mac the search field rendered near-black. vibe-mistro is a light-only app, so
+       pin the light branch here (scoped to the widget's shadow root) and paint the search
+       input on our warm inset surface to match the panel. */
+    color-scheme: light;
+    --trees-input-bg-override: var(--sidebar);
     --trees-bg-override: transparent;
     --trees-selected-bg-override: var(--accent-tint);
     --trees-hover-bg-override: color-mix(in srgb, var(--accent) 8%, transparent);
